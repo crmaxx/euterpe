@@ -1,0 +1,37 @@
+# Example Docker Compose for Euterpe (no secrets committed)
+# Copy to compose.yml and set credentials locally.
+
+services:
+  euterpe:
+    image: euterpe:latest
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: euterpe
+    restart: unless-stopped
+    ports:
+      # LAN access: "0.0.0.0:8080:8080"
+      - "127.0.0.1:8080:8080"
+    environment:
+      RUST_LOG: euterpe=info,euterpe_qobuz=debug
+      EUTERPE_BIND: 0.0.0.0:8080
+      EUTERPE_DATABASE_URL: sqlite:/data/library.db?mode=rwc
+      EUTERPE_LIBRARY_PATH: /music
+      # Set in .env file (never commit):
+      # EUTERPE_QOBUZ_USER_ID: ${EUTERPE_QOBUZ_USER_ID}
+      # EUTERPE_QOBUZ_AUTH_TOKEN: ${EUTERPE_QOBUZ_AUTH_TOKEN}
+      # Legacy (deprecated): EUTERPE_QOBUZ_EMAIL / EUTERPE_QOBUZ_PASSWORD
+      # EUTERPE_ADMIN_PASSWORD: ${EUTERPE_ADMIN_PASSWORD}
+    volumes:
+      - euterpe-data:/data
+      - euterpe-music:/music
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  euterpe-data:
+  euterpe-music:

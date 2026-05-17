@@ -1,0 +1,134 @@
+# REST API contract (DRAFT)
+
+**Status: DRAFT** — для Phase 2+. Изменения только с обновлением тестов server + MSW frontend.
+
+Base path: `/api/v1`
+
+## Health
+
+### GET /health
+
+```json
+{ "status": "ok", "version": "0.1.0" }
+```
+
+## Qobuz
+
+### POST /api/v1/qobuz/test-login
+
+Проверка **user_auth_token** (и optional refresh via `user/login` token flow). Password не используется.
+
+**Body:**
+
+```json
+{
+  "user_id": 12345678,
+  "auth_token": "..."
+}
+```
+
+**Response 200:** `{ "membership": "Studio", "user_auth_token_refreshed": false }`  
+**401:** invalid or expired token — UI показывает инструкцию обновления из play.qobuz.com
+
+### Qobuz accounts (future FP-1 / FP-2)
+
+| Method | Path | Описание |
+|--------|------|----------|
+| GET | `/api/v1/qobuz/accounts` | Список аккаунтов (без UAT) |
+| POST | `/api/v1/qobuz/accounts` | Добавить (paste token или после OAuth) |
+| POST | `/api/v1/qobuz/accounts/active` | `{ "account_id" }` — выбрать активного |
+| GET | `/api/v1/qobuz/oauth/start` | **FP-1** — начать OAuth |
+| GET | `/api/v1/qobuz/oauth/callback` | **FP-1** — сохранить токен в БД |
+
+См. [future-plans.ru.md](../00-overview/future-plans.ru.md).
+
+### POST /api/v1/qobuz/sync
+
+Trigger favorites sync (albums default).
+
+**Response 200:**
+
+```json
+{
+  "run_id": 1,
+  "albums_total": 120,
+  "added": 3,
+  "removed": 1
+}
+```
+
+### GET /api/v1/qobuz/favorites?type=album&page=0&limit=50
+
+```json
+{
+  "items": [
+    {
+      "qobuz_id": 123,
+      "title": "Album",
+      "artist_name": "Artist",
+      "in_library": true,
+      "local_album_id": 5
+    }
+  ],
+  "total": 120
+}
+```
+
+### POST /api/v1/qobuz/favorites
+
+```json
+{ "album_ids": [123, 456] }
+```
+
+### DELETE /api/v1/qobuz/favorites
+
+```json
+{ "album_ids": [123] }
+```
+
+## Downloads (Phase 3)
+
+### POST /api/v1/downloads
+
+```json
+{
+  "job_type": "album",
+  "qobuz_id": 123,
+  "quality": 6
+}
+```
+
+**Response 202:** `{ "job_id": 42 }`
+
+### GET /api/v1/downloads
+
+List jobs.
+
+### GET /api/v1/downloads/:id
+
+Job detail.
+
+### DELETE /api/v1/downloads/:id
+
+Cancel if queued/running.
+
+## Events (Phase 3)
+
+### GET /api/v1/events
+
+SSE stream.
+
+## Errors
+
+```json
+{
+  "error": {
+    "code": "QOBUZ_AUTH_FAILED",
+    "message": "Human readable"
+  }
+}
+```
+
+## TDD (server)
+
+Один файл `crates/euterpe-server/tests/api_qobuz.rs` на endpoint.
