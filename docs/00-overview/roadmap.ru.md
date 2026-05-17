@@ -25,10 +25,12 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 ## Phase 2 — Backend core
 
 - Cargo workspace, `euterpe-server`
-- SQLite + sqlx migrations
-- Qobuz credentials в settings (encrypted)
-- `POST /api/v1/qobuz/sync`, `GET /api/v1/qobuz/favorites`
-- TDD: axum tests per route
+- **OpenAPI 3.1** (`openapi/openapi.yaml`), Redocly CI, contract tests
+- SQLite + sqlx migrations (`settings`, `qobuz_favorites`, `qobuz_sync_runs`)
+- Qobuz credentials: env или settings (AES-256-GCM + `EUTERPE_MASTER_KEY`)
+- `POST /api/v1/qobuz/sync`, `GET/POST/DELETE /api/v1/qobuz/favorites`, `POST .../test-login`
+- `GET /api/openapi.json`, `GET /health`
+- TDD: axum + mock `QobuzApi` per route
 
 ## Phase 3 — Download pipeline
 

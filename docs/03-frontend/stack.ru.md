@@ -25,7 +25,9 @@ Phase 4. Разработка — **TDD** (Vitest + Testing Library).
 
 ## API client
 
-Generated or hand-written types from [api-client.ru.md](api-client.ru.md).
+**Phase 4:** типы из [`openapi/openapi.yaml`](../../openapi/openapi.yaml) (`openapi-typescript` или MSW handlers из spec).
+
+Обзор: [api-client.ru.md](api-client.ru.md). Spec JSON: `GET /api/openapi.json`.
 
 Base URL: relative `/api/v1` (same origin in Docker).
 
