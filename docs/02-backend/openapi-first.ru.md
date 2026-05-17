@@ -17,10 +17,22 @@
 
 Запрещено менять JSON ответа без diff в `openapi/openapi.yaml`.
 
+## Документация (без сервера)
+
+В `openapi/` — отдельный npm-проект (Redocly):
+
+```bash
+cd openapi && npm ci
+npm run preview    # dev-сервер Redoc
+npm run build      # статический HTML в openapi/dist/
+```
+
+См. [openapi/README.md](../../openapi/README.md).
+
 ## CI
 
 ```bash
-npx --yes @redocly/cli lint openapi/openapi.yaml
+cd openapi && npm ci && npm run lint && npm run build
 ```
 
 Шаг выполняется в GitHub Actions на каждый push/PR.

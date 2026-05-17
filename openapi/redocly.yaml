@@ -1,0 +1,7 @@
+# Redocly project config (lint, bundle, static docs). Run from openapi/: npm run …
+apis:
+  euterpe:
+    root: openapi.yaml
+
+extends:
+  - recommended

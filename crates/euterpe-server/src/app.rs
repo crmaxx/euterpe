@@ -2,12 +2,18 @@ use std::sync::Arc;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
+use std::time::Duration;
+
+use axum::body::Body;
+use axum::http::Request;
+use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
 use tower_http::trace::TraceLayer;
+use tracing::Level;
 
 use crate::api::{
     HealthResponse, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest, QobuzSyncResponse,
@@ -50,7 +56,34 @@ pub fn app(state: AppState) -> Router {
         .route("/api/openapi.json", get(openapi_json))
         .merge(protected)
         .with_state(state)
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &Request<Body>| {
+                    tracing::info_span!(
+                        "http",
+                        method = %req.method(),
+                        uri = %req.uri(),
+                    )
+                })
+                .on_request(|req: &Request<Body>, _span: &tracing::Span| {
+                    tracing::event!(
+                        Level::DEBUG,
+                        method = %req.method(),
+                        uri = %req.uri(),
+                        "request started"
+                    );
+                })
+                .on_response(
+                    |res: &Response<Body>, latency: Duration, _span: &tracing::Span| {
+                        tracing::event!(
+                            Level::DEBUG,
+                            status = res.status().as_u16(),
+                            latency_ms = latency.as_millis() as u64,
+                            "response"
+                        );
+                    },
+                ),
+        )
 }
 
 pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -86,6 +119,12 @@ pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + 
     let router = app(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
+    if config.dev_verbose {
+        tracing::info!(
+            bind = %bind,
+            "euterpe dev verbose logging enabled (EUTERPE_DEV); set RUST_LOG to override"
+        );
+    }
     tracing::info!("listening on {}", bind);
     axum::serve(listener, router).await?;
     Ok(())
@@ -127,8 +166,16 @@ async fn qobuz_test_login(
 async fn qobuz_sync_handler(
     State(state): State<AppState>,
 ) -> Result<Json<QobuzSyncResponse>, ApiError> {
+    tracing::debug!("POST /api/v1/qobuz/sync");
     state.require_credentials().await?;
     let resp = qobuz_sync::run(&state.db, Arc::clone(&state.qobuz)).await?;
+    tracing::debug!(
+        run_id = resp.run_id,
+        albums_total = resp.albums_total,
+        added = resp.added,
+        removed = resp.removed,
+        "sync complete"
+    );
     Ok(Json(resp))
 }
 
@@ -173,7 +220,7 @@ async fn add_favorites(
         guard.favorite_add_albums(&body.album_ids).await?;
     }
     for &id in &body.album_ids {
-        favorites::upsert_album(&state.db, id, "", "").await?;
+        favorites::upsert_album(&state.db, id, "", "", None).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -215,6 +262,7 @@ pub mod test_support {
             qobuz_auth_token: None,
             library_path,
             download_concurrency: 2,
+            dev_verbose: false,
         };
         let pool = db::connect(&config.database_url).await.unwrap();
         db::migrate(&pool).await.unwrap();

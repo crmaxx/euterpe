@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use euterpe_qobuz::{AlbumDetail, QobuzApi, Quality, TrackSummary};
+use euterpe_qobuz::{AlbumDetail, QobuzApi, QobuzError, Quality, TrackSummary};
 use futures_util::TryStreamExt;
 use reqwest::Client;
 use sqlx::SqlitePool;
@@ -10,9 +10,10 @@ use tokio_util::io::StreamReader;
 
 use crate::api::JobProgressEvent;
 use crate::config::AppConfig;
-use crate::db::download_jobs;
+use crate::db::{download_jobs, favorites};
 use crate::error::ApiError;
 use crate::library::paths::track_path;
+use crate::services::download::resolve::{push_album_api_candidate, resolve_from_qobuz_favorites};
 
 pub fn quality_from_format_id(id: u8) -> Option<Quality> {
     match id {
@@ -43,6 +44,143 @@ pub fn spawn_worker(
             }
         }
     })
+}
+
+async fn fetch_album_detail(
+    job_id: i64,
+    catalog_id: u64,
+    meta: Option<&favorites::FavoriteAlbumMeta>,
+    stored_api_id: Option<&str>,
+    deps: &WorkerDeps,
+) -> Result<AlbumDetail, ApiError> {
+    let guard = deps.qobuz.lock().await;
+
+    if let Some(api_id) = stored_api_id.map(str::trim).filter(|s| !s.is_empty()) {
+        tracing::debug!(
+            job_id,
+            qobuz_id = catalog_id,
+            api_album_id = %api_id,
+            "album/get attempt"
+        );
+        match guard.album_ref(api_id).await {
+            Ok(album) => {
+                tracing::info!(
+                    job_id,
+                    api_album_id = %api_id,
+                    resolved_id = album.summary.id,
+                    tracks = album.tracks.as_ref().map(|t| t.items.len()).unwrap_or(0),
+                    "album/get ok"
+                );
+                return Ok(album);
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(m) = meta {
+        if let Some(slug) = &m.slug {
+            push_album_api_candidate(&mut candidates, slug);
+        }
+    }
+
+    if candidates.is_empty() {
+        if let Ok(Some(api_id)) = resolve_from_qobuz_favorites(&*guard, catalog_id).await {
+            tracing::info!(
+                job_id,
+                qobuz_id = catalog_id,
+                album_api_id = %api_id,
+                "resolved album_api_id from Qobuz favorites (legacy job)"
+            );
+            push_album_api_candidate(&mut candidates, &api_id);
+        }
+    }
+
+    let numeric = catalog_id.to_string();
+    let mut last_err: Option<QobuzError> = None;
+
+    for api_id in &candidates {
+        tracing::debug!(job_id, qobuz_id = catalog_id, api_album_id = %api_id, "album/get attempt");
+        match guard.album_ref(api_id).await {
+            Ok(album) => {
+                tracing::info!(
+                    job_id,
+                    api_album_id = %api_id,
+                    resolved_id = album.summary.id,
+                    tracks = album.tracks.as_ref().map(|t| t.items.len()).unwrap_or(0),
+                    "album/get ok"
+                );
+                return Ok(album);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    job_id,
+                    api_album_id = %api_id,
+                    error = %e,
+                    "album/get failed"
+                );
+                last_err = Some(e);
+            }
+        }
+    }
+
+    if let Some(m) = meta {
+        let query = format!("{} {}", m.title, m.artist_name);
+        tracing::debug!(job_id, %query, "album/search fallback");
+        let results = guard.album_search(&query, 25).await?;
+        tracing::debug!(
+            job_id,
+            hits = results.len(),
+            "album/search results"
+        );
+        for hit in &results {
+            tracing::debug!(
+                job_id,
+                hit_id = hit.id,
+                hit_api_id = %hit.api_album_id(),
+                hit_title = %hit.title,
+                "album/search candidate"
+            );
+        }
+
+        let pick = results
+            .iter()
+            .find(|a| a.id == catalog_id)
+            .or_else(|| {
+                results.iter().find(|a| {
+                    m.title.eq_ignore_ascii_case(&a.title)
+                        || a.title.contains(m.title.as_str())
+                        || m.title.contains(&a.title)
+                })
+            })
+            .or(results.first());
+
+        if let Some(hit) = pick {
+            let api_id = hit.api_album_id();
+            tracing::info!(
+                job_id,
+                qobuz_id = catalog_id,
+                api_album_id = %api_id,
+                hit_id = hit.id,
+                "album/search match, retry album/get"
+            );
+            return guard.album_ref(&api_id).await.map_err(Into::into);
+        }
+    }
+
+    if !candidates.iter().any(|c| c == &numeric) {
+        tracing::debug!(job_id, api_album_id = %numeric, "album/get attempt (numeric fallback)");
+        match guard.album_ref(&numeric).await {
+            Ok(album) => return Ok(album),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(last_err.map(Into::into).unwrap_or_else(|| {
+        ApiError::Message(format!(
+            "album not found for qobuz_id {catalog_id}; run POST /api/v1/qobuz/sync or pass album_api_id (e.g. zg7pv28g4mldg)"
+        ))
+    }))
 }
 
 pub async fn run_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
@@ -77,10 +215,30 @@ async fn run_album_job(
     quality: Quality,
     deps: &WorkerDeps,
 ) -> Result<(), ApiError> {
-    let album = {
-        let guard = deps.qobuz.lock().await;
-        guard.album(album_id).await?
+    let meta = if album_id > 0 {
+        favorites::album_meta(&deps.pool, album_id).await?
+    } else {
+        None
     };
+    let payload = download_jobs::get_payload(&deps.pool, job_id).await?;
+    let stored_api_id = payload.and_then(|p| p.album_api_id);
+    tracing::info!(
+        job_id,
+        qobuz_id = album_id,
+        album_api_id = stored_api_id.as_deref(),
+        slug = meta.as_ref().and_then(|m| m.slug.as_deref()),
+        title = meta.as_ref().map(|m| m.title.as_str()),
+        "download job: resolving album"
+    );
+
+    let album = fetch_album_detail(
+        job_id,
+        album_id,
+        meta.as_ref(),
+        stored_api_id.as_deref(),
+        deps,
+    )
+    .await?;
 
     let tracks = album
         .tracks
@@ -116,6 +274,23 @@ async fn run_album_job(
     Ok(())
 }
 
+/// Skip re-download when a local file exists and its size matches the remote `Content-Length`.
+pub(crate) fn existing_file_matches_remote_size(local_len: u64, remote_len: Option<u64>) -> bool {
+    remote_len.is_some_and(|remote| remote == local_len)
+}
+
+async fn http_content_length(http: &Client, url: &str) -> Result<Option<u64>, ApiError> {
+    let response = http
+        .head(url)
+        .send()
+        .await
+        .map_err(|e| ApiError::Message(e.to_string()))?;
+    if !response.status().is_success() {
+        return Ok(None);
+    }
+    Ok(response.content_length())
+}
+
 async fn download_track(
     job_id: i64,
     album: &AlbumDetail,
@@ -139,6 +314,33 @@ async fn download_track(
         track,
         quality.format_id(),
     );
+
+    if dest.is_file() {
+        let local_len = tokio::fs::metadata(&dest)
+            .await
+            .map_err(|e| ApiError::Message(format!("stat {}: {e}", dest.display())))?
+            .len();
+        let remote_len = http_content_length(&deps.http, &url).await?;
+        if existing_file_matches_remote_size(local_len, remote_len) {
+            tracing::info!(
+                job_id,
+                track_id = track.id,
+                path = %dest.display(),
+                local_len,
+                remote_len = remote_len.unwrap(),
+                "track file exists with matching size, skipping download"
+            );
+            return Ok(());
+        }
+        tracing::info!(
+            job_id,
+            track_id = track.id,
+            path = %dest.display(),
+            local_len,
+            ?remote_len,
+            "track file exists but size differs or unknown, re-downloading"
+        );
+    }
 
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| {
@@ -185,7 +387,13 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use axum::{routing::get, Router};
+    use axum::{
+        body::Body,
+        http::{header, StatusCode},
+        response::Response,
+        routing::get,
+        Router,
+    };
     use euterpe_qobuz::{
         AlbumDetail, AlbumSummary, ArtistRef, Page, PageRequest, QobuzApi,
         QobuzError, Quality, StreamUrl, TrackSummary,
@@ -197,6 +405,35 @@ mod tests {
     use crate::api::DownloadJobType;
     use crate::config::AppConfig;
     use crate::db;
+
+    fn stream_mock_router(body: &'static [u8]) -> Router {
+        let content_len = body.len();
+        let get_body = body.to_vec();
+        Router::new().route(
+            "/stream",
+            get({
+                let get_body = get_body.clone();
+                move || {
+                    let get_body = get_body.clone();
+                    async move { get_body }
+                }
+            })
+            .head(move || async move {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, content_len.to_string())
+                    .body(Body::empty())
+                    .unwrap()
+            }),
+        )
+    }
+
+    #[test]
+    fn existing_file_matches_remote_size_only_when_equal() {
+        assert!(existing_file_matches_remote_size(100, Some(100)));
+        assert!(!existing_file_matches_remote_size(100, Some(99)));
+        assert!(!existing_file_matches_remote_size(100, None));
+    }
 
     struct MockDownloadQobuz {
         album: AlbumDetail,
@@ -212,7 +449,13 @@ mod tests {
             unimplemented!()
         }
         async fn favorites_all_albums(&self) -> Result<Vec<AlbumSummary>, QobuzError> {
-            unimplemented!()
+            Ok(vec![])
+        }
+        async fn favorites_album_api_id_for_catalog(
+            &self,
+            _catalog_id: u64,
+        ) -> Result<Option<String>, QobuzError> {
+            Ok(None)
         }
         async fn favorite_add_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
             Ok(())
@@ -236,6 +479,12 @@ mod tests {
         async fn album(&self, _album_id: u64) -> Result<AlbumDetail, QobuzError> {
             Ok(self.album.clone())
         }
+        async fn album_ref(&self, _album_id: &str) -> Result<AlbumDetail, QobuzError> {
+            Ok(self.album.clone())
+        }
+        async fn album_search(&self, _query: &str, _limit: u32) -> Result<Vec<AlbumSummary>, QobuzError> {
+            Ok(vec![])
+        }
         async fn artist_albums(&self, _id: u64) -> Result<Vec<AlbumSummary>, QobuzError> {
             unimplemented!()
         }
@@ -245,10 +494,7 @@ mod tests {
     async fn worker_downloads_album_tracks() {
         let dir = tempdir().unwrap();
         let body = b"fake-flac-bytes";
-        let app = Router::new().route(
-            "/stream",
-            get(|| async { body.to_vec() }),
-        );
+        let app = stream_mock_router(body);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -257,6 +503,7 @@ mod tests {
         let album = AlbumDetail {
             summary: AlbumSummary {
                 id: 99,
+                qobuz_id: None,
                 title: "Album".into(),
                 artist: Some(ArtistRef {
                     id: 1,
@@ -266,6 +513,9 @@ mod tests {
                 image: None,
                 release_date_original: None,
                 hires: None,
+                album_ref: None,
+                slug: None,
+                list_id: None,
             },
             tracks: Some(euterpe_qobuz::AlbumTracks {
                 items: vec![
@@ -292,9 +542,17 @@ mod tests {
 
         let pool = db::connect("sqlite::memory:").await.unwrap();
         db::migrate(&pool).await.unwrap();
-        let job_id = download_jobs::insert_queued(&pool, DownloadJobType::Album, 99, 6)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &pool,
+            DownloadJobType::Album,
+            99,
+            6,
+            Some(&crate::services::download::DownloadJobPayload {
+                album_api_id: Some("99".into()),
+            }),
+        )
+        .await
+        .unwrap();
 
         let (events, _) = broadcast::channel(8);
         let config = Arc::new(AppConfig {
@@ -306,8 +564,10 @@ mod tests {
             qobuz_auth_token: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
+            dev_verbose: false,
         });
 
+        let album_for_assert = album.clone();
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
@@ -325,10 +585,200 @@ mod tests {
         assert_eq!(job.status, crate::api::DownloadJobStatus::Completed);
         assert!((job.progress_pct - 100.0).abs() < f64::EPSILON);
 
-        let files: Vec<_> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .flatten()
-            .collect();
-        assert!(!files.is_empty());
+        let track1 = track_path(
+            dir.path(),
+            &album_for_assert,
+            &album_for_assert.tracks.as_ref().unwrap().items[0],
+            6,
+        );
+        assert_eq!(std::fs::read(track1).unwrap(), b"fake-flac-bytes");
+    }
+
+    #[tokio::test]
+    async fn worker_skips_existing_track_files() {
+        let dir = tempdir().unwrap();
+        let body = b"downloaded";
+        let app = stream_mock_router(body);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let album = AlbumDetail {
+            summary: AlbumSummary {
+                id: 99,
+                qobuz_id: None,
+                title: "Album".into(),
+                artist: Some(ArtistRef {
+                    id: 1,
+                    name: "Band".into(),
+                }),
+                artists: None,
+                image: None,
+                release_date_original: None,
+                hires: None,
+                album_ref: None,
+                slug: None,
+                list_id: None,
+            },
+            tracks: Some(euterpe_qobuz::AlbumTracks {
+                items: vec![
+                    TrackSummary {
+                        id: 1,
+                        title: "One".into(),
+                        track_number: Some(1),
+                        duration: None,
+                        performer: None,
+                        hires_streamable: None,
+                    },
+                    TrackSummary {
+                        id: 2,
+                        title: "Two".into(),
+                        track_number: Some(2),
+                        duration: None,
+                        performer: None,
+                        hires_streamable: None,
+                    },
+                ],
+            }),
+            description: None,
+        };
+
+        let existing = track_path(dir.path(), &album, &album.tracks.as_ref().unwrap().items[0], 6);
+        tokio::fs::create_dir_all(existing.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&existing, body).await.unwrap();
+
+        let pool = db::connect("sqlite::memory:").await.unwrap();
+        db::migrate(&pool).await.unwrap();
+        let job_id = download_jobs::insert_queued(
+            &pool,
+            DownloadJobType::Album,
+            99,
+            6,
+            Some(&crate::services::download::DownloadJobPayload {
+                album_api_id: Some("99".into()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let (events, _) = broadcast::channel(8);
+        let config = Arc::new(AppConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            database_url: "sqlite::memory:".into(),
+            admin_password: None,
+            master_key: None,
+            qobuz_user_id: None,
+            qobuz_auth_token: None,
+            library_path: dir.path().to_path_buf(),
+            download_concurrency: 2,
+            dev_verbose: false,
+        });
+
+        let deps = WorkerDeps {
+            pool: pool.clone(),
+            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+                album: album.clone(),
+                stream_url: format!("http://{addr}/stream"),
+            })),
+            config,
+            events,
+            http: Client::new(),
+        };
+
+        run_job(job_id, &deps).await.unwrap();
+
+        assert_eq!(std::fs::read(&existing).unwrap(), body);
+        let track2 = track_path(dir.path(), &album, &album.tracks.as_ref().unwrap().items[1], 6);
+        assert_eq!(std::fs::read(&track2).unwrap(), body);
+    }
+
+    #[tokio::test]
+    async fn worker_redownloads_when_existing_size_mismatches() {
+        let dir = tempdir().unwrap();
+        let body = b"downloaded";
+        let app = stream_mock_router(body);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let album = AlbumDetail {
+            summary: AlbumSummary {
+                id: 99,
+                qobuz_id: None,
+                title: "Album".into(),
+                artist: Some(ArtistRef {
+                    id: 1,
+                    name: "Band".into(),
+                }),
+                artists: None,
+                image: None,
+                release_date_original: None,
+                hires: None,
+                album_ref: None,
+                slug: None,
+                list_id: None,
+            },
+            tracks: Some(euterpe_qobuz::AlbumTracks {
+                items: vec![TrackSummary {
+                    id: 1,
+                    title: "One".into(),
+                    track_number: Some(1),
+                    duration: None,
+                    performer: None,
+                    hires_streamable: None,
+                }],
+            }),
+            description: None,
+        };
+
+        let existing = track_path(dir.path(), &album, &album.tracks.as_ref().unwrap().items[0], 6);
+        tokio::fs::create_dir_all(existing.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&existing, b"short").await.unwrap();
+
+        let pool = db::connect("sqlite::memory:").await.unwrap();
+        db::migrate(&pool).await.unwrap();
+        let job_id = download_jobs::insert_queued(
+            &pool,
+            DownloadJobType::Album,
+            99,
+            6,
+            Some(&crate::services::download::DownloadJobPayload {
+                album_api_id: Some("99".into()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let (events, _) = broadcast::channel(8);
+        let config = Arc::new(AppConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            database_url: "sqlite::memory:".into(),
+            admin_password: None,
+            master_key: None,
+            qobuz_user_id: None,
+            qobuz_auth_token: None,
+            library_path: dir.path().to_path_buf(),
+            download_concurrency: 2,
+            dev_verbose: false,
+        });
+
+        let deps = WorkerDeps {
+            pool: pool.clone(),
+            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+                album: album.clone(),
+                stream_url: format!("http://{addr}/stream"),
+            })),
+            config,
+            events,
+            http: Client::new(),
+        };
+
+        run_job(job_id, &deps).await.unwrap();
+
+        assert_eq!(std::fs::read(&existing).unwrap(), body);
     }
 }

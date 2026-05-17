@@ -104,10 +104,53 @@ impl QobuzClient {
             req = req.header("X-User-Auth-Token", uat);
         }
 
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                endpoint,
+                url = %url,
+                params = %redact_qobuz_params(params),
+                "qobuz api request"
+            );
+        }
+
         let response = req.send().await?;
         let status = response.status().as_u16();
         let body: serde_json::Value = response.json().await.unwrap_or(serde_json::json!({}));
+
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                endpoint,
+                status,
+                body = %truncate_json_for_log(&body),
+                "qobuz api response"
+            );
+        }
+
         Ok((status, body))
+    }
+}
+
+fn redact_qobuz_params(params: &[(&str, String)]) -> String {
+    params
+        .iter()
+        .map(|(k, v)| {
+            if *k == "user_auth_token" || *k == "password" {
+                format!("{k}=…")
+            } else {
+                format!("{k}={v}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn truncate_json_for_log(body: &serde_json::Value) -> String {
+    let s = body.to_string();
+    const MAX: usize = 512;
+    if s.len() <= MAX {
+        s
+    } else {
+        format!("{}…", &s[..MAX])
     }
 }
 

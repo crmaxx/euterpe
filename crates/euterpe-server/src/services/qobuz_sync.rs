@@ -26,9 +26,10 @@ pub async fn run(
 
         let mut added = 0u64;
         for album in &albums {
-            let (qobuz_id, title, artist) = album_fields(album);
+            let (qobuz_id, title, artist, album_api_id) = album_fields(album);
             let existed = before_set.contains(&qobuz_id);
-            favorites::upsert_album(pool, qobuz_id, &title, &artist).await?;
+            favorites::upsert_album(pool, qobuz_id, &title, &artist, album_api_id.as_deref())
+                .await?;
             if !existed {
                 added += 1;
             }
@@ -59,7 +60,7 @@ pub async fn run(
     }
 }
 
-fn album_fields(album: &AlbumSummary) -> (u64, String, String) {
+fn album_fields(album: &AlbumSummary) -> (u64, String, String, Option<String>) {
     let artist = album
         .artist
         .as_ref()
@@ -72,7 +73,10 @@ fn album_fields(album: &AlbumSummary) -> (u64, String, String) {
                 .map(|a| a.name.clone())
         })
         .unwrap_or_default();
-    (album.id, album.title.clone(), artist)
+    let album_api_id = album
+        .pick_album_api_id(album.id)
+        .unwrap_or_else(|| album.api_album_id());
+    (album.id, album.title.clone(), artist, Some(album_api_id))
 }
 
 #[cfg(test)]
@@ -111,6 +115,13 @@ mod tests {
             Ok(self.albums.lock().await.clone())
         }
 
+        async fn favorites_album_api_id_for_catalog(
+            &self,
+            _catalog_id: u64,
+        ) -> Result<Option<String>, QobuzError> {
+            Ok(None)
+        }
+
         async fn favorite_add_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
             Ok(())
         }
@@ -131,6 +142,18 @@ mod tests {
             unimplemented!()
         }
 
+        async fn album_ref(&self, _album_id: &str) -> Result<euterpe_qobuz::AlbumDetail, QobuzError> {
+            unimplemented!()
+        }
+
+        async fn album_search(
+            &self,
+            _query: &str,
+            _limit: u32,
+        ) -> Result<Vec<AlbumSummary>, QobuzError> {
+            Ok(vec![])
+        }
+
         async fn artist_albums(
             &self,
             _artist_id: u64,
@@ -142,6 +165,7 @@ mod tests {
     fn album(id: u64, title: &str) -> AlbumSummary {
         AlbumSummary {
             id,
+            qobuz_id: None,
             title: title.into(),
             artist: Some(euterpe_qobuz::ArtistRef {
                 id: 1,
@@ -151,6 +175,9 @@ mod tests {
             image: None,
             release_date_original: None,
             hires: None,
+            album_ref: None,
+            slug: None,
+            list_id: None,
         }
     }
 
@@ -158,6 +185,37 @@ mod tests {
         let pool = db::connect("sqlite::memory:").await.unwrap();
         db::migrate(&pool).await.unwrap();
         pool
+    }
+
+    #[tokio::test]
+    async fn sync_persists_album_api_id_for_album_get() {
+        let pool = test_pool().await;
+        let album = AlbumSummary {
+            id: 393908828,
+            qobuz_id: Some(393908828),
+            title: "Lutosławski".into(),
+            artist: Some(euterpe_qobuz::ArtistRef {
+                id: 1,
+                name: "Luxembourg Philharmonic".into(),
+            }),
+            artists: None,
+            image: None,
+            release_date_original: None,
+            hires: Some(true),
+            album_ref: Some("zg7pv28g4mldg".into()),
+            slug: Some("lutosawski-concertos-for-cello".into()),
+            list_id: Some(3149020953969),
+        };
+        let mock: Arc<Mutex<dyn QobuzApi>> =
+            Arc::new(Mutex::new(MockQobuz::new(vec![album])));
+
+        run(&pool, mock).await.unwrap();
+
+        let meta = favorites::album_meta(&pool, 393908828)
+            .await
+            .unwrap()
+            .expect("album in db");
+        assert_eq!(meta.slug.as_deref(), Some("zg7pv28g4mldg"));
     }
 
     #[tokio::test]

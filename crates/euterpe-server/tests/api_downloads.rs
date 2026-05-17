@@ -16,6 +16,29 @@ use support::{
 };
 
 #[tokio::test]
+async fn create_download_rejects_empty_album_api_id() {
+    let mock = DownloadMockQobuz::new();
+    let state = state_with_download_mock(mock).await;
+    let app = app::app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/downloads")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"job_type":"album","album_api_id":"","quality":6}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn create_download_returns_202() {
     let mock = DownloadMockQobuz::new();
     let state = state_with_download_mock(mock).await;
@@ -28,7 +51,7 @@ async fn create_download_returns_202() {
                 .uri("/api/v1/downloads")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"job_type":"album","qobuz_id":99,"quality":6}"#,
+                    r#"{"job_type":"album","album_api_id":"99","qobuz_id":99,"quality":6}"#,
                 ))
                 .unwrap(),
         )
@@ -56,6 +79,7 @@ async fn download_job_completes_via_worker() {
     let album = AlbumDetail {
         summary: AlbumSummary {
             id: 99,
+            qobuz_id: None,
             title: "Test".into(),
             artist: Some(ArtistRef {
                 id: 1,
@@ -65,6 +89,9 @@ async fn download_job_completes_via_worker() {
             image: None,
             release_date_original: None,
             hires: None,
+            album_ref: None,
+            slug: None,
+            list_id: None,
         },
         tracks: Some(AlbumTracks {
             items: vec![TrackSummary {
@@ -94,7 +121,7 @@ async fn download_job_completes_via_worker() {
                 .uri("/api/v1/downloads")
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    r#"{"job_type":"album","qobuz_id":99,"quality":6}"#,
+                    r#"{"job_type":"album","album_api_id":"99","qobuz_id":99,"quality":6}"#,
                 ))
                 .unwrap(),
         )

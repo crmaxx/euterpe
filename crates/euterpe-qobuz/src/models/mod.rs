@@ -1,4 +1,4 @@
-mod deser;
+pub mod deser;
 mod album;
 mod artist;
 mod favorites;

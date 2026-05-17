@@ -24,6 +24,9 @@ pub struct QobuzSyncResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QobuzFavoriteItem {
+    /// Value for `album/get` and `POST /downloads` (`album_api_id`).
+    pub album_api_id: String,
+    /// Catalog id when known (from `qobuz_id` in Qobuz JSON).
     pub qobuz_id: i64,
     pub title: String,
     pub artist_name: String,

@@ -96,6 +96,7 @@ async fn list_favorites_paginated() {
     );
     assert_eq!(json["total"], 1);
     assert_eq!(json["items"][0]["qobuz_id"], 1);
+    assert_eq!(json["items"][0]["album_api_id"], "1");
     assert_eq!(json["items"][0]["in_library"], false);
 }
 

@@ -57,10 +57,16 @@ mod tests {
     }
 
     #[test]
+    fn extension_for_hires_plus_is_flac() {
+        assert_eq!(extension_for_quality(27), "flac");
+    }
+
+    #[test]
     fn track_path_layout() {
         let album = AlbumDetail {
             summary: AlbumSummary {
                 id: 1,
+                qobuz_id: None,
                 title: "Test Album".into(),
                 artist: Some(ArtistRef {
                     id: 2,
@@ -70,6 +76,9 @@ mod tests {
                 image: None,
                 release_date_original: None,
                 hires: None,
+                album_ref: None,
+                slug: None,
+                list_id: None,
             },
             tracks: None,
             description: None,

@@ -2,6 +2,7 @@ use sqlx::SqlitePool;
 
 use crate::api::{DownloadJob, DownloadJobStatus, DownloadJobType};
 use crate::error::ApiError;
+use crate::services::download::DownloadJobPayload;
 
 #[derive(Debug, sqlx::FromRow)]
 struct JobRow {
@@ -56,30 +57,67 @@ pub async fn insert_queued(
     job_type: DownloadJobType,
     qobuz_id: u64,
     quality: u8,
+    payload: Option<&DownloadJobPayload>,
 ) -> Result<i64, ApiError> {
+    let payload_json = payload
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| ApiError::Message(format!("job payload: {e}")))?;
     let result = sqlx::query(
         r#"
-        INSERT INTO download_jobs (status, job_type, qobuz_id, quality)
-        VALUES ('queued', ?, ?, ?)
+        INSERT INTO download_jobs (status, job_type, qobuz_id, quality, payload_json)
+        VALUES ('queued', ?, ?, ?, ?)
         "#,
     )
     .bind(job_type.as_str())
     .bind(qobuz_id as i64)
     .bind(quality as i32)
+    .bind(payload_json)
     .execute(pool)
     .await?;
     Ok(result.last_insert_rowid())
 }
 
-pub async fn has_running_album(pool: &SqlitePool, qobuz_id: u64, quality: u8) -> Result<bool, ApiError> {
+pub async fn get_payload(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<Option<DownloadJobPayload>, ApiError> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT payload_json FROM download_jobs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((json,)) = row else {
+        return Ok(None);
+    };
+    let Some(json) = json else {
+        return Ok(Some(DownloadJobPayload::default()));
+    };
+    let payload: DownloadJobPayload = serde_json::from_str(&json)
+        .map_err(|e| ApiError::Message(format!("invalid job payload: {e}")))?;
+    Ok(Some(payload))
+}
+
+pub async fn has_running_album(
+    pool: &SqlitePool,
+    album_api_id: &str,
+    qobuz_id: Option<u64>,
+    quality: u8,
+) -> Result<bool, ApiError> {
     let row: (i64,) = sqlx::query_as(
         r#"
         SELECT COUNT(*) FROM download_jobs
-        WHERE status = 'running' AND job_type = 'album' AND qobuz_id = ? AND quality = ?
+        WHERE status = 'running' AND job_type = 'album' AND quality = ?
+          AND (
+            json_extract(payload_json, '$.album_api_id') = ?
+            OR (? IS NOT NULL AND qobuz_id = ?)
+          )
         "#,
     )
-    .bind(qobuz_id as i64)
     .bind(quality as i32)
+    .bind(album_api_id)
+    .bind(qobuz_id.map(|id| id as i64))
+    .bind(qobuz_id.map(|id| id as i64))
     .fetch_one(pool)
     .await?;
     Ok(row.0 > 0)
@@ -209,10 +247,42 @@ mod tests {
     async fn claim_running_only_from_queued() {
         let pool = crate::db::connect("sqlite::memory:").await.unwrap();
         crate::db::migrate(&pool).await.unwrap();
-        let id = insert_queued(&pool, DownloadJobType::Album, 42, 6)
+        let id = insert_queued(&pool, DownloadJobType::Album, 42, 6, None)
             .await
             .unwrap();
         assert!(claim_running(&pool, id).await.unwrap());
         assert!(!claim_running(&pool, id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn has_running_album_matches_payload_album_api_id() {
+        use crate::services::download::DownloadJobPayload;
+
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        let payload = DownloadJobPayload {
+            album_api_id: Some("zg7pv28g4mldg".into()),
+        };
+        let id = insert_queued(
+            &pool,
+            DownloadJobType::Album,
+            0,
+            6,
+            Some(&payload),
+        )
+        .await
+        .unwrap();
+        claim_running(&pool, id).await.unwrap();
+
+        assert!(
+            has_running_album(&pool, "zg7pv28g4mldg", None, 6)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !has_running_album(&pool, "other-album", None, 6)
+                .await
+                .unwrap()
+        );
     }
 }
