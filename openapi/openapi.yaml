@@ -168,37 +168,112 @@ paths:
       operationId: createDownload
       tags: [Downloads]
       summary: Queue a download job
-      x-euterpe-phase: 3
       security:
         - AdminBearer: []
         - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDownloadRequest"
       responses:
-        "501":
-          description: Not implemented in Phase 2
+        "202":
+          description: Job queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDownloadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: listDownloads
       tags: [Downloads]
       summary: List download jobs
-      x-euterpe-phase: 3
       security:
         - AdminBearer: []
         - {}
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/DownloadJobStatus"
       responses:
-        "501":
-          description: Not implemented in Phase 2
+        "200":
+          description: Job list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadJobListResponse"
+
+  /api/v1/downloads/{id}:
+    get:
+      operationId: getDownload
+      tags: [Downloads]
+      summary: Get download job by id
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Job detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadJob"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: cancelDownload
+      tags: [Downloads]
+      summary: Cancel a queued or running download job
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "204":
+          description: Cancelled
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/events:
     get:
       operationId: subscribeEvents
       tags: [Events]
-      summary: Server-sent events stream
-      x-euterpe-phase: 3
+      summary: Server-sent events stream (job progress)
       security:
         - AdminBearer: []
         - {}
       responses:
-        "501":
-          description: Not implemented in Phase 2
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
 
 components:
   securitySchemes:
@@ -228,6 +303,18 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
     BadGateway:
       description: Upstream Qobuz error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: Conflict with current state
       content:
         application/json:
           schema:
@@ -352,3 +439,95 @@ components:
             format: int64
             minimum: 1
           minItems: 1
+
+    DownloadJobStatus:
+      type: string
+      enum: [queued, running, completed, failed, cancelled]
+
+    DownloadJobType:
+      type: string
+      enum: [album, track, artist, playlist]
+
+    CreateDownloadRequest:
+      type: object
+      required: [job_type, qobuz_id, quality]
+      additionalProperties: false
+      properties:
+        job_type:
+          $ref: "#/components/schemas/DownloadJobType"
+        qobuz_id:
+          type: integer
+          format: int64
+          minimum: 1
+        quality:
+          type: integer
+          description: Qobuz format_id (5=MP3, 6=FLAC, 7=Hi-Res, 27=Hi-Res+)
+          enum: [5, 6, 7, 27]
+
+    CreateDownloadResponse:
+      type: object
+      required: [job_id]
+      additionalProperties: false
+      properties:
+        job_id:
+          type: integer
+          format: int64
+
+    DownloadJob:
+      type: object
+      required:
+        - id
+        - status
+        - job_type
+        - qobuz_id
+        - quality
+        - progress_pct
+        - created_at
+        - updated_at
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/DownloadJobStatus"
+        job_type:
+          $ref: "#/components/schemas/DownloadJobType"
+        qobuz_id:
+          type: integer
+          format: int64
+        quality:
+          type: integer
+        progress_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        error_message:
+          type: ["string", "null"]
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    DownloadJobListResponse:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DownloadJob"
+
+    JobProgressEvent:
+      type: object
+      required: [id, progress_pct]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        progress_pct:
+          type: number
+          minimum: 0
+          maximum: 100

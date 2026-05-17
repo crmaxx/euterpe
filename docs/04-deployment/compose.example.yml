@@ -17,6 +17,7 @@ services:
       EUTERPE_BIND: 0.0.0.0:8080
       EUTERPE_DATABASE_URL: sqlite:/data/library.db?mode=rwc
       EUTERPE_LIBRARY_PATH: /music
+      EUTERPE_DOWNLOAD_CONCURRENCY: 3
       # Set in .env file (never commit):
       # EUTERPE_QOBUZ_USER_ID: ${EUTERPE_QOBUZ_USER_ID}
       # EUTERPE_QOBUZ_AUTH_TOKEN: ${EUTERPE_QOBUZ_AUTH_TOKEN}

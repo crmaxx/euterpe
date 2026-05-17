@@ -33,7 +33,7 @@ UI → POST /api/v1/qobuz/favorites { album_ids: [42] }
 ## 3. Постановка загрузки альбома (Phase 3)
 
 ```
-UI → POST /api/v1/downloads { album_id, quality }
+UI → POST /api/v1/downloads { job_type: "album", qobuz_id, quality }
    → insert download_job queued
    → worker: album/get → for each track getFileUrl → HTTP GET url → write /music/...
    → SSE progress events

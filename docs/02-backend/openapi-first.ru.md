@@ -32,9 +32,9 @@ npx --yes @redocly/cli lint openapi/openapi.yaml
 | `GET /api/openapi.json` | Spec в JSON (для Swagger/Redoc, codegen) |
 | `GET /health` | Liveness |
 
-## Phase 3+ в spec
+## Phase 3 (реализовано)
 
-Endpoints вроде `/api/v1/downloads` могут присутствовать в YAML с `x-euterpe-phase: 3` до реализации. Server возвращает `501` до соответствующей фазы.
+`/api/v1/downloads` (CRUD) и `/api/v1/events` (SSE) описаны в `openapi/openapi.yaml` и реализованы в `euterpe-server`. Contract tests: `api_downloads.rs`, `api_events.rs`.
 
 ## Contract tests
 

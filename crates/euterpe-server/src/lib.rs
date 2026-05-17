@@ -7,8 +7,10 @@ pub mod crypto;
 pub mod credentials;
 pub mod db;
 pub mod error;
+pub mod library;
 pub mod middleware;
 pub mod openapi;
+pub mod routes;
 pub mod services;
 pub mod state;
 

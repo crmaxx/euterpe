@@ -1,3 +1,4 @@
+pub mod download_jobs;
 pub mod favorites;
 pub mod settings;
 pub mod sync_runs;
@@ -103,5 +104,6 @@ mod tests {
         assert!(names.contains(&"settings".to_string()));
         assert!(names.contains(&"qobuz_favorites".to_string()));
         assert!(names.contains(&"qobuz_sync_runs".to_string()));
+        assert!(names.contains(&"download_jobs".to_string()));
     }
 }

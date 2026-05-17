@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use euterpe_qobuz::QobuzApi;
 use sqlx::SqlitePool;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, mpsc, Mutex};
 
+use crate::api::JobProgressEvent;
 use crate::config::AppConfig;
 use crate::credentials::{self, QobuzCredentials};
 use crate::crypto::MasterKey;
@@ -14,10 +15,17 @@ pub struct AppState {
     pub db: SqlitePool,
     pub config: Arc<AppConfig>,
     pub qobuz: Arc<Mutex<dyn QobuzApi>>,
+    pub job_tx: mpsc::Sender<i64>,
+    pub events: broadcast::Sender<JobProgressEvent>,
 }
 
 impl AppState {
-    pub async fn new(config: AppConfig, db: SqlitePool) -> Result<Self, ApiError> {
+    pub async fn new(
+        config: AppConfig,
+        db: SqlitePool,
+        job_tx: mpsc::Sender<i64>,
+        events: broadcast::Sender<JobProgressEvent>,
+    ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
         let qobuz: Arc<Mutex<dyn QobuzApi>> = if let Some(creds) =
             credentials::load_from_env_or_db(&config, &db).await?
@@ -28,7 +36,13 @@ impl AppState {
             Arc::new(Mutex::new(NoopQobuz))
         };
 
-        Ok(Self { db, config, qobuz })
+        Ok(Self {
+            db,
+            config,
+            qobuz,
+            job_tx,
+            events,
+        })
     }
 
     pub async fn require_credentials(&self) -> Result<QobuzCredentials, ApiError> {

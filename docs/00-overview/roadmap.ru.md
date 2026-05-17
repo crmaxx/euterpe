@@ -32,12 +32,12 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - `GET /api/openapi.json`, `GET /health`
 - TDD: axum + mock `QobuzApi` per route
 
-## Phase 3 — Download pipeline
+## Phase 3 — Download pipeline ✅
 
-- `download_jobs`, Tokio worker
-- Stream URL → file on `/music`
-- SSE progress
-- TDD: job state machine unit tests
+- `download_jobs` (migration `002_phase3_download_jobs.sql`), Tokio worker + `mpsc` queue
+- Album download: stream URL → `{EUTERPE_LIBRARY_PATH}/{artist}/{album}/…`
+- REST: `POST/GET/DELETE /api/v1/downloads`, SSE `GET /api/v1/events`
+- TDD: state machine unit tests, `api_downloads`, `api_events`
 
 ## Phase 4 — Frontend
 
