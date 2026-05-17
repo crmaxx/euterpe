@@ -33,14 +33,16 @@ impl Quality {
     }
 }
 
-const PROBE_TRACK_ID: u64 = 5_966_783;
+/// Probe track IDs used by reference clients (streamrip / qobuz-sync).
+const PROBE_TRACK_IDS: &[u64] = &[19_512_574, 5_966_783];
 
 impl QobuzClient {
     pub async fn track_stream_url(
-        &self,
+        &mut self,
         track_id: u64,
         quality: Quality,
     ) -> Result<StreamUrl, QobuzError> {
+        self.ensure_active_secret().await?;
         let secret = self
             .state
             .active_secret
@@ -50,17 +52,57 @@ impl QobuzClient {
             .await
     }
 
-    pub(crate) async fn probe_secret(&self, secret: &str) -> bool {
-        match self
-            .track_stream_url_with_secret(PROBE_TRACK_ID, Quality::Mp3_320, secret)
-            .await
-        {
-            Ok(_) => true,
-            Err(QobuzError::NonStreamable(_)) => true,
-            Err(QobuzError::Authentication(_)) => true,
-            Err(QobuzError::InvalidAppSecret) | Err(QobuzError::InvalidSignature) => false,
-            Err(_) => false,
+    /// Select a working app secret (streamrip `_get_valid_secret`). Called lazily before streaming.
+    pub async fn ensure_active_secret(&mut self) -> Result<(), QobuzError> {
+        if self.state.active_secret.is_some() {
+            return Ok(());
         }
+        for secret in self.state.secrets.clone() {
+            if self.probe_secret(&secret).await {
+                self.state.active_secret = Some(secret);
+                return Ok(());
+            }
+        }
+        Err(QobuzError::InvalidAppSecret)
+    }
+
+    /// Returns true if `secret` is accepted for signing (streamrip: status 200 or 401, not 400).
+    pub(crate) async fn probe_secret(&self, secret: &str) -> bool {
+        for &track_id in PROBE_TRACK_IDS {
+            match self.file_url_status(track_id, Quality::Mp3_320, secret).await {
+                Ok(400) => continue,
+                // 200 with restrictions / empty url still proves the secret signature is valid.
+                Ok(200) | Ok(401) | Ok(403) => return true,
+                Ok(_) => return true,
+                Err(_) => continue,
+            }
+        }
+        false
+    }
+
+    async fn file_url_status(
+        &self,
+        track_id: u64,
+        quality: Quality,
+        secret: &str,
+    ) -> Result<u16, QobuzError> {
+        let format_id = quality.format_id();
+        let request_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let request_sig = sign_track_file_url(format_id, track_id, request_ts, secret);
+
+        let params = vec![
+            ("track_id", track_id.to_string()),
+            ("format_id", format_id.to_string()),
+            ("intent", "stream".to_string()),
+            ("request_ts", request_ts.to_string()),
+            ("request_sig", request_sig),
+        ];
+
+        let (status, _) = self.get_json("track/getFileUrl", &params).await?;
+        Ok(status)
     }
 
     async fn track_stream_url_with_secret(
@@ -77,7 +119,7 @@ impl QobuzClient {
         let request_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_secs() as i64;
+            .as_secs_f64();
         let request_sig = sign_track_file_url(format_id, track_id, request_ts, secret);
 
         let params = vec![

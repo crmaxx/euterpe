@@ -60,8 +60,7 @@ impl QobuzClient {
             client.login().await?;
         }
 
-        client.select_active_secret().await?;
-
+        // App secret probe is deferred until `track_stream_url` (favorites/catalog need UAT only).
         Ok(client)
     }
 
@@ -82,16 +81,6 @@ impl QobuzClient {
     pub(crate) fn apply_auth_headers(&mut self) {
         // Headers are applied per-request in get_json
         let _ = &mut self.http;
-    }
-
-    async fn select_active_secret(&mut self) -> Result<(), QobuzError> {
-        for secret in self.state.secrets.clone() {
-            if self.probe_secret(&secret).await {
-                self.state.active_secret = Some(secret);
-                return Ok(());
-            }
-        }
-        Err(QobuzError::InvalidAppSecret)
     }
 
     pub(crate) async fn get_json(
@@ -176,9 +165,11 @@ mod tests {
             .create_async()
             .await;
 
-        let client = QobuzClient::connect(cfg).await.unwrap();
+        let mut client = QobuzClient::connect(cfg).await.unwrap();
         assert!(client.is_authenticated());
         assert_eq!(client.state.app_id, "123456789");
+        assert!(client.state.active_secret.is_none());
+        client.ensure_active_secret().await.unwrap();
         assert!(client.state.active_secret.is_some());
     }
 

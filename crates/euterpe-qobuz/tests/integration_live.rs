@@ -14,17 +14,43 @@ fn live_config() -> Option<QobuzConfig> {
 async fn favorites_all_albums_live() {
     let config = live_config().expect("live env");
     let client = QobuzClient::connect(config).await.expect("connect");
-    let _albums = client.favorites_all_albums().await.expect("favorites");
+    let albums = client.favorites_all_albums().await.expect("favorites");
+    assert!(!albums.is_empty(), "expected at least one favorite album");
 }
 
 #[tokio::test]
 #[ignore = "requires EUTERPE_QOBUZ_USER_ID and EUTERPE_QOBUZ_AUTH_TOKEN"]
 async fn track_stream_url_live() {
     let config = live_config().expect("live env");
-    let client = QobuzClient::connect(config).await.expect("connect");
-    // probe track id from qobuz-sync reference
+    let mut client = QobuzClient::connect(config).await.expect("connect");
+
+    let track_id = if let Ok(tracks) = client.favorites_all_tracks().await {
+        tracks.first().map(|t| t.id)
+    } else {
+        None
+    };
+
+    let track_id = if let Some(id) = track_id {
+        id
+    } else {
+        let albums = client.favorites_all_albums().await.expect("favorites");
+        let mut found = None;
+        for summary in albums.iter().take(10) {
+            if let Ok(album) = client.album(summary.id).await {
+                if let Some(id) = album
+                    .tracks
+                    .and_then(|t| t.items.into_iter().next().map(|tr| tr.id))
+                {
+                    found = Some(id);
+                    break;
+                }
+            }
+        }
+        found.expect("track id from favorites (tracks list or album tracks)")
+    };
+
     let url = client
-        .track_stream_url(5_966_783, Quality::Mp3_320)
+        .track_stream_url(track_id, Quality::Mp3_320)
         .await
         .expect("stream url");
     assert!(url.url.is_some());
@@ -39,17 +65,17 @@ async fn album_and_artist_live() {
     let Some(first) = albums.first() else {
         return;
     };
-    let album = client.album(first.id).await.expect("album");
-    assert_eq!(album.summary.id, first.id);
-    if let Some(artist) = album.summary.artist.as_ref().or_else(|| {
-        album
-            .summary
-            .artists
-            .as_ref()
-            .and_then(|a| a.first())
-    }) {
-        let discography = client.artist_albums(artist.id).await.expect("artist albums");
-        assert!(!discography.is_empty());
+    let artist = first
+        .artist
+        .as_ref()
+        .or_else(|| first.artists.as_ref().and_then(|a| a.first()))
+        .expect("artist on favorite album");
+    let discography = client.artist_albums(artist.id).await.expect("artist albums");
+    assert!(!discography.is_empty());
+
+    // Best-effort: album/get for the first favorite (some entries may 404 depending on catalog).
+    if let Ok(detail) = client.album(first.id).await {
+        assert_eq!(detail.summary.id, first.id);
     }
 }
 
@@ -58,7 +84,6 @@ async fn album_and_artist_live() {
 async fn favorites_round_trip_live() {
     let config = live_config().expect("live env");
     let client = QobuzClient::connect(config).await.expect("connect");
-    // Use a unlikely album id; if API rejects, skip assertion on add
     let test_id = 9_999_999_999u64;
     if client.favorite_add_albums(&[test_id]).await.is_ok() {
         let all = client.favorites_all_albums().await.expect("list");

@@ -31,8 +31,8 @@ pub fn md5_hex(input: &str) -> String {
     format!("{:x}", digest)
 }
 
-/// Sign `track/getFileUrl` (qopy / qobuz-sync / streamrip).
-pub fn sign_track_file_url(format_id: u8, track_id: u64, request_ts: i64, secret: &str) -> String {
+/// Sign `track/getFileUrl` (qopy / streamrip use `time.time()` float in the sig string).
+pub fn sign_track_file_url(format_id: u8, track_id: u64, request_ts: f64, secret: &str) -> String {
     let raw = format!(
         "trackgetFileUrlformat_id{format_id}intentstreamtrack_id{track_id}{request_ts}{secret}"
     );
@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn sign_track_file_url_golden() {
-        let sig = sign_track_file_url(6, 12_345_678, 1_715_900_000, "test_secret");
+        let sig = sign_track_file_url(6, 12_345_678, 1_715_900_000.0, "test_secret");
         assert_eq!(sig, "968e435667d547d87708bc87e09ce2d0");
     }
 

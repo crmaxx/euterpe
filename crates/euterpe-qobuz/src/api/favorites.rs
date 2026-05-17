@@ -1,6 +1,8 @@
 use crate::client::QobuzClient;
 use crate::error::QobuzError;
-use crate::models::{AlbumSummary, FavoriteType, FavoritesAlbumsResponse};
+use crate::models::{
+    AlbumSummary, FavoriteType, FavoritesAlbumsResponse, FavoritesTracksResponse, TrackSummary,
+};
 use crate::pagination::{fetch_all_pages, Page, PageRequest};
 use crate::signing::{sign_favorites, FavoritesSignMode};
 
@@ -9,9 +11,10 @@ impl QobuzClient {
         &self,
         page: PageRequest,
     ) -> Result<Page<AlbumSummary>, QobuzError> {
-        let response = self
-            .favorites_get_user_favorites(FavoriteType::Albums, page)
+        let body = self
+            .favorites_get_user_favorites_json(FavoriteType::Albums, page)
             .await?;
+        let response: FavoritesAlbumsResponse = serde_json::from_value(body)?;
         Ok(Page {
             items: response.albums.items,
             total: response.albums.total,
@@ -22,6 +25,26 @@ impl QobuzClient {
 
     pub async fn favorites_all_albums(&self) -> Result<Vec<AlbumSummary>, QobuzError> {
         fetch_all_pages(|page| self.favorites_albums(page)).await
+    }
+
+    pub async fn favorites_tracks(
+        &self,
+        page: PageRequest,
+    ) -> Result<Page<TrackSummary>, QobuzError> {
+        let body = self
+            .favorites_get_user_favorites_json(FavoriteType::Tracks, page)
+            .await?;
+        let response: FavoritesTracksResponse = serde_json::from_value(body)?;
+        Ok(Page {
+            items: response.tracks.items,
+            total: response.tracks.total,
+            limit: response.tracks.limit,
+            offset: response.tracks.offset,
+        })
+    }
+
+    pub async fn favorites_all_tracks(&self) -> Result<Vec<TrackSummary>, QobuzError> {
+        fetch_all_pages(|page| self.favorites_tracks(page)).await
     }
 
     pub async fn favorite_add_albums(&self, ids: &[u64]) -> Result<(), QobuzError> {
@@ -58,11 +81,11 @@ impl QobuzClient {
         Ok(())
     }
 
-    async fn favorites_get_user_favorites(
+    async fn favorites_get_user_favorites_json(
         &self,
         favorite_type: FavoriteType,
         page: PageRequest,
-    ) -> Result<FavoritesAlbumsResponse, QobuzError> {
+    ) -> Result<serde_json::Value, QobuzError> {
         let modes = if self.config.favorites_sign_mode == FavoritesSignMode::None {
             FavoritesSignMode::fallback_order().to_vec()
         } else {
@@ -102,7 +125,7 @@ impl QobuzClient {
         favorite_type: FavoriteType,
         page: PageRequest,
         mode: FavoritesSignMode,
-    ) -> Result<FavoritesAlbumsResponse, QobuzError> {
+    ) -> Result<serde_json::Value, QobuzError> {
         let request_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -122,9 +145,11 @@ impl QobuzClient {
                 params.push(("request_sig", sig));
             }
             FavoritesSignMode::TimestampSecret => {
-                let secret = self.state.active_secret.as_deref().ok_or(
-                    QobuzError::InvalidAppSecret,
-                )?;
+                let secret = self
+                    .state
+                    .active_secret
+                    .as_deref()
+                    .ok_or(QobuzError::InvalidSignature)?;
                 let sig = sign_favorites(request_ts, Some(secret));
                 params.push(("request_ts", request_ts.to_string()));
                 params.push(("request_sig", sig));
@@ -149,6 +174,6 @@ impl QobuzClient {
             ));
         }
 
-        serde_json::from_value(body).map_err(QobuzError::from)
+        Ok(body)
     }
 }

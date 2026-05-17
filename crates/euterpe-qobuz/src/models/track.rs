@@ -1,10 +1,13 @@
 use serde::Deserialize;
 
 use super::artist::ArtistRef;
+use super::deser::{deserialize_null_string, deserialize_opt_f64, deserialize_qobuz_id};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrackSummary {
+    #[serde(deserialize_with = "deserialize_qobuz_id")]
     pub id: u64,
+    #[serde(default, deserialize_with = "deserialize_null_string")]
     pub title: String,
     #[serde(rename = "track_number")]
     pub track_number: Option<u32>,
@@ -19,10 +22,10 @@ pub struct StreamUrl {
     pub url: Option<String>,
     #[serde(rename = "format_id")]
     pub format_id: Option<u8>,
-    #[serde(rename = "sampling_rate")]
-    pub sampling_rate: Option<u32>,
-    #[serde(rename = "bit_depth")]
-    pub bit_depth: Option<u32>,
+    #[serde(rename = "sampling_rate", deserialize_with = "deserialize_opt_f64", default)]
+    pub sampling_rate: Option<f64>,
+    #[serde(rename = "bit_depth", deserialize_with = "deserialize_opt_f64", default)]
+    pub bit_depth: Option<f64>,
     pub restrictions: Option<Vec<StreamRestriction>>,
 }
 

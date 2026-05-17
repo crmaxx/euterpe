@@ -18,7 +18,10 @@ struct ArtistAlbumsBlock {
 
 impl QobuzClient {
     pub async fn album(&self, album_id: u64) -> Result<AlbumDetail, QobuzError> {
-        let params = vec![("album_id", album_id.to_string())];
+        let params = vec![
+            ("app_id", self.state.app_id.clone()),
+            ("album_id", album_id.to_string()),
+        ];
         let (status, body) = self.get_json("album/get", &params).await?;
         if status != 200 {
             return Err(QobuzError::from_status("album/get", status, &body));
@@ -36,6 +39,7 @@ impl QobuzClient {
         page: PageRequest,
     ) -> Result<crate::pagination::Page<AlbumSummary>, QobuzError> {
         let params = vec![
+            ("app_id", self.state.app_id.clone()),
             ("artist_id", artist_id.to_string()),
             ("extra", "albums".to_string()),
             ("limit", page.limit.to_string()),

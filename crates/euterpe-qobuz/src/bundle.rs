@@ -78,24 +78,36 @@ pub fn decode_secrets(bundle: &str) -> Result<Vec<String>, QobuzError> {
         }
     }
 
+    // Decode every timezone block (streamrip: `list(secrets.values())`), prefer reordered keys first.
+    let mut decode_order: Vec<String> = keys.clone();
+    for tz in secrets.keys() {
+        if !decode_order.contains(tz) {
+            decode_order.push(tz.clone());
+        }
+    }
+
     let mut decoded = Vec::new();
-    for key in &keys {
-        let parts = secrets.get(key).ok_or_else(|| {
+    for key in decode_order {
+        let parts = secrets.get(&key).ok_or_else(|| {
             QobuzError::BundleParse(format!("missing info/extras for timezone {key}"))
         })?;
+        if parts.len() < 3 {
+            continue;
+        }
         let joined = parts.join("");
         if joined.len() <= 44 {
-            return Err(QobuzError::BundleParse(format!(
-                "joined secret payload too short for {key}"
-            )));
+            continue;
         }
         let b64 = &joined[..joined.len() - 44];
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .map_err(|e| QobuzError::BundleParse(format!("base64 decode failed: {e}")))?;
-        let secret = String::from_utf8(bytes)
-            .map_err(|e| QobuzError::BundleParse(format!("utf8 decode failed: {e}")))?;
-        if !secret.is_empty() {
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(b64) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let secret = match String::from_utf8(bytes) {
+            Ok(s) if !s.is_empty() => s,
+            _ => continue,
+        };
+        if !decoded.contains(&secret) {
             decoded.push(secret);
         }
     }

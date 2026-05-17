@@ -110,7 +110,7 @@ async fn track_stream_url_mock() {
 
     let mut cfg = QobuzConfig::session_token(1, "uat");
     cfg.api_base = format!("{}/api.json/0.2", server.url());
-    let client = QobuzClient::new_for_test(cfg, "123456789".into(), vec!["secret".into()]);
+    let mut client = QobuzClient::new_for_test(cfg, "123456789".into(), vec!["secret".into()]);
 
     let stream = client
         .track_stream_url(123, Quality::FlacCd)
@@ -135,7 +135,7 @@ async fn track_stream_url_restrictions() {
 
     let mut cfg = QobuzConfig::session_token(1, "uat");
     cfg.api_base = format!("{}/api.json/0.2", server.url());
-    let client = QobuzClient::new_for_test(cfg, "123456789".into(), vec!["secret".into()]);
+    let mut client = QobuzClient::new_for_test(cfg, "123456789".into(), vec!["secret".into()]);
 
     let err = client
         .track_stream_url(1, Quality::Mp3_320)

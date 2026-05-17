@@ -21,7 +21,7 @@ pub trait QobuzApi: Send + Sync {
     async fn favorite_remove_albums(&self, ids: &[u64]) -> Result<(), QobuzError>;
 
     async fn track_stream_url(
-        &self,
+        &mut self,
         track_id: u64,
         quality: Quality,
     ) -> Result<StreamUrl, QobuzError>;
@@ -53,7 +53,7 @@ impl QobuzApi for QobuzClient {
     }
 
     async fn track_stream_url(
-        &self,
+        &mut self,
         track_id: u64,
         quality: Quality,
     ) -> Result<StreamUrl, QobuzError> {
