@@ -1,0 +1,15 @@
+{
+  "albums": {
+    "total": 1,
+    "limit": 500,
+    "offset": 0,
+    "items": [
+      {
+        "id": 1001,
+        "title": "Test Album",
+        "artist": { "id": 200, "name": "Test Artist" },
+        "hires": true
+      }
+    ]
+  }
+}

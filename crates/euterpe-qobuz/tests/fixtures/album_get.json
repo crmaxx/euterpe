@@ -1,0 +1,16 @@
+{
+  "id": 5001,
+  "title": "Catalog Album",
+  "artist": { "id": 10, "name": "Performer" },
+  "description": "An album for tests.",
+  "tracks": {
+    "items": [
+      {
+        "id": 9001,
+        "title": "Track One",
+        "track_number": 1,
+        "duration": 240
+      }
+    ]
+  }
+}

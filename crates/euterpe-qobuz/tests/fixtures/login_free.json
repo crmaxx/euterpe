@@ -1,0 +1,9 @@
+{
+  "user_auth_token": "free-token",
+  "user": {
+    "id": 1,
+    "credential": {
+      "parameters": {}
+    }
+  }
+}

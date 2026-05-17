@@ -1,0 +1,11 @@
+{
+  "albums": {
+    "total": 3,
+    "limit": 2,
+    "offset": 0,
+    "items": [
+      { "id": 1001, "title": "A1", "artist": { "id": 1, "name": "Ar" } },
+      { "id": 1002, "title": "A2", "artist": { "id": 1, "name": "Ar" } }
+    ]
+  }
+}
