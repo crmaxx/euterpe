@@ -4,7 +4,9 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use reqwest::Client;
 use serde::Deserialize;
+use tokio::sync::{broadcast, mpsc};
 use tower_http::trace::TraceLayer;
 
 use crate::api::{
@@ -17,6 +19,8 @@ use crate::db::{self, favorites};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
+use crate::routes::{downloads, events};
+use crate::services::download::{spawn_worker, WorkerDeps};
 use crate::services::qobuz_sync;
 use crate::state::AppState;
 
@@ -30,8 +34,12 @@ pub fn app(state: AppState) -> Router {
                 .post(add_favorites)
                 .delete(remove_favorites),
         )
-        .route("/api/v1/downloads", post(not_implemented).get(not_implemented))
-        .route("/api/v1/events", get(not_implemented))
+        .route("/api/v1/downloads", post(downloads::create_download).get(downloads::list_downloads))
+        .route(
+            "/api/v1/downloads/{id}",
+            get(downloads::get_download).delete(downloads::cancel_download),
+        )
+        .route("/api/v1/events", get(events::subscribe_events))
         .layer(axum::middleware::from_fn_with_state(
             state.config.clone(),
             middleware::admin_auth,
@@ -46,13 +54,39 @@ pub fn app(state: AppState) -> Router {
 }
 
 pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    config.ensure_library_root()?;
+
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
-    let state = AppState::new(config.clone(), pool).await?;
+
+    let (job_tx, job_rx) = mpsc::channel(32);
+    let (events, _) = broadcast::channel(64);
+
+    let bind = config.bind;
+    let config = Arc::new(config);
+    let state = AppState::new(
+        (*config).clone(),
+        pool.clone(),
+        job_tx,
+        events.clone(),
+    )
+    .await?;
+
+    let worker_deps = WorkerDeps {
+        pool,
+        qobuz: Arc::clone(&state.qobuz),
+        config: Arc::clone(&state.config),
+        events,
+        http: Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .build()?,
+    };
+    spawn_worker(job_rx, worker_deps);
+
     let router = app(state);
 
-    let listener = tokio::net::TcpListener::bind(config.bind).await?;
-    tracing::info!("listening on {}", config.bind);
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    tracing::info!("listening on {}", bind);
     axum::serve(listener, router).await?;
     Ok(())
 }
@@ -66,10 +100,6 @@ async fn health() -> Json<HealthResponse> {
 
 async fn openapi_json() -> Result<Json<serde_json::Value>, ApiError> {
     Ok(Json(openapi::spec_json().map_err(|e| ApiError::Config(e.to_string()))?))
-}
-
-async fn not_implemented() -> StatusCode {
-    StatusCode::NOT_IMPLEMENTED
 }
 
 async fn qobuz_test_login(
@@ -167,8 +197,13 @@ async fn remove_favorites(
 pub mod test_support {
     use super::*;
     use crate::db;
+    use crate::services::download::{spawn_worker, WorkerDeps};
 
     pub async fn test_state() -> AppState {
+        let library_path = std::env::temp_dir().join(format!(
+            "euterpe-server-test-{}",
+            std::process::id()
+        ));
         let config = AppConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             database_url: "sqlite::memory:".into(),
@@ -178,9 +213,30 @@ pub mod test_support {
             ),
             qobuz_user_id: None,
             qobuz_auth_token: None,
+            library_path,
+            download_concurrency: 2,
         };
         let pool = db::connect(&config.database_url).await.unwrap();
         db::migrate(&pool).await.unwrap();
-        AppState::new(config, pool).await.unwrap()
+
+        let (job_tx, job_rx) = mpsc::channel(32);
+        let (events, _) = broadcast::channel(16);
+
+        let state = AppState::new(config.clone(), pool.clone(), job_tx, events.clone())
+            .await
+            .unwrap();
+
+        spawn_worker(
+            job_rx,
+            WorkerDeps {
+                pool,
+                qobuz: Arc::clone(&state.qobuz),
+                config: Arc::new(config),
+                events,
+                http: Client::new(),
+            },
+        );
+
+        state
     }
 }

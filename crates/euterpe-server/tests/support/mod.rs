@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use euterpe_qobuz::{
-    AlbumDetail, AlbumSummary, Page, PageRequest, QobuzApi, QobuzError, Quality, StreamUrl,
+    AlbumDetail, AlbumSummary, ArtistRef, Page, PageRequest, QobuzApi, QobuzError, Quality,
+    StreamUrl, TrackSummary,
 };
 use euterpe_server::app::test_support::test_state;
 use euterpe_server::AppState;
@@ -77,6 +78,137 @@ impl QobuzApi for MockQobuz {
     async fn artist_albums(&self, _artist_id: u64) -> Result<Vec<AlbumSummary>, QobuzError> {
         unimplemented!()
     }
+}
+
+pub struct DownloadMockQobuz {
+    pub album: AlbumDetail,
+    pub stream_url: String,
+}
+
+impl DownloadMockQobuz {
+    pub fn new() -> Self {
+        Self {
+            album: AlbumDetail {
+                summary: AlbumSummary {
+                    id: 99,
+                    title: "Album".into(),
+                    artist: Some(ArtistRef {
+                        id: 1,
+                        name: "Artist".into(),
+                    }),
+                    artists: None,
+                    image: None,
+                    release_date_original: None,
+                    hires: None,
+                },
+                tracks: Some(euterpe_qobuz::AlbumTracks {
+                    items: vec![TrackSummary {
+                        id: 1,
+                        title: "One".into(),
+                        track_number: Some(1),
+                        duration: None,
+                        performer: None,
+                        hires_streamable: None,
+                    }],
+                }),
+                description: None,
+            },
+            stream_url: "http://127.0.0.1:9/cdn".into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl QobuzApi for DownloadMockQobuz {
+    async fn favorites_albums(
+        &self,
+        _page: PageRequest,
+    ) -> Result<Page<AlbumSummary>, QobuzError> {
+        unimplemented!()
+    }
+
+    async fn favorites_all_albums(&self) -> Result<Vec<AlbumSummary>, QobuzError> {
+        Ok(vec![])
+    }
+
+    async fn favorite_add_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
+        Ok(())
+    }
+
+    async fn favorite_remove_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
+        Ok(())
+    }
+
+    async fn track_stream_url(
+        &mut self,
+        _track_id: u64,
+        _quality: Quality,
+    ) -> Result<StreamUrl, QobuzError> {
+        Ok(StreamUrl {
+            url: Some(self.stream_url.clone()),
+            format_id: Some(6),
+            sampling_rate: None,
+            bit_depth: None,
+            restrictions: None,
+        })
+    }
+
+    async fn album(&self, _album_id: u64) -> Result<AlbumDetail, QobuzError> {
+        Ok(self.album.clone())
+    }
+
+    async fn artist_albums(&self, _artist_id: u64) -> Result<Vec<AlbumSummary>, QobuzError> {
+        unimplemented!()
+    }
+}
+
+pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
+    use euterpe_server::config::AppConfig;
+    use euterpe_server::db;
+    use euterpe_server::services::download::{spawn_worker, WorkerDeps};
+    use reqwest::Client;
+    use tokio::sync::{broadcast, mpsc};
+
+    let library_path =
+        std::env::temp_dir().join(format!("euterpe-dl-test-{}", std::process::id()));
+    let config = AppConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        database_url: "sqlite::memory:".into(),
+        admin_password: None,
+        master_key: None,
+        qobuz_user_id: Some(1),
+        qobuz_auth_token: Some("test".into()),
+        library_path,
+        download_concurrency: 2,
+    };
+    let pool = db::connect(&config.database_url).await.unwrap();
+    db::migrate(&pool).await.unwrap();
+
+    let (job_tx, job_rx) = mpsc::channel(32);
+    let (events, _) = broadcast::channel(16);
+    let qobuz: Arc<Mutex<dyn QobuzApi>> = Arc::new(Mutex::new(mock));
+    let config = Arc::new(config);
+
+    let state = AppState {
+        db: pool.clone(),
+        config: Arc::clone(&config),
+        qobuz: Arc::clone(&qobuz),
+        job_tx,
+        events: events.clone(),
+    };
+
+    spawn_worker(
+        job_rx,
+        WorkerDeps {
+            pool,
+            qobuz,
+            config,
+            events,
+            http: Client::new(),
+        },
+    );
+
+    state
 }
 
 pub async fn state_with_mock(mock: MockQobuz) -> AppState {

@@ -5,7 +5,7 @@ mod favorites;
 mod track;
 mod user;
 
-pub use album::{AlbumDetail, AlbumSummary, Image};
+pub use album::{AlbumDetail, AlbumSummary, AlbumTracks, Image};
 pub use artist::ArtistRef;
 pub use favorites::{FavoriteType, FavoritesAlbumsResponse, FavoritesTracksResponse};
 pub use user::LoginResponse;

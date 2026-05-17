@@ -17,7 +17,8 @@ pub use client::QobuzClient;
 pub use config::{AuthConfig, QobuzConfig};
 pub use error::QobuzError;
 pub use models::{
-    AlbumDetail, AlbumSummary, ArtistRef, FavoriteType, FavoritesAlbumsResponse, Image,
+    AlbumDetail, AlbumSummary, AlbumTracks, ArtistRef, FavoriteType, FavoritesAlbumsResponse,
+    Image,
     LoginResponse, StreamUrl, TrackSummary, UserProfile,
 };
 pub use signing::{sign_favorites, sign_track_file_url};

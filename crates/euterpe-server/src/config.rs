@@ -13,6 +13,8 @@ pub struct AppConfig {
     pub master_key: Option<MasterKey>,
     pub qobuz_user_id: Option<u64>,
     pub qobuz_auth_token: Option<String>,
+    pub library_path: PathBuf,
+    pub download_concurrency: usize,
 }
 
 impl AppConfig {
@@ -49,6 +51,15 @@ impl AppConfig {
             .ok()
             .filter(|s| !s.is_empty());
 
+        let library_path = PathBuf::from(
+            env::var("EUTERPE_LIBRARY_PATH").unwrap_or_else(|_| "/music".into()),
+        );
+
+        let download_concurrency = env::var("EUTERPE_DOWNLOAD_CONCURRENCY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3);
+
         Ok(Self {
             bind,
             database_url,
@@ -56,6 +67,17 @@ impl AppConfig {
             master_key,
             qobuz_user_id,
             qobuz_auth_token,
+            library_path,
+            download_concurrency,
+        })
+    }
+
+    pub fn ensure_library_root(&self) -> Result<(), ApiError> {
+        std::fs::create_dir_all(&self.library_path).map_err(|e| {
+            ApiError::Config(format!(
+                "cannot create EUTERPE_LIBRARY_PATH {}: {e}",
+                self.library_path.display()
+            ))
         })
     }
 }

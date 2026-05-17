@@ -108,19 +108,21 @@ Trigger favorites sync (albums default).
 
 List jobs.
 
-### GET /api/v1/downloads/:id
+### GET /api/v1/downloads/{id}
 
-Job detail.
+Job detail. **404** if missing.
 
-### DELETE /api/v1/downloads/:id
+### DELETE /api/v1/downloads/{id}
 
-Cancel if queued/running.
+Cancel if queued/running. **204** on success; **409** if already completed.
+
+Query `?status=queued|running|completed|failed|cancelled` on list.
 
 ## Events (Phase 3)
 
 ### GET /api/v1/events
 
-SSE stream.
+SSE stream (`text/event-stream`). Events: `job_progress` with `{ "id", "progress_pct" }`.
 
 ## Errors
 

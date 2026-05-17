@@ -32,9 +32,15 @@ src/
 ├── credentials.rs
 ├── openapi.rs         # embedded spec → /api/openapi.json
 ├── db/
+├── library/
+│   └── paths.rs       # track path template + sanitize
+├── routes/
+│   ├── downloads.rs
+│   └── events.rs      # SSE job_progress
 ├── services/
-│   └── qobuz_sync.rs
-└── (downloads, sse — Phase 3+)
+│   ├── qobuz_sync.rs
+│   └── download/
+│       └── worker.rs
 ```
 
 ## AppState
@@ -42,8 +48,10 @@ src/
 ```rust
 pub struct AppState {
     pub db: sqlx::SqlitePool,
-    pub qobuz: Arc<RwLock<QobuzClient>>,
+    pub qobuz: Arc<Mutex<dyn QobuzApi>>,
     pub config: Arc<AppConfig>,
+    pub job_tx: mpsc::Sender<i64>,
+    pub events: broadcast::Sender<ServerEvent>,
 }
 ```
 
@@ -72,7 +80,7 @@ Mock `QobuzApi` trait for sync routes.
 
 См. [openapi-first.ru.md](openapi-first.ru.md), [ADR 0006](../adr/0006-openapi-first.md).
 
-Contract tests: `crates/euterpe-server/tests/openapi_contract.rs`, `api_qobuz.rs`.
+Contract tests: `openapi_contract.rs`, `api_qobuz.rs`, `api_downloads.rs`, `api_events.rs`.
 
 ## Endpoints
 
