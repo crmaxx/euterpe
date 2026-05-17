@@ -13,8 +13,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Validate OpenAPI
-        run: npx --yes @redocly/cli lint openapi/openapi.yaml
+      - name: Validate OpenAPI and build docs
+        working-directory: openapi
+        run: |
+          npm ci
+          npm run lint
+          npm run build
 
   test:
     runs-on: ubuntu-latest

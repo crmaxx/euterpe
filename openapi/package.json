@@ -1,0 +1,15 @@
+{
+  "name": "@euterpe/openapi",
+  "private": true,
+  "description": "Euterpe REST API contract — lint, bundle, and standalone HTML docs",
+  "scripts": {
+    "lint": "redocly lint",
+    "bundle": "redocly bundle euterpe -o bundled.yaml",
+    "preview": "redocly preview --product redoc -p 8088 -d .",
+    "build": "mkdir -p dist && redocly build-docs euterpe -o dist/index.html",
+    "serve": "npm run build && npx --yes serve dist -l 8088"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.30.6"
+  }
+}

@@ -84,6 +84,15 @@ impl QobuzApi for NoopQobuz {
         ))
     }
 
+    async fn favorites_album_api_id_for_catalog(
+        &self,
+        _catalog_id: u64,
+    ) -> Result<Option<String>, euterpe_qobuz::QobuzError> {
+        Err(euterpe_qobuz::QobuzError::Config(
+            "qobuz not configured".into(),
+        ))
+    }
+
     async fn favorite_add_albums(&self, _ids: &[u64]) -> Result<(), euterpe_qobuz::QobuzError> {
         Err(euterpe_qobuz::QobuzError::Config(
             "qobuz not configured".into(),
@@ -110,6 +119,25 @@ impl QobuzApi for NoopQobuz {
         &self,
         _album_id: u64,
     ) -> Result<euterpe_qobuz::AlbumDetail, euterpe_qobuz::QobuzError> {
+        Err(euterpe_qobuz::QobuzError::Config(
+            "qobuz not configured".into(),
+        ))
+    }
+
+    async fn album_ref(
+        &self,
+        _album_id: &str,
+    ) -> Result<euterpe_qobuz::AlbumDetail, euterpe_qobuz::QobuzError> {
+        Err(euterpe_qobuz::QobuzError::Config(
+            "qobuz not configured".into(),
+        ))
+    }
+
+    async fn album_search(
+        &self,
+        _query: &str,
+        _limit: u32,
+    ) -> Result<Vec<euterpe_qobuz::AlbumSummary>, euterpe_qobuz::QobuzError> {
         Err(euterpe_qobuz::QobuzError::Config(
             "qobuz not configured".into(),
         ))

@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub qobuz_auth_token: Option<String>,
     pub library_path: PathBuf,
     pub download_concurrency: usize,
+    /// Verbose HTTP + Qobuz API debug logs (`EUTERPE_DEV=true`).
+    pub dev_verbose: bool,
 }
 
 impl AppConfig {
@@ -60,6 +62,10 @@ impl AppConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(3);
 
+        let dev_verbose = env::var("EUTERPE_DEV")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+
         Ok(Self {
             bind,
             database_url,
@@ -69,6 +75,7 @@ impl AppConfig {
             qobuz_auth_token,
             library_path,
             download_concurrency,
+            dev_verbose,
         })
     }
 

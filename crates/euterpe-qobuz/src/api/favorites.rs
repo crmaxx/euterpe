@@ -1,10 +1,33 @@
 use crate::client::QobuzClient;
 use crate::error::QobuzError;
+use crate::models::deser::{parse_album_ref_value, parse_id_value};
 use crate::models::{
     AlbumSummary, FavoriteType, FavoritesAlbumsResponse, FavoritesTracksResponse, TrackSummary,
 };
 use crate::pagination::{fetch_all_pages, Page, PageRequest};
 use crate::signing::{sign_favorites, FavoritesSignMode};
+
+fn favorite_item_matches_catalog(item: &serde_json::Value, catalog_id: u64) -> bool {
+    if let Some(v) = item.get("qobuz_id") {
+        return parse_id_value(v).ok() == Some(catalog_id);
+    }
+    item.get("id")
+        .and_then(|v| parse_id_value(v).ok())
+        == Some(catalog_id)
+}
+
+fn favorite_item_album_api_id(item: &serde_json::Value) -> Option<String> {
+    if let Some(v) = item.get("id") {
+        if let Some(short) = parse_album_ref_value(v) {
+            return Some(short);
+        }
+    }
+    item.get("slug")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
 
 impl QobuzClient {
     pub async fn favorites_albums(
@@ -25,6 +48,55 @@ impl QobuzClient {
 
     pub async fn favorites_all_albums(&self) -> Result<Vec<AlbumSummary>, QobuzError> {
         fetch_all_pages(|page| self.favorites_albums(page)).await
+    }
+
+    /// Scan favorites JSON for `qobuz_id` (no per-album `album/get` calls).
+    pub async fn favorites_album_api_id_for_catalog(
+        &self,
+        catalog_id: u64,
+    ) -> Result<Option<String>, QobuzError> {
+        let limit = 500u32;
+        let mut offset = 0u32;
+        loop {
+            let body = self
+                .favorites_get_user_favorites_json(
+                    FavoriteType::Albums,
+                    PageRequest { limit, offset },
+                )
+                .await?;
+            let block = body.get("albums");
+            let total = block
+                .and_then(|b| b.get("total"))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0) as u32;
+            if let Some(items) = block
+                .and_then(|b| b.get("items"))
+                .and_then(|i| i.as_array())
+            {
+                for item in items {
+                    if !favorite_item_matches_catalog(item, catalog_id) {
+                        continue;
+                    }
+                    if let Some(api_id) = favorite_item_album_api_id(item) {
+                        tracing::debug!(
+                            qobuz_id = catalog_id,
+                            album_api_id = %api_id,
+                            "favorites JSON match for catalog id"
+                        );
+                        return Ok(Some(api_id));
+                    }
+                    tracing::warn!(
+                        qobuz_id = catalog_id,
+                        "favorite matched catalog id but has no slug or short id in JSON"
+                    );
+                }
+            }
+            offset += limit;
+            if offset >= total {
+                break;
+            }
+        }
+        Ok(None)
     }
 
     pub async fn favorites_tracks(
@@ -175,5 +247,64 @@ impl QobuzClient {
         }
 
         Ok(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn favorite_item_lookup_by_qobuz_id() {
+        let item: serde_json::Value = serde_json::from_str(
+            r#"{
+                "id": "zg7pv28g4mldg",
+                "qobuz_id": 393908828,
+                "slug": "lutosawski-concertos",
+                "title": "Test"
+            }"#,
+        )
+        .unwrap();
+        assert!(favorite_item_matches_catalog(&item, 393908828));
+        assert_eq!(
+            favorite_item_album_api_id(&item).as_deref(),
+            Some("zg7pv28g4mldg")
+        );
+    }
+
+    #[test]
+    fn favorite_item_does_not_match_wrong_catalog_id() {
+        let item: serde_json::Value = serde_json::from_str(
+            r#"{"id": "abc", "qobuz_id": 1, "title": "X"}"#,
+        )
+        .unwrap();
+        assert!(!favorite_item_matches_catalog(&item, 393908828));
+    }
+
+    #[test]
+    fn favorite_item_api_id_from_slug_when_id_is_upc_numeric() {
+        let item: serde_json::Value = serde_json::from_str(
+            r#"{
+                "id": 3149020953969,
+                "qobuz_id": 393908828,
+                "slug": "lutosawski-concertos",
+                "title": "Test"
+            }"#,
+        )
+        .unwrap();
+        assert!(favorite_item_matches_catalog(&item, 393908828));
+        assert_eq!(
+            favorite_item_album_api_id(&item).as_deref(),
+            Some("lutosawski-concertos")
+        );
+    }
+
+    #[test]
+    fn favorite_item_matches_legacy_id_when_qobuz_id_absent() {
+        let item: serde_json::Value = serde_json::from_str(
+            r#"{"id": 42, "slug": "my-album", "title": "Test"}"#,
+        )
+        .unwrap();
+        assert!(favorite_item_matches_catalog(&item, 42));
     }
 }

@@ -23,8 +23,11 @@ pub enum QobuzError {
     #[error("forbidden")]
     Forbidden,
 
-    #[error("not found: {endpoint}")]
-    NotFound { endpoint: String },
+    #[error("not found: {endpoint}: {message}")]
+    NotFound {
+        endpoint: String,
+        message: String,
+    },
 
     #[error("rate limited")]
     RateLimit,
@@ -76,6 +79,7 @@ impl QobuzError {
             403 => Self::Forbidden,
             404 => Self::NotFound {
                 endpoint: endpoint.to_string(),
+                message,
             },
             429 => Self::RateLimit,
             500..=599 => Self::Upstream { status, message },

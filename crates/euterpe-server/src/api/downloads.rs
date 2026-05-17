@@ -56,8 +56,12 @@ impl DownloadJobType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateDownloadRequest {
     pub job_type: DownloadJobType,
-    pub qobuz_id: u64,
+    /// Qobuz `album/get` id (short ref e.g. `zg7pv28g4mldg` or long slug). See `album_api_id` on favorites.
+    pub album_api_id: String,
     pub quality: u8,
+    /// Catalog `qobuz_id` for dedup and display; optional if unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qobuz_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

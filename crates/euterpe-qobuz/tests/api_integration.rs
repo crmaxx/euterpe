@@ -11,6 +11,40 @@ fn deserialize_favorites_albums_page0() {
 }
 
 #[tokio::test]
+async fn favorites_album_api_id_for_catalog_mock() {
+    let body = r#"{
+        "albums": {
+            "total": 1,
+            "limit": 500,
+            "offset": 0,
+            "items": [{
+                "id": "zg7pv28g4mldg",
+                "qobuz_id": 393908828,
+                "title": "Lutosławski",
+                "slug": "lutosawski-concertos"
+            }]
+        }
+    }"#;
+    let mut server = mockito::Server::new_async().await;
+    let _m = server
+        .mock("GET", mockito::Matcher::Regex(r".*/favorite/getUserFavorites.*".into()))
+        .with_status(200)
+        .with_body(body)
+        .create_async()
+        .await;
+
+    let mut cfg = QobuzConfig::session_token(1, "uat");
+    cfg.api_base = format!("{}/api.json/0.2", server.url());
+    let client = QobuzClient::new_for_test(cfg, "123456789".into(), vec!["secret".into()]);
+
+    let api_id = client
+        .favorites_album_api_id_for_catalog(393908828)
+        .await
+        .unwrap();
+    assert_eq!(api_id.as_deref(), Some("zg7pv28g4mldg"));
+}
+
+#[tokio::test]
 async fn favorites_list_mock() {
     let mut server = mockito::Server::new_async().await;
     let body = include_str!("fixtures/favorites_albums_page0.json");
@@ -150,6 +184,20 @@ async fn album_get_fixture() {
     let album: euterpe_qobuz::AlbumDetail = serde_json::from_str(json).unwrap();
     assert_eq!(album.summary.title, "Catalog Album");
     assert_eq!(album.tracks.as_ref().unwrap().items.len(), 1);
+}
+
+#[test]
+fn album_get_string_id_fixture() {
+    let json = r#"{
+        "id": "zg7pv28g4mldg",
+        "qobuz_id": 393908828,
+        "title": "Lutosławski",
+        "tracks": { "items": [{ "id": 1, "title": "T", "track_number": 1, "duration": 1 }] }
+    }"#;
+    let album: euterpe_qobuz::AlbumDetail = serde_json::from_str(json).unwrap();
+    assert_eq!(album.summary.id, 393908828);
+    assert_eq!(album.summary.album_ref.as_deref(), Some("zg7pv28g4mldg"));
+    assert_eq!(album.summary.api_album_id(), "zg7pv28g4mldg");
 }
 
 #[tokio::test]

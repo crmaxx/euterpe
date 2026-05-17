@@ -8,6 +8,8 @@ euterpe/
 ├── README.md
 ├── openapi/
 │   ├── openapi.yaml           # REST contract (OpenAPI 3.1)
+│   ├── package.json           # Redocly: lint, preview, build HTML
+│   ├── redocly.yaml
 │   └── README.md
 ├── docs/                      # эта документация
 ├── crates/
@@ -21,7 +23,7 @@ euterpe/
 ├── docker/
 │   ├── Dockerfile
 │   └── nginx-spa.conf         # optional
-└── .github/workflows/ci.yml   # cargo test + Redocly lint
+└── .github/workflows/ci.yml   # cargo test + openapi lint/build
 ```
 
 ## Workspace Cargo.toml

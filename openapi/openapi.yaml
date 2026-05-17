@@ -397,9 +397,12 @@ components:
 
     QobuzFavoriteItem:
       type: object
-      required: [qobuz_id, title, artist_name, in_library]
+      required: [album_api_id, qobuz_id, title, artist_name, in_library]
       additionalProperties: false
       properties:
+        album_api_id:
+          type: string
+          description: Qobuz `album/get` id (short ref or slug). Use as `album_api_id` in POST /downloads.
         qobuz_id:
           type: integer
           format: int64
@@ -450,19 +453,23 @@ components:
 
     CreateDownloadRequest:
       type: object
-      required: [job_type, qobuz_id, quality]
+      required: [job_type, album_api_id, quality]
       additionalProperties: false
       properties:
         job_type:
           $ref: "#/components/schemas/DownloadJobType"
-        qobuz_id:
-          type: integer
-          format: int64
-          minimum: 1
+        album_api_id:
+          type: string
+          description: Qobuz `album/get` id (short ref e.g. zg7pv28g4mldg). From GET /api/v1/qobuz/favorites.
         quality:
           type: integer
           description: Qobuz format_id (5=MP3, 6=FLAC, 7=Hi-Res, 27=Hi-Res+)
           enum: [5, 6, 7, 27]
+        qobuz_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optional catalog id for dedup and job display.
 
     CreateDownloadResponse:
       type: object

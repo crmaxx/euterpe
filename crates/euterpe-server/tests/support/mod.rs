@@ -26,6 +26,7 @@ impl MockQobuz {
         use euterpe_qobuz::ArtistRef;
         AlbumSummary {
             id,
+            qobuz_id: None,
             title: title.into(),
             artist: Some(ArtistRef {
                 id: 1,
@@ -35,6 +36,9 @@ impl MockQobuz {
             image: None,
             release_date_original: None,
             hires: None,
+            album_ref: None,
+            slug: None,
+            list_id: None,
         }
     }
 }
@@ -53,6 +57,13 @@ impl QobuzApi for MockQobuz {
             return Err(QobuzError::Authentication("mock auth fail".into()));
         }
         Ok(self.albums.lock().await.clone())
+    }
+
+    async fn favorites_album_api_id_for_catalog(
+        &self,
+        _catalog_id: u64,
+    ) -> Result<Option<String>, QobuzError> {
+        Ok(None)
     }
 
     async fn favorite_add_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
@@ -75,6 +86,14 @@ impl QobuzApi for MockQobuz {
         unimplemented!()
     }
 
+    async fn album_ref(&self, _album_id: &str) -> Result<AlbumDetail, QobuzError> {
+        unimplemented!()
+    }
+
+    async fn album_search(&self, _query: &str, _limit: u32) -> Result<Vec<AlbumSummary>, QobuzError> {
+        Ok(vec![])
+    }
+
     async fn artist_albums(&self, _artist_id: u64) -> Result<Vec<AlbumSummary>, QobuzError> {
         unimplemented!()
     }
@@ -91,6 +110,7 @@ impl DownloadMockQobuz {
             album: AlbumDetail {
                 summary: AlbumSummary {
                     id: 99,
+                    qobuz_id: None,
                     title: "Album".into(),
                     artist: Some(ArtistRef {
                         id: 1,
@@ -100,6 +120,9 @@ impl DownloadMockQobuz {
                     image: None,
                     release_date_original: None,
                     hires: None,
+                    album_ref: None,
+                    slug: None,
+                    list_id: None,
                 },
                 tracks: Some(euterpe_qobuz::AlbumTracks {
                     items: vec![TrackSummary {
@@ -131,6 +154,13 @@ impl QobuzApi for DownloadMockQobuz {
         Ok(vec![])
     }
 
+    async fn favorites_album_api_id_for_catalog(
+        &self,
+        _catalog_id: u64,
+    ) -> Result<Option<String>, QobuzError> {
+        Ok(None)
+    }
+
     async fn favorite_add_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
         Ok(())
     }
@@ -157,6 +187,14 @@ impl QobuzApi for DownloadMockQobuz {
         Ok(self.album.clone())
     }
 
+    async fn album_ref(&self, _album_id: &str) -> Result<AlbumDetail, QobuzError> {
+        Ok(self.album.clone())
+    }
+
+    async fn album_search(&self, _query: &str, _limit: u32) -> Result<Vec<AlbumSummary>, QobuzError> {
+        Ok(vec![])
+    }
+
     async fn artist_albums(&self, _artist_id: u64) -> Result<Vec<AlbumSummary>, QobuzError> {
         unimplemented!()
     }
@@ -180,6 +218,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         qobuz_auth_token: Some("test".into()),
         library_path,
         download_concurrency: 2,
+        dev_verbose: false,
     };
     let pool = db::connect(&config.database_url).await.unwrap();
     db::migrate(&pool).await.unwrap();
