@@ -1,0 +1,14 @@
+{
+  "albums": {
+    "total": 3,
+    "limit": 2,
+    "offset": 2,
+    "items": [
+      {
+        "id": 1003,
+        "title": "Page Two Album",
+        "artist": { "id": 200, "name": "Test Artist" }
+      }
+    ]
+  }
+}

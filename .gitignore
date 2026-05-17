@@ -1,0 +1,5 @@
+/target/
+**/*.rs.bk
+.env
+compose.yml
+docs/references/

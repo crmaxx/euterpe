@@ -1,0 +1,13 @@
+{
+  "user_auth_token": "new-uat-token",
+  "user": {
+    "id": 99,
+    "email": "user@example.com",
+    "display_name": "Test User",
+    "credential": {
+      "parameters": {
+        "short_label": "Studio"
+      }
+    }
+  }
+}

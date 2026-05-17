@@ -1,0 +1,10 @@
+{
+  "albums": {
+    "total": 3,
+    "limit": 2,
+    "offset": 2,
+    "items": [
+      { "id": 3, "title": "Disc 3", "artist": { "id": 77, "name": "Band" } }
+    ]
+  }
+}
