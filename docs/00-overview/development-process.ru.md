@@ -27,15 +27,30 @@
 | HTTP клиент | mockito / wiremock | `user/login` 401/200 |
 | Пагинация | unit на фикстурах JSON | `pagination.rs` |
 | API handlers | axum + reqwest test | `POST /api/v1/qobuz/sync` |
+| OpenAPI spec | Redocly lint | `openapi/openapi.yaml` |
+| REST contract | jsonschema vs spec | `openapi_contract.rs` |
 | UI | Vitest | кнопка «Синхронизировать» вызывает mutation |
 
 Запрещено: «сначала написать модуль, потом добавить тесты в конце спринта».
+
+## OpenAPI-first (REST API)
+
+См. [openapi-first.ru.md](../02-backend/openapi-first.ru.md) и [ADR 0006](../adr/0006-openapi-first.md).
+
+Изменение REST API:
+
+1. Обновить `openapi/openapi.yaml`.
+2. Обновить contract-тест и handler.
+3. Обновить [api-client.ru.md](../03-frontend/api-client.ru.md) при изменении примеров.
+
+PR без diff в `openapi.yaml` при изменении JSON-контракта не мержится.
 
 ## Quality gates
 
 Перед merge / перед переходом к следующему milestone:
 
 - `cargo test --workspace` — все зелёные
+- `npx @redocly/cli lint openapi/openapi.yaml` — spec валиден
 - `cargo clippy --workspace -- -D warnings` (когда появится код)
 - `cargo fmt --check`
 - Integration-тесты с `#[ignore]` не блокируют CI, но обязательны локально перед релизом Qobuz-фич

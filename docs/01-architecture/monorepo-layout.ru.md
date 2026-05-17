@@ -1,16 +1,19 @@
 # Структура монорепозитория
 
-Целевая структура (Phase 1 создаёт только `euterpe-qobuz`):
+Целевая структура:
 
 ```
 euterpe/
 ├── Cargo.toml                 # workspace
 ├── README.md
+├── openapi/
+│   ├── openapi.yaml           # REST contract (OpenAPI 3.1)
+│   └── README.md
 ├── docs/                      # эта документация
 ├── crates/
 │   ├── euterpe-qobuz/         # Phase 1 — TDD
-│   └── euterpe-server/        # Phase 2
-├── migrations/                # sqlx, Phase 2
+│   └── euterpe-server/        # Phase 2 — Axum + SQLite
+├── migrations/                # sqlx, Phase 2+
 ├── frontend/                  # Phase 4
 │   ├── package.json
 │   ├── vite.config.ts
@@ -18,7 +21,7 @@ euterpe/
 ├── docker/
 │   ├── Dockerfile
 │   └── nginx-spa.conf         # optional
-└── .github/workflows/ci.yml   # cargo test
+└── .github/workflows/ci.yml   # cargo test + Redocly lint
 ```
 
 ## Workspace Cargo.toml

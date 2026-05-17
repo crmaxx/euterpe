@@ -1,0 +1,354 @@
+openapi: 3.1.0
+info:
+  title: Euterpe API
+  version: 0.1.0
+  description: Homelab music library API. Canonical contract for euterpe-server and frontend.
+  license:
+    name: MIT OR Apache-2.0
+
+servers:
+  - url: /
+    description: Default server
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [Health]
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: Service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/openapi.json:
+    get:
+      operationId: getOpenApiSpec
+      tags: [Meta]
+      summary: OpenAPI document (JSON)
+      security: []
+      responses:
+        "200":
+          description: OpenAPI 3.1 specification
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/qobuz/test-login:
+    post:
+      operationId: qobuzTestLogin
+      tags: [Qobuz]
+      summary: Verify Qobuz session token
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QobuzTestLoginRequest"
+      responses:
+        "200":
+          description: Token is valid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzTestLoginResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/qobuz/sync:
+    post:
+      operationId: qobuzSync
+      tags: [Qobuz]
+      summary: Sync favorite albums from Qobuz into local database
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Sync completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzSyncResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/qobuz/favorites:
+    get:
+      operationId: listQobuzFavorites
+      tags: [Qobuz]
+      summary: List synced favorite albums
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [album]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+      responses:
+        "200":
+          description: Paginated favorites
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzFavoritesListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      operationId: addQobuzFavorites
+      tags: [Qobuz]
+      summary: Add albums to Qobuz favorites
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QobuzFavoritesMutateRequest"
+      responses:
+        "204":
+          description: Added
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+    delete:
+      operationId: removeQobuzFavorites
+      tags: [Qobuz]
+      summary: Remove albums from Qobuz favorites
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QobuzFavoritesMutateRequest"
+      responses:
+        "204":
+          description: Removed
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /api/v1/downloads:
+    post:
+      operationId: createDownload
+      tags: [Downloads]
+      summary: Queue a download job
+      x-euterpe-phase: 3
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "501":
+          description: Not implemented in Phase 2
+    get:
+      operationId: listDownloads
+      tags: [Downloads]
+      summary: List download jobs
+      x-euterpe-phase: 3
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "501":
+          description: Not implemented in Phase 2
+
+  /api/v1/events:
+    get:
+      operationId: subscribeEvents
+      tags: [Events]
+      summary: Server-sent events stream
+      x-euterpe-phase: 3
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "501":
+          description: Not implemented in Phase 2
+
+components:
+  securitySchemes:
+    AdminBearer:
+      type: http
+      scheme: bearer
+      description: Optional homelab gate when EUTERPE_ADMIN_PASSWORD is set
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Qobuz credentials not configured
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    BadGateway:
+      description: Upstream Qobuz error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
+    QobuzTestLoginRequest:
+      type: object
+      required: [user_id, auth_token]
+      additionalProperties: false
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          minimum: 1
+        auth_token:
+          type: string
+          minLength: 1
+        persist:
+          type: boolean
+          default: false
+          description: Save encrypted credentials to settings (requires EUTERPE_MASTER_KEY)
+
+    QobuzTestLoginResponse:
+      type: object
+      required: [membership, user_auth_token_refreshed]
+      additionalProperties: false
+      properties:
+        membership:
+          type: string
+        user_auth_token_refreshed:
+          type: boolean
+
+    QobuzSyncResponse:
+      type: object
+      required: [run_id, albums_total, added, removed]
+      additionalProperties: false
+      properties:
+        run_id:
+          type: integer
+          format: int64
+        albums_total:
+          type: integer
+          minimum: 0
+        added:
+          type: integer
+          minimum: 0
+        removed:
+          type: integer
+          minimum: 0
+
+    QobuzFavoriteItem:
+      type: object
+      required: [qobuz_id, title, artist_name, in_library]
+      additionalProperties: false
+      properties:
+        qobuz_id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        artist_name:
+          type: string
+        in_library:
+          type: boolean
+          default: false
+        local_album_id:
+          type: ["integer", "null"]
+          format: int64
+
+    QobuzFavoritesListResponse:
+      type: object
+      required: [items, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/QobuzFavoriteItem"
+        total:
+          type: integer
+          minimum: 0
+
+    QobuzFavoritesMutateRequest:
+      type: object
+      required: [album_ids]
+      additionalProperties: false
+      properties:
+        album_ids:
+          type: array
+          items:
+            type: integer
+            format: int64
+            minimum: 1
+          minItems: 1

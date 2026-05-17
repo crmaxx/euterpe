@@ -22,18 +22,19 @@ Phase 2+. Спецификация для TDD.
 ```
 src/
 ├── main.rs
-├── config.rs          # Env + figment
-├── state.rs           # AppState: db, qobuz client arc
-├── routes/
-│   ├── mod.rs
-│   ├── health.rs
-│   ├── qobuz.rs
-│   ├── downloads.rs
-│   └── library.rs     # Phase 5
+├── lib.rs
+├── app.rs             # Router + handlers
+├── config.rs
+├── state.rs           # AppState: db, qobuz Arc<Mutex<dyn QobuzApi>>
+├── api/               # DTO = OpenAPI components/schemas
+├── middleware.rs      # optional EUTERPE_ADMIN_PASSWORD
+├── crypto.rs          # AES-256-GCM for UAT at rest
+├── credentials.rs
+├── openapi.rs         # embedded spec → /api/openapi.json
+├── db/
 ├── services/
-│   ├── qobuz_sync.rs
-│   └── download.rs
-└── sse.rs
+│   └── qobuz_sync.rs
+└── (downloads, sse — Phase 3+)
 ```
 
 ## AppState
@@ -67,6 +68,12 @@ async fn health_returns_ok() {
 
 Mock `QobuzApi` trait for sync routes.
 
+## OpenAPI-first
+
+См. [openapi-first.ru.md](openapi-first.ru.md), [ADR 0006](../adr/0006-openapi-first.md).
+
+Contract tests: `crates/euterpe-server/tests/openapi_contract.rs`, `api_qobuz.rs`.
+
 ## Endpoints
 
-См. [api-client.ru.md](../03-frontend/api-client.ru.md) (DRAFT).
+Канон: [`openapi/openapi.yaml`](../../openapi/openapi.yaml). Обзор: [api-client.ru.md](../03-frontend/api-client.ru.md).

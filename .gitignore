@@ -2,4 +2,7 @@
 **/*.rs.bk
 .env
 compose.yml
+
+# project
 docs/references/
+data/

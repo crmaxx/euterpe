@@ -13,3 +13,6 @@
 | **Sync run** | Запись в `qobuz_sync_runs` о проходе синхронизации избранного |
 | **euterpe-qobuz** | Rust crate — клиент Qobuz API без Axum/SQLite |
 | **TDD** | Test-Driven Development; обязательный процесс разработки |
+| **OpenAPI-first** | Сначала `openapi/openapi.yaml`, затем contract test и handler |
+| **Contract test** | Проверка JSON ответа по схеме из OpenAPI (`jsonschema`) |
+| **operationId** | Имя операции в OpenAPI (например `qobuzSync`) |

@@ -1,0 +1,140 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use euterpe_qobuz::{
+    AlbumDetail, AlbumSummary, Page, PageRequest, QobuzApi, QobuzError, Quality, StreamUrl,
+};
+use euterpe_server::app::test_support::test_state;
+use euterpe_server::AppState;
+use tokio::sync::Mutex;
+
+pub struct MockQobuz {
+    pub albums: Arc<Mutex<Vec<AlbumSummary>>>,
+    pub fail_sync: bool,
+}
+
+impl MockQobuz {
+    pub fn with_albums(albums: Vec<AlbumSummary>) -> Self {
+        Self {
+            albums: Arc::new(Mutex::new(albums)),
+            fail_sync: false,
+        }
+    }
+
+    pub fn album(id: u64, title: &str, artist: &str) -> AlbumSummary {
+        use euterpe_qobuz::ArtistRef;
+        AlbumSummary {
+            id,
+            title: title.into(),
+            artist: Some(ArtistRef {
+                id: 1,
+                name: artist.into(),
+            }),
+            artists: None,
+            image: None,
+            release_date_original: None,
+            hires: None,
+        }
+    }
+}
+
+#[async_trait]
+impl QobuzApi for MockQobuz {
+    async fn favorites_albums(
+        &self,
+        _page: PageRequest,
+    ) -> Result<Page<AlbumSummary>, QobuzError> {
+        unimplemented!()
+    }
+
+    async fn favorites_all_albums(&self) -> Result<Vec<AlbumSummary>, QobuzError> {
+        if self.fail_sync {
+            return Err(QobuzError::Authentication("mock auth fail".into()));
+        }
+        Ok(self.albums.lock().await.clone())
+    }
+
+    async fn favorite_add_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
+        Ok(())
+    }
+
+    async fn favorite_remove_albums(&self, _ids: &[u64]) -> Result<(), QobuzError> {
+        Ok(())
+    }
+
+    async fn track_stream_url(
+        &mut self,
+        _track_id: u64,
+        _quality: Quality,
+    ) -> Result<StreamUrl, QobuzError> {
+        unimplemented!()
+    }
+
+    async fn album(&self, _album_id: u64) -> Result<AlbumDetail, QobuzError> {
+        unimplemented!()
+    }
+
+    async fn artist_albums(&self, _artist_id: u64) -> Result<Vec<AlbumSummary>, QobuzError> {
+        unimplemented!()
+    }
+}
+
+pub async fn state_with_mock(mock: MockQobuz) -> AppState {
+    let mut state = test_state().await;
+    let mut config = (*state.config).clone();
+    config.qobuz_user_id = Some(1);
+    config.qobuz_auth_token = Some("test-token".into());
+    state.config = Arc::new(config);
+    state.qobuz = Arc::new(Mutex::new(mock));
+    state
+}
+
+pub fn load_spec() -> serde_json::Value {
+    let yaml: serde_yaml::Value =
+        serde_yaml::from_str(include_str!("../../../../openapi/openapi.yaml")).unwrap();
+    serde_json::to_value(yaml).unwrap()
+}
+
+pub fn schema_from_spec(spec: &serde_json::Value, name: &str) -> serde_json::Value {
+    let schema = spec
+        .pointer(&format!("/components/schemas/{name}"))
+        .cloned()
+        .unwrap_or_else(|| panic!("schema {name} not found"));
+    resolve_refs(spec, &schema)
+}
+
+/// Resolve `#/components/schemas/*` refs for jsonschema validation.
+fn resolve_refs(spec: &serde_json::Value, schema: &serde_json::Value) -> serde_json::Value {
+    if let Some(ref_path) = schema.get("$ref").and_then(|r| r.as_str()) {
+        if let Some(name) = ref_path.strip_prefix("#/components/schemas/") {
+            let target = spec
+                .pointer(&format!("/components/schemas/{name}"))
+                .expect("ref target");
+            return resolve_refs(spec, target);
+        }
+    }
+
+    match schema {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                if k == "$ref" {
+                    continue;
+                }
+                out.insert(k.clone(), resolve_refs(spec, v));
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(|v| resolve_refs(spec, v)).collect())
+        }
+        _ => schema.clone(),
+    }
+}
+
+pub fn validate_schema(schema: &serde_json::Value, instance: &serde_json::Value) {
+    let validator = jsonschema::validator_for(schema).expect("valid jsonschema");
+    if let Err(error) = validator.validate(instance) {
+        panic!("schema validation failed: {error}");
+    }
+}

@@ -1,6 +1,10 @@
-# REST API contract (DRAFT)
+# REST API contract
 
-**Status: DRAFT** — для Phase 2+. Изменения только с обновлением тестов server + MSW frontend.
+**Канонический контракт:** [`openapi/openapi.yaml`](../../openapi/openapi.yaml) (OpenAPI 3.1). Этот файл — человекочитаемый обзор; при расхождении побеждает YAML.
+
+Политика: [openapi-first.ru.md](../02-backend/openapi-first.ru.md). Изменения REST = сначала spec, затем contract tests + handlers.
+
+Runtime: `GET /api/openapi.json` — spec в JSON.
 
 Base path: `/api/v1`
 
