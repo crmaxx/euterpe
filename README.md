@@ -1,5 +1,7 @@
 # Euterpe (Ἐυτέρπη)
 
+[![CI](https://github.com/crmaxx/euterpe/actions/workflows/ci.yml/badge.svg)](https://github.com/crmaxx/euterpe/actions/workflows/ci.yml)
+
 Self-hosted web application for managing a local music library with **Qobuz** synchronization.
 
 Named after the muse of music and lyric poetry, daughter of Mnemosyne.
@@ -18,6 +20,14 @@ All implementation follows **strict Test-Driven Development (TDD)** — see [ADR
 ```bash
 make prepare   # macOS: brew install overmind (if missing)
 cp .env.example .env   # optional: Qobuz credentials and paths
+```
+
+### Tests
+
+```bash
+make test              # backend + frontend
+make test-backend      # cargo test --workspace
+make test-frontend     # npm test (runs generate:api first)
 ```
 
 ### Backend + frontend (recommended)
@@ -106,4 +116,4 @@ Requires an active **Qobuz subscription**. This project is not affiliated with Q
 
 ## License
 
-TBD (MIT OR Apache-2.0 suggested for workspace)
+Licensed under the [Apache License, Version 2.0](LICENSE) (`Apache-2.0`). See [NOTICE](NOTICE) for attribution.

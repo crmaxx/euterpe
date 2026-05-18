@@ -1,5 +1,6 @@
 # Euterpe development shortcuts
 .PHONY: help prepare backend frontend frontend-install frontend-generate frontend-dev dev dev-stop
+.PHONY: test test-backend test-frontend
 
 FRONTEND_DIR := frontend
 
@@ -13,6 +14,9 @@ help:
 	@echo "  make frontend             install + generate + dev (Vite on :5173)"
 	@echo "  make dev                  overmind start (Procfile: backend + frontend)"
 	@echo "  make dev-stop             overmind quit"
+	@echo "  make test                 Run backend + frontend tests"
+	@echo "  make test-backend         cargo test --workspace"
+	@echo "  make test-frontend        frontend: generate:api + npm test"
 
 prepare:
 	@command -v overmind >/dev/null 2>&1 || brew install overmind
@@ -36,3 +40,11 @@ dev:
 
 dev-stop:
 	overmind quit
+
+test-backend:
+	cargo test --workspace
+
+test-frontend: frontend-generate
+	cd $(FRONTEND_DIR) && npm test
+
+test: test-backend test-frontend

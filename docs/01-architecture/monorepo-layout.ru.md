@@ -35,7 +35,7 @@ members = ["crates/euterpe-qobuz", "crates/euterpe-server"]
 
 [workspace.package]
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 ```
 
 ## Зависимости между crate
