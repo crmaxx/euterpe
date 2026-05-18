@@ -113,7 +113,7 @@
 
 **Целевая фаза:** **Phase 4b** (доработка UI) / **Phase 3b** (API).
 
-## FP-3 — Favorites: сортировка таблицы
+## FP-3 — Favorites: сортировка таблицы ✅
 
 ### Проблема сейчас
 
@@ -161,12 +161,12 @@
 
 | ID    | Scope                                                                                                                                                 |
 | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| FP-3a | OpenAPI: `sort` / `order` / `limit` / **`cursor`** + whitelist; форма ответа **как в FP-8** (keyset); `favorites::list_albums` + SQL `ORDER BY` + условие «после курсора» + `api_qobuz` тесты                                                   |
-| FP-3b | Vitest: смена сортировки / «следующая страница» → новый запрос с `cursor`/`sort`/`order`, порядок строк как у сервера                                                            |
-| FP-3c | Artist + In library: те же query params, покрытие в SQL для `artist_name` и колонки `in_library`                                                       |
-| FP-3d | Фильтр **в библиотеке / нет**: query `in_library=1` или `in_library=0` + `WHERE` (или эквивалент по JOIN) + Vitest                                           |
-| FP-3e | Поиск: OpenAPI `q` + SQL + `api_qobuz`; поле в UI, запрос при debounce                                                                                |
-| FP-3f | Обложки: колонка/превью; DTO `cover_url` или прокси-endpoint; приоритет Library при `in_library`; Vitest + MSW                                       |
+| FP-3a | ✅ OpenAPI: `sort` / `order` / `limit` / **`cursor`** + whitelist; форма ответа **как в FP-8** (keyset); `favorites::list_albums_keyset` + SQL + `api_qobuz` тесты |
+| FP-3b | ✅ Vitest: смена сортировки / load more → `cursor`/`sort`/`order` |
+| FP-3c | ✅ Artist + In library: sort + SQL |
+| FP-3d | ✅ Фильтр **в библиотеке / нет**: `in_library` + UI |
+| FP-3e | ✅ Поиск: `q` + debounce в UI + `api_qobuz` |
+| FP-3f | ✅ Обложки: `cover_url` (migration 007), sync, колонка; Library cover при `in_library` |
 
 
 **Целевая фаза:** **Phase 4b** (frontend + контракт) и **Phase 2b** (SQL/OpenAPI на сервере для сортировки в первую очередь).
@@ -405,7 +405,7 @@ FP-4 — внешние каталоги (MusicBrainz, Discogs, …) для **у
 
 <a id="fp-9-api-collections-pagination-sort"></a>
 
-## FP-8 — Коллекции в API: keyset-пагинация и сортировка
+## FP-8 — Коллекции в API: keyset-пагинация и сортировка ✅
 
 ### Проблема
 
@@ -440,11 +440,11 @@ FP-4 — внешние каталоги (MusicBrainz, Discogs, …) для **у
 
 | ID | Scope |
 |----|--------|
-| FP-8a | OpenAPI / ADR: keyset-поля, кодирование `cursor`, форма ответа (`items`, `next_cursor`, `has_more`), ошибки; эталон на одном list + тест |
-| FP-8b | **favorites** на keyset + пересечение с FP-3a + Vitest |
-| FP-8c | **Library** списки (альбомы/треки) + `api_library` |
-| FP-8d | **Downloads** + `api_downloads` |
-| FP-8e | Общий фронтовый слой: «сортировка / следующая страница → query + cursor» + MSW |
+| FP-8a | ✅ OpenAPI + `api/keyset.rs` (`cursor`, fingerprint, `INVALID_CURSOR`) + `tests/keyset_cursor.rs` |
+| FP-8b | ✅ **favorites** keyset (см. FP-3) |
+| FP-8c | ✅ **Library** albums keyset + `api_library` + LibraryPage load more |
+| FP-8d | ✅ **Downloads** keyset + `api_downloads` + QueuePage (infinite flatten) |
+| FP-8e | ✅ `api/keyset.ts`, `useKeysetList`, MSW |
 
 **Целевая фаза:** **Phase 2b** (контракт + первые эндпоинты) / **Phase 4b** (UI на всех экранах со списками).
 
@@ -537,12 +537,12 @@ OpenAPI / `ScanProgressEvent` **без breaking change**; опционально
 | ------------------------------------------------------------ | -------------------- |
 | FP-1 OAuth in-app + DB                                       | Phase 2b / 4         |
 | FP-2 Queue purge + delete job                                | Phase 3b / 4b        |
-| FP-3 Favorites: server sort, filter, search, covers          | Phase 2b / 4b        |
+| FP-3 Favorites: server sort, filter, search, covers ✅        | Phase 2b / 4b        |
 | FP-4 Теги: Discogs / GnuDB / MusicBrainz / TrackType.org     | Phase 5b / 6         |
 | FP-5 Теги из Qobuz при download                              | Phase 3b / 5b        |
 | FP-6 Обложка альбома из UI (upload / replace)                | Phase 5b / 6         |
 | FP-7 Индекс Library сразу после download (+ scan для legacy)   | Phase 3b / 5b        |
-| FP-8 List API: keyset-пагинация (`cursor`) + сортировка + UI     | Phase 2b / 4b        |
+| FP-8 List API: keyset-пагинация (`cursor`) + сортировка + UI ✅ | Phase 2b / 4b        |
 | FP-9 Параллельный library scan (очередь, пул воркеров)        | Phase 5b / 6         |
 | FP-10 Multi-account Qobuz + switch                             | Phase 2c / 4         |
 | Ручной token / env                                           | Phase 1–2 (остаётся) |

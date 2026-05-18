@@ -1,6 +1,10 @@
 import { getAdminToken, notifyAdminUnauthorized } from "@/lib/auth";
 import { ApiClientError, type ErrorResponse } from "./errors";
+import { appendKeysetParams, type KeysetListParams, type SortOrder } from "./keyset";
 import type { components } from "./schema";
+
+export type { KeysetListParams, SortOrder };
+export type { KeysetListResponse } from "./keyset";
 
 export type ServerInfoResponse = components["schemas"]["ServerInfoResponse"];
 export type QobuzSyncLatestResponse =
@@ -32,6 +36,7 @@ export type LibraryScanStartResponse =
   components["schemas"]["LibraryScanStartResponse"];
 export type LibraryAlbumListResponse =
   components["schemas"]["LibraryAlbumListResponse"];
+export type LibraryAlbumItem = components["schemas"]["LibraryAlbumItem"];
 export type LibraryAlbumDetailResponse =
   components["schemas"]["LibraryAlbumDetailResponse"];
 export type LibraryTrackDetailResponse =
@@ -81,10 +86,23 @@ export const api = {
 
   syncLatest: () => fetchJson<QobuzSyncLatestResponse>("/qobuz/sync/latest"),
 
-  favorites: (page = 0, limit = 50) =>
-    fetchJson<QobuzFavoritesListResponse>(
-      `/qobuz/favorites?type=album&page=${page}&limit=${limit}`,
-    ),
+  favorites: (
+    params: KeysetListParams & {
+      q?: string;
+      in_library?: boolean;
+    } = {},
+  ) => {
+    const search = new URLSearchParams({ type: "album" });
+    appendKeysetParams(search, {
+      limit: params.limit ?? 50,
+      sort: params.sort ?? "title",
+      order: params.order ?? "asc",
+      cursor: params.cursor ?? undefined,
+      q: params.q,
+      in_library: params.in_library,
+    });
+    return fetchJson<QobuzFavoritesListResponse>(`/qobuz/favorites?${search}`);
+  },
 
   sync: () =>
     fetchJson<QobuzSyncResponse>("/qobuz/sync", { method: "POST" }),
@@ -110,10 +128,25 @@ export const api = {
       body: JSON.stringify({ album_ids: albumIds }),
     }),
 
-  downloads: (status?: string) =>
-    fetchJson<DownloadJobListResponse>(
-      status ? `/downloads?status=${status}` : "/downloads",
-    ),
+  createDownloadByUrl: (url: string, quality: number) =>
+    fetchJson<CreateDownloadResponse>("/downloads/by-url", {
+      method: "POST",
+      body: JSON.stringify({ url, quality }),
+    }),
+
+  downloads: (
+    params: KeysetListParams & { status?: string } = {},
+  ) => {
+    const search = new URLSearchParams();
+    appendKeysetParams(search, {
+      limit: params.limit ?? 100,
+      sort: params.sort ?? "id",
+      order: params.order ?? "desc",
+      cursor: params.cursor ?? undefined,
+      status: params.status,
+    });
+    return fetchJson<DownloadJobListResponse>(`/downloads?${search}`);
+  },
 
   createDownload: (body: CreateDownloadRequest) =>
     fetchJson<CreateDownloadResponse>("/downloads", {
@@ -136,13 +169,16 @@ export const api = {
   startLibraryScan: () =>
     fetchJson<LibraryScanStartResponse>("/library/scan", { method: "POST" }),
 
-  libraryAlbums: (page = 0, limit = 50, search?: string) => {
-    const params = new URLSearchParams({
-      page: String(page),
-      limit: String(limit),
+  libraryAlbums: (params: KeysetListParams & { q?: string } = {}) => {
+    const search = new URLSearchParams();
+    appendKeysetParams(search, {
+      limit: params.limit ?? 50,
+      sort: params.sort ?? "title",
+      order: params.order ?? "asc",
+      cursor: params.cursor ?? undefined,
+      q: params.q,
     });
-    if (search?.trim()) params.set("search", search.trim());
-    return fetchJson<LibraryAlbumListResponse>(`/library/albums?${params}`);
+    return fetchJson<LibraryAlbumListResponse>(`/library/albums?${search}`);
   },
 
   libraryAlbum: (id: number) =>

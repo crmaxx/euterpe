@@ -238,6 +238,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/downloads/by-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue album download from play.qobuz.com URL or album ref */
+        post: operations["createDownloadByUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/downloads/purge": {
         parameters: {
             query?: never;
@@ -511,13 +528,22 @@ export interface components {
             in_library: boolean;
             /** Format: int64 */
             local_album_id?: number | null;
+            /** @description Qobuz thumbnail URL from last sync (when not in library) */
+            cover_url?: string | null;
         };
         QobuzFavoritesListResponse: {
             items: components["schemas"]["QobuzFavoriteItem"][];
-            total: number;
+            next_cursor?: string | null;
+            has_more: boolean;
         };
         QobuzFavoritesMutateRequest: {
             album_ids: number[];
+        };
+        CreateDownloadByUrlRequest: {
+            /** @description play.qobuz.com album URL, www.qobuz.com album link, or bare album/get ref */
+            url: string;
+            /** @description Qobuz format_id (5=MP3, 6=FLAC 16/44, 7=FLAC 24, 27=Hi-Res) */
+            quality: number;
         };
         /** @enum {string} */
         DownloadJobStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -557,6 +583,8 @@ export interface components {
         };
         DownloadJobListResponse: {
             items: components["schemas"]["DownloadJob"][];
+            next_cursor?: string | null;
+            has_more: boolean;
         };
         DownloadPurgeResponse: {
             /** Format: int64 */
@@ -602,7 +630,8 @@ export interface components {
         };
         LibraryAlbumListResponse: {
             items: components["schemas"]["LibraryAlbumItem"][];
-            total: number;
+            next_cursor?: string | null;
+            has_more: boolean;
         };
         LibraryTrackItem: {
             /** Format: int64 */
@@ -951,8 +980,12 @@ export interface operations {
         parameters: {
             query: {
                 type: "album";
-                page?: number;
                 limit?: number;
+                sort?: "title" | "artist" | "in_library";
+                order?: "asc" | "desc";
+                cursor?: string;
+                q?: string;
+                in_library?: boolean;
             };
             header?: never;
             path?: never;
@@ -1024,6 +1057,10 @@ export interface operations {
         parameters: {
             query?: {
                 status?: components["schemas"]["DownloadJobStatus"];
+                limit?: number;
+                sort?: "id" | "created_at" | "status";
+                order?: "asc" | "desc";
+                cursor?: string;
             };
             header?: never;
             path?: never;
@@ -1066,6 +1103,34 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createDownloadByUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDownloadByUrlRequest"];
+            };
+        };
+        responses: {
+            /** @description Job queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateDownloadResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            409: components["responses"]["Conflict"];
+            502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };
@@ -1204,9 +1269,11 @@ export interface operations {
     listLibraryAlbums: {
         parameters: {
             query?: {
-                page?: number;
                 limit?: number;
-                search?: string;
+                sort?: "title" | "artist" | "year";
+                order?: "asc" | "desc";
+                cursor?: string;
+                q?: string;
             };
             header?: never;
             path?: never;

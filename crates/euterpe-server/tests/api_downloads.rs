@@ -74,6 +74,32 @@ async fn create_download_returns_202() {
 }
 
 #[tokio::test]
+async fn create_download_by_url_returns_202() {
+    let mock = DownloadMockQobuz::new();
+    let state = state_with_download_mock(mock).await;
+    let app = app::app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/downloads/by-url")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"url":"https://play.qobuz.com/album/zg7pv28g4mldg","quality":6}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json.get("job_id").is_some());
+}
+
+#[tokio::test]
 async fn download_job_completes_via_worker() {
     let body = b"audio-bytes";
     let cdn = Router::new().route("/cdn", get(|| async { body.to_vec() }));
@@ -268,4 +294,63 @@ async fn delete_with_purge_rejects_running_job() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert!(download_jobs::get(&pool, id).await.unwrap().is_some());
+}
+
+#[tokio::test]
+async fn list_downloads_keyset_by_id_desc() {
+    let state = test_state().await;
+    let pool = state.db.clone();
+    for i in 1..=4 {
+        let payload = DownloadJobPayload {
+            album_api_id: Some(format!("album-{i}")),
+        };
+        download_jobs::insert_queued(&pool, DownloadJobType::Album, i, 6, Some(&payload))
+            .await
+            .unwrap();
+    }
+
+    let app = app::app(state);
+    let page1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/downloads?limit=2&sort=id&order=desc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page1.status(), StatusCode::OK);
+    let b1: serde_json::Value = serde_json::from_slice(
+        &page1.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    let spec = load_spec();
+    validate_schema(
+        &schema_from_spec(&spec, "DownloadJobListResponse"),
+        &b1,
+    );
+    assert_eq!(b1["items"].as_array().unwrap().len(), 2);
+    assert_eq!(b1["has_more"], true);
+    let cursor = b1["next_cursor"].as_str().unwrap();
+
+    let page2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/downloads?limit=2&sort=id&order=desc&cursor={cursor}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page2.status(), StatusCode::OK);
+    let b2: serde_json::Value = serde_json::from_slice(
+        &page2.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(b2["items"].as_array().unwrap().len(), 2);
+    assert_eq!(b2["has_more"], false);
 }

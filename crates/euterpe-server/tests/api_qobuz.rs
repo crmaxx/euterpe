@@ -60,8 +60,12 @@ async fn sync_with_mock_populates_db() {
 }
 
 #[tokio::test]
-async fn list_favorites_paginated() {
-    let mock = MockQobuz::with_albums(vec![MockQobuz::album(1, "One", "A")]);
+async fn list_favorites_keyset() {
+    let mock = MockQobuz::with_albums(vec![
+        MockQobuz::album(1, "One", "A"),
+        MockQobuz::album(2, "Two", "B"),
+        MockQobuz::album(3, "Three", "C"),
+    ]);
     let state = state_with_mock(mock).await;
     let app = app::app(state.clone());
 
@@ -77,9 +81,10 @@ async fn list_favorites_paginated() {
         .unwrap();
 
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/qobuz/favorites?type=album&page=0&limit=50")
+                .uri("/api/v1/qobuz/favorites?type=album&limit=2&sort=title&order=asc")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -94,10 +99,55 @@ async fn list_favorites_paginated() {
         &support::schema_from_spec(&spec, "QobuzFavoritesListResponse"),
         &json,
     );
-    assert_eq!(json["total"], 1);
-    assert_eq!(json["items"][0]["qobuz_id"], 1);
-    assert_eq!(json["items"][0]["album_api_id"], "1");
-    assert_eq!(json["items"][0]["in_library"], false);
+    assert_eq!(json["items"].as_array().unwrap().len(), 2);
+    assert_eq!(json["has_more"], true);
+    let cursor = json["next_cursor"].as_str().unwrap();
+
+    let page2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/qobuz/favorites?type=album&limit=2&sort=title&order=asc&cursor={cursor}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let p2: serde_json::Value = serde_json::from_slice(
+        &page2.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(p2["items"].as_array().unwrap().len(), 1);
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/qobuz/favorites?type=album&q=Two&sort=artist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let f: serde_json::Value = serde_json::from_slice(
+        &filtered.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(f["items"].as_array().unwrap().len(), 1);
+    assert_eq!(f["items"][0]["title"], "Two");
+
+    let bad_sort = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/qobuz/favorites?type=album&sort=invalid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad_sort.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

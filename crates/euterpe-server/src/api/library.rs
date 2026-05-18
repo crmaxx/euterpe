@@ -45,7 +45,8 @@ pub struct LibraryAlbumItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryAlbumListResponse {
     pub items: Vec<LibraryAlbumItem>,
-    pub total: i64,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

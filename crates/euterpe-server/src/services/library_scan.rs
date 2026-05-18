@@ -227,8 +227,21 @@ mod tests {
         assert_eq!(run.status, "success");
         assert!(run.files_indexed >= 1);
 
-        let (items, total) = albums::list(&pool, 0, 10, None).await.unwrap();
-        assert_eq!(total, 1);
-        assert_eq!(items[0].title, "Album One");
+        use crate::api::SortOrder;
+        use crate::db::albums::{AlbumsListParams, AlbumsSort};
+        let page = albums::list_keyset(
+            &pool,
+            AlbumsListParams {
+                sort: AlbumsSort::Title,
+                order: SortOrder::Asc,
+                limit: 10,
+                q: None,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].title, "Album One");
     }
 }

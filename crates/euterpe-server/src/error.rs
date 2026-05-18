@@ -33,6 +33,7 @@ impl ApiError {
             ApiError::Message(msg) if msg.contains("not found") => "NOT_FOUND",
             ApiError::Message(msg) if msg.contains("cannot cancel") => "JOB_NOT_CANCELLABLE",
             ApiError::Message(msg) if msg.contains("cannot purge") => "JOB_NOT_PURGEABLE",
+            ApiError::Message(msg) if msg.contains("INVALID_CURSOR") => "INVALID_CURSOR",
             ApiError::Qobuz(QobuzError::Authentication(_)) => "QOBUZ_AUTH_FAILED",
             ApiError::Qobuz(_) => "QOBUZ_UNAVAILABLE",
             ApiError::Message(_) => "BAD_REQUEST",
@@ -63,6 +64,10 @@ impl ApiError {
 
     pub fn bad_request(message: impl Into<String>) -> Self {
         ApiError::Message(message.into())
+    }
+
+    pub fn invalid_cursor(message: impl Into<String>) -> Self {
+        ApiError::Message(format!("INVALID_CURSOR: {}", message.into()))
     }
 }
 

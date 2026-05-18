@@ -1,6 +1,15 @@
+use std::path::Path;
+
 use sqlx::SqlitePool;
 
 use crate::error::ApiError;
+
+fn filename_sort_key(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_else(|| path.to_lowercase())
+}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TrackRow {
@@ -115,18 +124,20 @@ pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<TrackRow>, A
 }
 
 pub async fn list_by_album(pool: &SqlitePool, album_id: i64) -> Result<Vec<TrackRow>, ApiError> {
-    let rows: Vec<TrackRow> = sqlx::query_as(
+    let mut rows: Vec<TrackRow> = sqlx::query_as(
         r#"
         SELECT id, album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
                duration_sec, file_mtime, file_hash
         FROM tracks
         WHERE album_id = ?
-        ORDER BY COALESCE(disc_number, 1), COALESCE(track_number, 999999), title
         "#,
     )
     .bind(album_id)
     .fetch_all(pool)
     .await?;
+    rows.sort_by(|a, b| {
+        filename_sort_key(&a.path).cmp(&filename_sort_key(&b.path))
+    });
     Ok(rows)
 }
 
@@ -221,5 +232,61 @@ mod tests {
         assert_eq!(id1, id2);
         let row = get_by_id(&pool, id1).await.unwrap().unwrap();
         assert_eq!(row.title, "T1 Renamed");
+    }
+
+    #[tokio::test]
+    async fn list_by_album_sorted_by_filename_asc() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "A", None).await.unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Al",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Al"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for (path, title) in [
+            ("A/Al/10 - Ten.flac", "Ten"),
+            ("A/Al/02 - Two.flac", "Two"),
+            ("A/Al/01 - One.flac", "One"),
+        ] {
+            upsert(
+                &pool,
+                TrackUpsert {
+                    album_id,
+                    title,
+                    track_number: None,
+                    year: None,
+                    disc_number: None,
+                    genre: None,
+                    qobuz_track_id: None,
+                    path,
+                    duration_sec: None,
+                    file_mtime: None,
+                    file_hash: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let listed = list_by_album(&pool, album_id).await.unwrap();
+        let paths: Vec<_> = listed.iter().map(|t| t.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "A/Al/01 - One.flac",
+                "A/Al/02 - Two.flac",
+                "A/Al/10 - Ten.flac",
+            ]
+        );
     }
 }

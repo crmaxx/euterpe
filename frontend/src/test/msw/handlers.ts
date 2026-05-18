@@ -10,7 +10,8 @@ export const mockFavorites = {
       in_library: false,
     },
   ],
-  total: 1,
+  next_cursor: null,
+  has_more: false,
 };
 
 export const handlers = [
@@ -92,6 +93,8 @@ export const handlers = [
           updated_at: "2026-01-01",
         },
       ],
+      next_cursor: null,
+      has_more: false,
     }),
   ),
 
@@ -100,6 +103,17 @@ export const handlers = [
   ),
 
   http.delete("/api/v1/qobuz/favorites", () => new HttpResponse(null, { status: 204 })),
+
+  http.post("/api/v1/downloads/by-url", async ({ request }) => {
+    const body = (await request.json()) as { url?: string };
+    if (!body.url?.trim()) {
+      return HttpResponse.json(
+        { error: { code: "BAD_REQUEST", message: "url must not be empty" } },
+        { status: 400 },
+      );
+    }
+    return HttpResponse.json({ job_id: 99 }, { status: 202 });
+  }),
 
   http.post("/api/v1/downloads/purge", () =>
     HttpResponse.json({ deleted: 1 }),
@@ -142,7 +156,8 @@ export const handlers = [
           cover_path: null,
         },
       ],
-      total: 1,
+      next_cursor: null,
+      has_more: false,
     }),
   ),
 

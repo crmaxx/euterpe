@@ -1,17 +1,42 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type CreateDownloadRequest } from "./client";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  api,
+  type CreateDownloadRequest,
+  type DownloadJob,
+  type LibraryAlbumItem,
+  type QobuzFavoriteItem,
+  type SortOrder,
+} from "./client";
 import { ApiClientError } from "./errors";
+import type { KeysetListResponse } from "./keyset";
+import { flattenKeysetPages, useKeysetList } from "./hooks/keyset";
+import { getDefaultQuality } from "@/lib/quality";
+
+export type FavoritesListQuery = {
+  limit?: number;
+  sort?: "title" | "artist" | "in_library";
+  order?: SortOrder;
+  q?: string;
+  in_library?: boolean;
+};
+
+export type LibraryAlbumsListQuery = {
+  limit?: number;
+  sort?: "title" | "artist" | "year";
+  order?: SortOrder;
+  q?: string;
+};
 
 export const queryKeys = {
   serverInfo: ["serverInfo"] as const,
   qobuzConnection: ["qobuzConnection"] as const,
   syncLatest: ["syncLatest"] as const,
   scanLatest: ["scanLatest"] as const,
-  favorites: (page: number, limit: number) =>
-    ["favorites", page, limit] as const,
-  downloads: ["downloads"] as const,
-  libraryAlbums: (page: number, limit: number, search: string) =>
-    ["libraryAlbums", page, limit, search] as const,
+  favorites: (params: FavoritesListQuery) => ["favorites", params] as const,
+  downloads: (status?: string) => ["downloads", status] as const,
+  libraryAlbums: (params: LibraryAlbumsListQuery) =>
+    ["libraryAlbums", params] as const,
   libraryAlbum: (id: number) => ["libraryAlbum", id] as const,
   libraryTrack: (id: number) => ["libraryTrack", id] as const,
 };
@@ -43,10 +68,11 @@ export function useScanLatest() {
   });
 }
 
-export function useLibraryAlbums(page = 0, limit = 50, search = "") {
-  return useQuery({
-    queryKey: queryKeys.libraryAlbums(page, limit, search),
-    queryFn: () => api.libraryAlbums(page, limit, search),
+export function useLibraryAlbumsKeyset(params: LibraryAlbumsListQuery = {}) {
+  return useKeysetList<LibraryAlbumItem, LibraryAlbumsListQuery>({
+    queryKey: queryKeys.libraryAlbums(params),
+    params,
+    queryFn: (p) => api.libraryAlbums(p),
   });
 }
 
@@ -95,19 +121,135 @@ export function usePatchTrackTags() {
   });
 }
 
-export function useFavorites(page = 0, limit = 50) {
-  return useQuery({
-    queryKey: queryKeys.favorites(page, limit),
-    queryFn: () => api.favorites(page, limit),
+export function useFavoritesKeyset(params: FavoritesListQuery = {}) {
+  return useKeysetList<QobuzFavoriteItem, FavoritesListQuery>({
+    queryKey: queryKeys.favorites(params),
+    params,
+    queryFn: (p) => api.favorites(p),
   });
 }
 
-export function useDownloads() {
-  return useQuery({
-    queryKey: queryKeys.downloads,
-    queryFn: () => api.downloads(),
+function favoritesFilterKey(params: FavoritesListQuery): string {
+  return JSON.stringify({
+    sort: params.sort ?? "title",
+    order: params.order ?? "asc",
+    q: params.q ?? "",
+    in_library: params.in_library ?? null,
+  });
+}
+
+/** Favorites table: single query page + manual load-more (safe for search). */
+export function useFavoritesList(params: FavoritesListQuery = {}) {
+  const filterKey = favoritesFilterKey(params);
+  const [extraPagesState, setExtraPagesState] = useState<{
+    filterKey: string;
+    pages: KeysetListResponse<QobuzFavoriteItem>[];
+  }>(() => ({ filterKey, pages: [] }));
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  if (extraPagesState.filterKey !== filterKey) {
+    setExtraPagesState({ filterKey, pages: [] });
+  }
+  const extraPages = extraPagesState.pages;
+
+  const pageQuery = useQuery({
+    queryKey: [...queryKeys.favorites(params), filterKey],
+    queryFn: () => api.favorites(params),
+    placeholderData: (previous, previousQuery) => {
+      if (!previous || !previousQuery) return undefined;
+      const prevFilterKey = previousQuery.queryKey.at(-1);
+      return prevFilterKey === filterKey ? keepPreviousData(previous) : undefined;
+    },
+  });
+
+  const items = useMemo(() => {
+    const first = pageQuery.data?.items ?? [];
+    if (extraPages.length === 0) return first;
+    return [...first, ...extraPages.flatMap((p) => p.items)];
+  }, [pageQuery.data, extraPages]);
+
+  const hasMore =
+    extraPages.length > 0
+      ? (extraPages.at(-1)?.has_more ?? false)
+      : (pageQuery.data?.has_more ?? false);
+
+  const fetchNextPage = useCallback(async () => {
+    const cursor =
+      extraPages.length > 0
+        ? extraPages.at(-1)?.next_cursor
+        : pageQuery.data?.next_cursor;
+    if (!cursor || !hasMore || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.favorites({ ...params, cursor });
+      setExtraPagesState((prev) => ({
+        filterKey,
+        pages: [...(prev.filterKey === filterKey ? prev.pages : []), page],
+      }));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [
+    params,
+    filterKey,
+    extraPages,
+    pageQuery.data?.next_cursor,
+    hasMore,
+    loadingMore,
+  ]);
+
+  return {
+    items,
+    isPending: pageQuery.isPending && items.length === 0,
+    isFetching: pageQuery.isFetching && !loadingMore,
+    hasNextPage: hasMore,
+    fetchNextPage,
+    isFetchingNextPage: loadingMore,
+  };
+}
+
+/** Flattened favorites for queue titles and other consumers. */
+export function useFavoritesFlat(params: FavoritesListQuery = { limit: 500 }) {
+  const query = useFavoritesKeyset(params);
+  const { hasNextPage, isFetchingNextPage, fetchNextPage, dataUpdatedAt } = query;
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, dataUpdatedAt]);
+  return {
+    ...query,
+    items: flattenKeysetPages(query.data),
+  };
+}
+
+export function useDownloads(status?: string) {
+  const query = useKeysetList<
+    DownloadJob,
+    { status?: string; limit: number; sort: string; order: "desc" }
+  >({
+    queryKey: queryKeys.downloads(status),
+    params: { status, limit: 100, sort: "id", order: "desc" as const },
+    queryFn: (p) => api.downloads(p),
     refetchInterval: 3_000,
   });
+  const { hasNextPage, isFetchingNextPage, fetchNextPage, dataUpdatedAt } = query;
+  useEffect(() => {
+    if (hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage, dataUpdatedAt]);
+  return {
+    ...query,
+    data: query.data
+      ? {
+          items: flattenKeysetPages(query.data),
+          next_cursor: query.data.pages.at(-1)?.next_cursor ?? null,
+          has_more: query.hasNextPage ?? false,
+        }
+      : undefined,
+    isLoading: query.isLoading,
+  };
 }
 
 export function useQobuzSync() {
@@ -160,12 +302,23 @@ export function useRemoveFavorites() {
   });
 }
 
+export function useCreateDownloadByUrl() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) =>
+      api.createDownloadByUrl(url, getDefaultQuality()),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}
+
 export function useCreateDownload() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateDownloadRequest) => api.createDownload(body),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.downloads });
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
     },
   });
 }
@@ -175,7 +328,7 @@ export function useCancelDownload() {
   return useMutation({
     mutationFn: (id: number) => api.cancelDownload(id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.downloads });
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
     },
   });
 }
@@ -185,7 +338,7 @@ export function usePurgeFinishedDownloads() {
   return useMutation({
     mutationFn: () => api.purgeFinishedDownloads(),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.downloads });
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
     },
   });
 }
@@ -195,7 +348,7 @@ export function usePurgeDownload() {
   return useMutation({
     mutationFn: (id: number) => api.purgeDownload(id),
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.downloads });
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
     },
   });
 }

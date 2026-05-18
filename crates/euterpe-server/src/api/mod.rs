@@ -1,17 +1,22 @@
 mod downloads;
 mod health;
+pub mod keyset;
 mod library;
 mod qobuz;
 mod server;
 
+pub use keyset::{KeysetPage, SortOrder, SortKeyKind, SortKeyValue};
+
 pub use downloads::{
-    CreateDownloadRequest, CreateDownloadResponse, DownloadJob, DownloadJobListResponse,
+    CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse, DownloadJob,
+    DownloadJobListResponse,
     DownloadJobStatus, DownloadJobType, DownloadPurgeResponse, JobProgressEvent,
 };
 pub use health::{ErrorBody, ErrorResponse, HealthResponse};
 pub use qobuz::{
     QobuzAccountListItem, QobuzAccountsListResponse, QobuzConnectionStatusResponse,
-    QobuzFavoriteItem, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest,
+    QobuzFavoriteItem, QobuzFavoritesListResponse,
+    QobuzFavoritesMutateRequest,
     QobuzOAuthStartResponse, QobuzSyncLatestResponse, QobuzSyncResponse, QobuzSyncRunSummary,
     QobuzTestLoginRequest, QobuzTestLoginResponse,
 };

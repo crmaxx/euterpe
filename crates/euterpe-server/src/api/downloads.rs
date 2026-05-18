@@ -65,6 +65,12 @@ pub struct CreateDownloadRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDownloadByUrlRequest {
+    pub url: String,
+    pub quality: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateDownloadResponse {
     pub job_id: i64,
 }
@@ -86,6 +92,8 @@ pub struct DownloadJob {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadJobListResponse {
     pub items: Vec<DownloadJob>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

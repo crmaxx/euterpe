@@ -74,31 +74,31 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - UI: «Clear history», удаление строки
 - См. [future-plans.ru.md — FP-2](future-plans.ru.md#fp-2--очередь-загрузок-очистка-и-удаление-заданий-)
 
-### FP-3 — Favorites: сортировка и фильтр
+### FP-3 — Favorites: сортировка и фильтр ✅
 
 - **Сортировка на сервере:** `sort` / `order` в `GET …/favorites` + SQL `ORDER BY` — FP-3a–FP-3c
 - Фильтр **в библиотеке / нет** — FP-3d; **поиск** — FP-3e; **обложки** — FP-3f
 - См. [future-plans.ru.md — FP-3](future-plans.ru.md#fp-3--favorites-сортировка-таблицы)
 
-### FP-7 — Индекс сразу после download
+### FP-4 — Индекс сразу после download
 
 - После альбома: upsert `albums` + **все `tracks`** из `album/get` (без обязательного rescan)
 - Сейчас: только `albums` (FP-7a); треки — FP-7b
 - См. [future-plans.ru.md — FP-7](future-plans.ru.md#fp-7--библиотека-сразу-после-скачивания-без-обязательного-rescan)
 
-### FP-4 — Автозаполнение тегов (каталоги)
+### FP-5 — Автозаполнение тегов (каталоги)
 
 - MusicBrainz, Discogs, GnuDB, TrackType.org — [future-plans.ru.md — FP-4](future-plans.ru.md#fp-4--автозаполнение-тегов-из-внешних-каталогов)
 
-### FP-5 — Теги из Qobuz при скачивании
+### FP-6 — Теги из Qobuz при скачивании
 
 - `write_tags` после download — [future-plans.ru.md — FP-5](future-plans.ru.md#fp-5--автопроставление-тегов-из-qobuz-при-скачивании)
 
-### FP-6 — Обложка альбома из UI
+### FP-7 — Обложка альбома из UI
 
 - Upload/replace cover — [future-plans.ru.md — FP-6](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui)
 
-### FP-8 — List API: keyset-пагинация
+### FP-8 — List API: keyset-пагинация ✅
 
 - Единый контракт `limit` / `sort` / `order` / `cursor` — [future-plans.ru.md — FP-8](future-plans.ru.md#fp-8--коллекции-в-api-keyset-пагинация-и-сортировка)
 

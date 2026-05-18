@@ -58,6 +58,10 @@ pub fn app(state: AppState) -> Router {
                 .get(downloads::list_downloads),
         )
         .route(
+            "/api/v1/downloads/by-url",
+            post(downloads::create_download_by_url),
+        )
+        .route(
             "/api/v1/downloads/purge",
             post(downloads::purge_finished_downloads),
         )
@@ -243,14 +247,23 @@ async fn qobuz_sync_handler(
 struct FavoritesQuery {
     #[serde(rename = "type")]
     entity_type: String,
-    #[serde(default)]
-    page: u32,
     #[serde(default = "default_limit")]
     limit: u32,
+    #[serde(default = "default_favorites_sort")]
+    sort: String,
+    #[serde(default)]
+    order: Option<String>,
+    cursor: Option<String>,
+    q: Option<String>,
+    in_library: Option<bool>,
 }
 
 fn default_limit() -> u32 {
     50
+}
+
+fn default_favorites_sort() -> String {
+    "title".to_string()
 }
 
 async fn list_favorites(
@@ -260,11 +273,33 @@ async fn list_favorites(
     if q.entity_type != "album" {
         return Err(ApiError::bad_request("only type=album is supported"));
     }
-    if q.limit == 0 || q.limit > 500 {
-        return Err(ApiError::bad_request("limit must be 1..=500"));
-    }
-    let (items, total) = favorites::list_albums(&state.db, q.page, q.limit).await?;
-    Ok(Json(QobuzFavoritesListResponse { items, total }))
+    use crate::api::keyset::parse_limit;
+    use crate::api::SortOrder;
+    use crate::db::favorites::{FavoritesListParams, FavoritesSort};
+
+    let limit = parse_limit(q.limit, 50, 500)?;
+    let sort = FavoritesSort::parse(&q.sort)?;
+    let order = match q.order.as_deref() {
+        None => SortOrder::Asc,
+        Some(s) => SortOrder::parse(s)?,
+    };
+    let page = favorites::list_albums_keyset(
+        &state.db,
+        FavoritesListParams {
+            sort,
+            order,
+            limit,
+            q: q.q,
+            in_library: q.in_library,
+            cursor: q.cursor,
+        },
+    )
+    .await?;
+    Ok(Json(QobuzFavoritesListResponse {
+        items: page.items,
+        next_cursor: page.next_cursor,
+        has_more: page.has_more,
+    }))
 }
 
 async fn add_favorites(
@@ -280,7 +315,7 @@ async fn add_favorites(
         guard.favorite_add_albums(&body.album_ids).await?;
     }
     for &id in &body.album_ids {
-        favorites::upsert_album(&state.db, id, "", "", None).await?;
+        favorites::upsert_album(&state.db, id, "", "", None, None).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }

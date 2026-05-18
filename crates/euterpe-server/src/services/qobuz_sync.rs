@@ -9,6 +9,37 @@ use crate::api::QobuzSyncResponse;
 use crate::db::{favorites, sync_runs};
 use crate::error::ApiError;
 
+fn album_fields(album: &AlbumSummary) -> (u64, String, String, Option<String>, Option<String>) {
+    let artist = album
+        .artist
+        .as_ref()
+        .map(|a| a.name.clone())
+        .or_else(|| {
+            album
+                .artists
+                .as_ref()
+                .and_then(|v| v.first())
+                .map(|a| a.name.clone())
+        })
+        .unwrap_or_default();
+    let album_api_id = album
+        .pick_album_api_id(album.id)
+        .unwrap_or_else(|| album.api_album_id());
+    let cover_url = album.image.as_ref().and_then(|img| {
+        img.thumbnail
+            .clone()
+            .or_else(|| img.small.clone())
+            .filter(|s| !s.trim().is_empty())
+    });
+    (
+        album.id,
+        album.title.clone(),
+        artist,
+        Some(album_api_id),
+        cover_url,
+    )
+}
+
 pub async fn run(
     pool: &SqlitePool,
     qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
@@ -26,10 +57,17 @@ pub async fn run(
 
         let mut added = 0u64;
         for album in &albums {
-            let (qobuz_id, title, artist, album_api_id) = album_fields(album);
+            let (qobuz_id, title, artist, album_api_id, cover_url) = album_fields(album);
             let existed = before_set.contains(&qobuz_id);
-            favorites::upsert_album(pool, qobuz_id, &title, &artist, album_api_id.as_deref())
-                .await?;
+            favorites::upsert_album(
+                pool,
+                qobuz_id,
+                &title,
+                &artist,
+                album_api_id.as_deref(),
+                cover_url.as_deref(),
+            )
+            .await?;
             if !existed {
                 added += 1;
             }
@@ -58,25 +96,6 @@ pub async fn run(
             Err(e)
         }
     }
-}
-
-fn album_fields(album: &AlbumSummary) -> (u64, String, String, Option<String>) {
-    let artist = album
-        .artist
-        .as_ref()
-        .map(|a| a.name.clone())
-        .or_else(|| {
-            album
-                .artists
-                .as_ref()
-                .and_then(|v| v.first())
-                .map(|a| a.name.clone())
-        })
-        .unwrap_or_default();
-    let album_api_id = album
-        .pick_album_api_id(album.id)
-        .unwrap_or_else(|| album.api_album_id());
-    (album.id, album.title.clone(), artist, Some(album_api_id))
 }
 
 #[cfg(test)]
@@ -237,8 +256,22 @@ mod tests {
         assert_eq!(r2.removed, 1);
         assert_eq!(r2.added, 0);
 
-        let (items, total) = favorites::list_albums(&pool, 0, 50).await.unwrap();
-        assert_eq!(total, 1);
-        assert_eq!(items[0].qobuz_id, 1);
+        use crate::api::SortOrder;
+        use crate::db::favorites::{FavoritesListParams, FavoritesSort};
+        let page = favorites::list_albums_keyset(
+            &pool,
+            FavoritesListParams {
+                sort: FavoritesSort::Title,
+                order: SortOrder::Asc,
+                limit: 50,
+                q: None,
+                in_library: None,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].qobuz_id, 1);
     }
 }

@@ -12,6 +12,9 @@ type Props = {
 const placeholderBase =
   "flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-border bg-muted text-center text-[10px] leading-tight text-muted-foreground";
 
+/** Survives table remounts (e.g. favorites search refetch) without revoking active blob URLs. */
+const blobUrlByAlbumId = new Map<number, string>();
+
 /**
  * Loads cover via authenticated fetch (img cannot send Bearer). Shows "No cover" when
  * `cover_path` is absent or GET returns 404.
@@ -45,13 +48,18 @@ function LibraryAlbumCoverFetched({
   albumId: number;
   className?: string;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"loading" | "ready" | "missing">("loading");
-  const objectUrlRef = useRef<string | null>(null);
+  const cachedUrl = blobUrlByAlbumId.get(albumId);
+  const [src, setSrc] = useState<string | null>(() => cachedUrl ?? null);
+  const [phase, setPhase] = useState<"loading" | "ready" | "missing">(() =>
+    cachedUrl ? "ready" : "loading",
+  );
+  const objectUrlRef = useRef<string | null>(cachedUrl ?? null);
 
   const placeholder = cn(placeholderBase, className ?? "size-24");
 
   useEffect(() => {
+    if (phase !== "loading") return;
+
     let cancelled = false;
     const ac = new AbortController();
 
@@ -73,9 +81,11 @@ function LibraryAlbumCoverFetched({
         const blob = await res.blob();
         if (cancelled) return;
         const url = URL.createObjectURL(blob);
-        if (objectUrlRef.current) {
-          URL.revokeObjectURL(objectUrlRef.current);
+        const prev = blobUrlByAlbumId.get(albumId);
+        if (prev && prev !== url) {
+          URL.revokeObjectURL(prev);
         }
+        blobUrlByAlbumId.set(albumId, url);
         objectUrlRef.current = url;
         setSrc(url);
         setPhase("ready");
@@ -87,12 +97,8 @@ function LibraryAlbumCoverFetched({
     return () => {
       cancelled = true;
       ac.abort();
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
     };
-  }, [albumId]);
+  }, [albumId, phase]);
 
   if (phase === "missing") {
     return (

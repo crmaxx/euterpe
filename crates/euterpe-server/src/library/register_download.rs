@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 
 use crate::db::{albums, artists};
 use crate::error::ApiError;
-use crate::library::paths::track_path;
+use crate::library::paths::{track_path, year_from_release_date};
 
 /// `favorite_catalog_id` must match `download_jobs.qobuz_id` / `qobuz_favorites.qobuz_id` for the
 /// favorites list `LEFT JOIN albums ON albums.qobuz_album_id = qobuz_favorites.qobuz_id`.
@@ -40,12 +40,7 @@ pub async fn register_album_from_qobuz_download(
         .unwrap_or("Unknown Artist");
     let artist_id = artists::upsert_by_name(pool, artist_name, None).await?;
 
-    let year = album
-        .summary
-        .release_date_original
-        .as_deref()
-        .and_then(|s| s.get(0..4))
-        .and_then(|y| y.parse().ok());
+    let year = year_from_release_date(album.summary.release_date_original.as_deref());
 
     albums::upsert(
         pool,

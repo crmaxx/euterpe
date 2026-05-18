@@ -53,12 +53,15 @@ pub struct QobuzFavoriteItem {
     pub in_library: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_album_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QobuzFavoritesListResponse {
     pub items: Vec<QobuzFavoriteItem>,
-    pub total: i64,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,25 @@
+use serde_json::json;
 use sqlx::SqlitePool;
 
+use crate::api::keyset::{
+    decode_cursor, ensure_cursor_matches, finish_keyset_page, fingerprint_json, keyset_and_clause,
+};
+use crate::api::{KeysetPage, SortKeyKind, SortKeyValue, SortOrder};
 use crate::error::ApiError;
+
+fn bind_sort_keys<'q, T>(
+    mut query: sqlx::query::QueryAs<'q, sqlx::Sqlite, T, sqlx::sqlite::SqliteArguments<'q>>,
+    binds: &'q [SortKeyValue],
+) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, T, sqlx::sqlite::SqliteArguments<'q>> {
+    for b in binds {
+        query = match b {
+            SortKeyValue::Text(s) => query.bind(s),
+            SortKeyValue::Int(n) => query.bind(n),
+            SortKeyValue::Bool(n) => query.bind(n),
+        };
+    }
+    query
+}
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct AlbumRow {
@@ -106,80 +125,150 @@ pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<AlbumRow>, A
     Ok(row)
 }
 
-pub async fn list(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlbumsSort {
+    Title,
+    Artist,
+    Year,
+}
+
+impl AlbumsSort {
+    pub fn parse(s: &str) -> Result<Self, ApiError> {
+        match s {
+            "title" => Ok(Self::Title),
+            "artist" => Ok(Self::Artist),
+            "year" => Ok(Self::Year),
+            _ => Err(ApiError::bad_request("sort must be title, artist, or year")),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::Artist => "artist",
+            Self::Year => "year",
+        }
+    }
+
+    fn sort_sql(self) -> &'static str {
+        match self {
+            Self::Title => "a.title COLLATE NOCASE",
+            Self::Artist => "COALESCE(ar.name, '') COLLATE NOCASE",
+            Self::Year => "COALESCE(a.year, -1)",
+        }
+    }
+
+    fn key_kind(self) -> SortKeyKind {
+        match self {
+            Self::Year => SortKeyKind::Int,
+            _ => SortKeyKind::Text,
+        }
+    }
+
+    fn order_sql(self, order: SortOrder) -> String {
+        let dir = match order {
+            SortOrder::Asc => "ASC",
+            SortOrder::Desc => "DESC",
+        };
+        format!("{} {dir}, a.id ASC", self.sort_sql())
+    }
+
+    fn primary_key(self, row: &AlbumListRow) -> SortKeyValue {
+        match self {
+            Self::Title => SortKeyValue::Text(row.title.clone()),
+            Self::Artist => SortKeyValue::Text(row.artist_name.clone()),
+            Self::Year => SortKeyValue::Int(row.year.unwrap_or(-1) as i64),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AlbumsListParams {
+    pub sort: AlbumsSort,
+    pub order: SortOrder,
+    pub limit: u32,
+    pub q: Option<String>,
+    pub cursor: Option<String>,
+}
+
+pub async fn list_keyset(
     pool: &SqlitePool,
-    page: u32,
-    limit: u32,
-    search: Option<&str>,
-) -> Result<(Vec<AlbumListRow>, i64), ApiError> {
-    let offset = (page as i64) * (limit as i64);
-    let pattern = search.map(|s| format!("%{s}%"));
+    params: AlbumsListParams,
+) -> Result<KeysetPage<AlbumListRow>, ApiError> {
+    let fingerprint = fingerprint_json(&json!({ "q": params.q }));
 
-    let total: (i64,) = if let Some(ref p) = pattern {
-        sqlx::query_as(
-            r#"
-            SELECT COUNT(*)
-            FROM albums a
-            LEFT JOIN artists ar ON a.artist_id = ar.id
-            WHERE a.title LIKE ? OR ar.name LIKE ?
-            "#,
-        )
-        .bind(p)
-        .bind(p)
-        .fetch_one(pool)
-        .await?
-    } else {
-        sqlx::query_as("SELECT COUNT(*) FROM albums")
-            .fetch_one(pool)
-            .await?
-    };
+    let mut keyset_clause = String::new();
+    let mut keyset_binds: Vec<SortKeyValue> = Vec::new();
+    if let Some(ref cursor_str) = params.cursor {
+        let payload = decode_cursor(cursor_str)?;
+        let (primary, tie) = ensure_cursor_matches(
+            &payload,
+            params.sort.as_str(),
+            params.order,
+            &fingerprint,
+            params.sort.key_kind(),
+        )?;
+        let (clause, binds) = keyset_and_clause(
+            params.order,
+            params.sort.sort_sql(),
+            "a.id",
+            &primary,
+            tie,
+        );
+        keyset_clause = clause;
+        keyset_binds = binds;
+    }
 
-    let rows: Vec<AlbumListRow> = if let Some(ref p) = pattern {
-        sqlx::query_as(
-            r#"
-            SELECT
-                a.id,
-                a.title,
-                COALESCE(ar.name, '') AS artist_name,
-                a.year,
-                a.cover_path,
-                (SELECT COUNT(*) FROM tracks t WHERE t.album_id = a.id) AS track_count
-            FROM albums a
-            LEFT JOIN artists ar ON a.artist_id = ar.id
-            WHERE a.title LIKE ? OR ar.name LIKE ?
-            ORDER BY a.title COLLATE NOCASE
-            LIMIT ? OFFSET ?
-            "#,
-        )
-        .bind(p)
-        .bind(p)
-        .bind(limit as i64)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?
-    } else {
-        sqlx::query_as(
-            r#"
-            SELECT
-                a.id,
-                a.title,
-                COALESCE(ar.name, '') AS artist_name,
-                a.year,
-                a.cover_path,
-                (SELECT COUNT(*) FROM tracks t WHERE t.album_id = a.id) AS track_count
-            FROM albums a
-            LEFT JOIN artists ar ON a.artist_id = ar.id
-            ORDER BY a.title COLLATE NOCASE
-            LIMIT ? OFFSET ?
-            "#,
-        )
-        .bind(limit as i64)
-        .bind(offset)
-        .fetch_all(pool)
-        .await?
-    };
+    let mut search_clause = String::new();
+    let mut search_binds: Vec<String> = Vec::new();
+    if let Some(ref q) = params.q {
+        if !q.trim().is_empty() {
+            search_clause =
+                " AND (a.title LIKE ? OR COALESCE(ar.name, '') LIKE ?)".to_string();
+            let pattern = format!("%{}%", q.trim());
+            search_binds.push(pattern.clone());
+            search_binds.push(pattern);
+        }
+    }
 
-    Ok((rows, total.0))
+    let fetch_limit = (params.limit as i64) + 1;
+    let order_by = params.sort.order_sql(params.order);
+    let sql = format!(
+        r#"
+        SELECT
+            a.id,
+            a.title,
+            COALESCE(ar.name, '') AS artist_name,
+            a.year,
+            a.cover_path,
+            (SELECT COUNT(*) FROM tracks t WHERE t.album_id = a.id) AS track_count
+        FROM albums a
+        LEFT JOIN artists ar ON a.artist_id = ar.id
+        WHERE 1=1
+        {search_clause}
+        {keyset_clause}
+        ORDER BY {order_by}
+        LIMIT ?
+        "#
+    );
+
+    let mut query = sqlx::query_as::<_, AlbumListRow>(&sql);
+    for p in &search_binds {
+        query = query.bind(p);
+    }
+    query = bind_sort_keys(query, &keyset_binds);
+    query = query.bind(fetch_limit);
+
+    let rows: Vec<AlbumListRow> = query.fetch_all(pool).await?;
+    let sort = params.sort;
+    Ok(finish_keyset_page(
+        rows,
+        params.limit as usize,
+        sort.as_str(),
+        params.order,
+        &fingerprint,
+        |r| (sort.primary_key(r), r.id),
+    ))
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]

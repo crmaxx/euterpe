@@ -26,6 +26,22 @@ pub fn extension_for_quality(quality: u8) -> &'static str {
     }
 }
 
+/// Year from Qobuz `release_date_original` (typically `YYYY-MM-DD`).
+pub fn year_from_release_date(release_date_original: Option<&str>) -> Option<i32> {
+    release_date_original
+        .and_then(|s| s.get(0..4))
+        .and_then(|y| y.parse().ok())
+}
+
+/// Album folder name: `{year} - {title}` (or `Unknown - {title}` when year is missing).
+pub fn album_dir_name(title: &str, release_date_original: Option<&str>) -> String {
+    let title = sanitize_component(title);
+    match year_from_release_date(release_date_original) {
+        Some(year) => format!("{year} - {title}"),
+        None => format!("Unknown - {title}"),
+    }
+}
+
 pub fn track_path(
     library_root: &Path,
     album: &AlbumDetail,
@@ -38,12 +54,15 @@ pub fn track_path(
         .as_ref()
         .map(|a| sanitize_component(&a.name))
         .unwrap_or_else(|| "Unknown Artist".into());
-    let album_name = sanitize_component(&album.summary.title);
+    let album_dir = album_dir_name(
+        &album.summary.title,
+        album.summary.release_date_original.as_deref(),
+    );
     let track_num = track.track_number.unwrap_or(0);
     let title = sanitize_component(&track.title);
     let ext = extension_for_quality(quality);
     let filename = format!("{track_num:02} - {title}.{ext}");
-    library_root.join(artist).join(album_name).join(filename)
+    library_root.join(artist).join(album_dir).join(filename)
 }
 
 #[cfg(test)]
@@ -62,6 +81,15 @@ mod tests {
     }
 
     #[test]
+    fn album_dir_name_with_year() {
+        assert_eq!(
+            album_dir_name("Test Album", Some("2019-06-01")),
+            "2019 - Test Album"
+        );
+        assert_eq!(album_dir_name("Test Album", None), "Unknown - Test Album");
+    }
+
+    #[test]
     fn track_path_layout() {
         let album = AlbumDetail {
             summary: AlbumSummary {
@@ -74,7 +102,7 @@ mod tests {
                 }),
                 artists: None,
                 image: None,
-                release_date_original: None,
+                release_date_original: Some("2020-03-15".into()),
                 hires: None,
                 album_ref: None,
                 slug: None,
@@ -92,7 +120,8 @@ mod tests {
             hires_streamable: None,
         };
         let path = track_path(Path::new("/music"), &album, &track, 6);
-        assert!(path.ends_with("03 - Song.flac"));
-        assert!(path.to_string_lossy().contains("Artist"));
+        let s = path.to_string_lossy();
+        assert!(s.ends_with("03 - Song.flac"));
+        assert!(s.contains("Artist/2020 - Test Album/"));
     }
 }

@@ -233,12 +233,6 @@ paths:
           schema:
             type: string
             enum: [album]
-        - name: page
-          in: query
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
         - name: limit
           in: query
           schema:
@@ -246,6 +240,30 @@ paths:
             minimum: 1
             maximum: 500
             default: 50
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [title, artist, in_library]
+            default: title
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: q
+          in: query
+          schema:
+            type: string
+        - name: in_library
+          in: query
+          schema:
+            type: boolean
       responses:
         "200":
           description: Paginated favorites
@@ -336,6 +354,29 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/DownloadJobStatus"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [id, created_at, status]
+            default: id
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: cursor
+          in: query
+          schema:
+            type: string
       responses:
         "200":
           description: Job list
@@ -343,6 +384,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DownloadJobListResponse"
+
+  /api/v1/downloads/by-url:
+    post:
+      operationId: createDownloadByUrl
+      tags: [Downloads]
+      summary: Queue album download from play.qobuz.com URL or album ref
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDownloadByUrlRequest"
+      responses:
+        "202":
+          description: Job queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateDownloadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 
   /api/v1/downloads/purge:
     post:
@@ -487,12 +558,6 @@ paths:
         - AdminBearer: []
         - {}
       parameters:
-        - name: page
-          in: query
-          schema:
-            type: integer
-            minimum: 0
-            default: 0
         - name: limit
           in: query
           schema:
@@ -500,7 +565,23 @@ paths:
             minimum: 1
             maximum: 500
             default: 50
-        - name: search
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [title, artist, year]
+            default: title
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: q
           in: query
           schema:
             type: string
@@ -904,19 +985,23 @@ components:
         local_album_id:
           type: ["integer", "null"]
           format: int64
+        cover_url:
+          type: ["string", "null"]
+          description: Qobuz thumbnail URL from last sync (when not in library)
 
     QobuzFavoritesListResponse:
       type: object
-      required: [items, total]
+      required: [items, has_more]
       additionalProperties: false
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/QobuzFavoriteItem"
-        total:
-          type: integer
-          minimum: 0
+        next_cursor:
+          type: ["string", "null"]
+        has_more:
+          type: boolean
 
     QobuzFavoritesMutateRequest:
       type: object
@@ -930,6 +1015,21 @@ components:
             format: int64
             minimum: 1
           minItems: 1
+
+    CreateDownloadByUrlRequest:
+      type: object
+      required: [url, quality]
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          minLength: 1
+          description: play.qobuz.com album URL, www.qobuz.com album link, or bare album/get ref
+        quality:
+          type: integer
+          minimum: 1
+          maximum: 255
+          description: Qobuz format_id (5=MP3, 6=FLAC 16/44, 7=FLAC 24, 27=Hi-Res)
 
     DownloadJobStatus:
       type: string
@@ -1006,13 +1106,17 @@ components:
 
     DownloadJobListResponse:
       type: object
-      required: [items]
+      required: [items, has_more]
       additionalProperties: false
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/DownloadJob"
+        next_cursor:
+          type: ["string", "null"]
+        has_more:
+          type: boolean
 
     DownloadPurgeResponse:
       type: object
@@ -1117,16 +1221,17 @@ components:
 
     LibraryAlbumListResponse:
       type: object
-      required: [items, total]
+      required: [items, has_more]
       additionalProperties: false
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/LibraryAlbumItem"
-        total:
-          type: integer
-          minimum: 0
+        next_cursor:
+          type: ["string", "null"]
+        has_more:
+          type: boolean
 
     LibraryTrackItem:
       type: object

@@ -3,9 +3,11 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
+use euterpe_qobuz::parse_album_url;
+
 use crate::api::{
-    CreateDownloadRequest, CreateDownloadResponse, DownloadJobListResponse,
-    DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
+    CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse,
+    DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
 };
 use crate::db::download_jobs;
 use crate::error::ApiError;
@@ -15,6 +17,21 @@ use crate::state::AppState;
 #[derive(Debug, Deserialize)]
 pub struct ListDownloadsQuery {
     pub status: Option<DownloadJobStatus>,
+    #[serde(default = "default_download_limit")]
+    pub limit: u32,
+    #[serde(default = "default_download_sort")]
+    pub sort: String,
+    #[serde(default)]
+    pub order: Option<String>,
+    pub cursor: Option<String>,
+}
+
+fn default_download_limit() -> u32 {
+    100
+}
+
+fn default_download_sort() -> String {
+    "id".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +44,49 @@ fn purge_requested(q: &DeleteDownloadQuery) -> bool {
     q.purge
         .as_deref()
         .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+}
+
+async fn queue_album_download(
+    state: &AppState,
+    album_api_id: &str,
+    quality: u8,
+    qobuz_id: Option<u64>,
+) -> Result<i64, ApiError> {
+    let qobuz_for_dedup = qobuz_id.filter(|id| *id > 0);
+    if download_jobs::has_running_album(&state.db, album_api_id, qobuz_for_dedup, quality).await? {
+        return Err(ApiError::Message(
+            "JOB_ALREADY_RUNNING: album download in progress".into(),
+        ));
+    }
+
+    let payload = DownloadJobPayload {
+        album_api_id: Some(album_api_id.to_string()),
+    };
+    let catalog_id = qobuz_id.unwrap_or(0);
+    let job_id = download_jobs::insert_queued(
+        &state.db,
+        DownloadJobType::Album,
+        catalog_id,
+        quality,
+        Some(&payload),
+    )
+    .await?;
+
+    tracing::debug!(
+        job_id,
+        qobuz_id = ?qobuz_id,
+        quality,
+        album_api_id = %album_api_id,
+        "download job queued"
+    );
+
+    state
+        .job_tx
+        .send(job_id)
+        .await
+        .map_err(|e| ApiError::Message(format!("job queue closed: {e}")))?;
+
+    Ok(job_id)
 }
 
 pub async fn create_download(
@@ -49,47 +109,37 @@ pub async fn create_download(
     quality_from_format_id(body.quality)
         .ok_or_else(|| ApiError::bad_request("unsupported quality (use 5, 6, 7, or 27)"))?;
 
-    let qobuz_for_dedup = body.qobuz_id.filter(|id| *id > 0);
-    if download_jobs::has_running_album(
-        &state.db,
-        album_api_id,
-        qobuz_for_dedup,
-        body.quality,
-    )
-    .await?
-    {
-        return Err(ApiError::Message(
-            "JOB_ALREADY_RUNNING: album download in progress".into(),
-        ));
+    let job_id = queue_album_download(&state, album_api_id, body.quality, body.qobuz_id).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CreateDownloadResponse { job_id }),
+    ))
+}
+
+pub async fn create_download_by_url(
+    State(state): State<AppState>,
+    Json(body): Json<CreateDownloadByUrlRequest>,
+) -> Result<(StatusCode, Json<CreateDownloadResponse>), ApiError> {
+    state.require_credentials().await?;
+
+    if body.url.trim().is_empty() {
+        return Err(ApiError::bad_request("url must not be empty"));
     }
 
-    let payload = DownloadJobPayload {
-        album_api_id: Some(album_api_id.to_string()),
+    quality_from_format_id(body.quality)
+        .ok_or_else(|| ApiError::bad_request("unsupported quality (use 5, 6, 7, or 27)"))?;
+
+    let album_ref = parse_album_url(&body.url).map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let summary = {
+        let guard = state.qobuz.lock().await;
+        guard.album_ref(&album_ref).await?.summary
     };
-    let qobuz_id = body.qobuz_id.unwrap_or(0);
-    let job_id = download_jobs::insert_queued(
-        &state.db,
-        body.job_type,
-        qobuz_id,
-        body.quality,
-        Some(&payload),
-    )
-    .await?;
+    let album_api_id = summary
+        .pick_album_api_id(summary.id)
+        .unwrap_or_else(|| summary.api_album_id());
 
-    tracing::debug!(
-        job_id,
-        qobuz_id = body.qobuz_id,
-        quality = body.quality,
-        album_api_id = %album_api_id,
-        "download job queued"
-    );
-
-    state
-        .job_tx
-        .send(job_id)
-        .await
-        .map_err(|e| ApiError::Message(format!("job queue closed: {e}")))?;
-
+    let job_id =
+        queue_album_download(&state, &album_api_id, body.quality, Some(summary.id)).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(CreateDownloadResponse { job_id }),
@@ -100,8 +150,32 @@ pub async fn list_downloads(
     State(state): State<AppState>,
     Query(q): Query<ListDownloadsQuery>,
 ) -> Result<Json<DownloadJobListResponse>, ApiError> {
-    let items = download_jobs::list(&state.db, q.status).await?;
-    Ok(Json(DownloadJobListResponse { items }))
+    use crate::api::keyset::parse_limit;
+    use crate::api::SortOrder;
+    use crate::db::download_jobs::{DownloadsListParams, DownloadsSort};
+
+    let limit = parse_limit(q.limit, 100, 500)?;
+    let sort = DownloadsSort::parse(&q.sort)?;
+    let order = match q.order.as_deref() {
+        None => SortOrder::Desc,
+        Some(s) => SortOrder::parse(s)?,
+    };
+    let page = download_jobs::list_keyset(
+        &state.db,
+        DownloadsListParams {
+            sort,
+            order,
+            limit,
+            status: q.status,
+            cursor: q.cursor,
+        },
+    )
+    .await?;
+    Ok(Json(DownloadJobListResponse {
+        items: page.items,
+        next_cursor: page.next_cursor,
+        has_more: page.has_more,
+    }))
 }
 
 pub async fn get_download(

@@ -51,28 +51,51 @@ pub async fn get_library_scan(
 
 #[derive(Debug, Deserialize)]
 pub struct AlbumListQuery {
-    #[serde(default)]
-    pub page: u32,
     #[serde(default = "default_limit")]
     pub limit: u32,
+    #[serde(default = "default_album_sort")]
+    pub sort: String,
     #[serde(default)]
-    pub search: Option<String>,
+    pub order: Option<String>,
+    pub cursor: Option<String>,
+    pub q: Option<String>,
 }
 
 fn default_limit() -> u32 {
     50
 }
 
+fn default_album_sort() -> String {
+    "title".to_string()
+}
+
 pub async fn list_library_albums(
     State(state): State<AppState>,
     Query(q): Query<AlbumListQuery>,
 ) -> Result<Json<LibraryAlbumListResponse>, ApiError> {
-    if q.limit == 0 || q.limit > 500 {
-        return Err(ApiError::bad_request("limit must be 1..=500"));
-    }
-    let (rows, total) =
-        albums::list(&state.db, q.page, q.limit, q.search.as_deref()).await?;
-    let items = rows
+    use crate::api::keyset::parse_limit;
+    use crate::api::SortOrder;
+    use crate::db::albums::{AlbumsListParams, AlbumsSort};
+
+    let limit = parse_limit(q.limit, 50, 500)?;
+    let sort = AlbumsSort::parse(&q.sort)?;
+    let order = match q.order.as_deref() {
+        None => SortOrder::Asc,
+        Some(s) => SortOrder::parse(s)?,
+    };
+    let page = albums::list_keyset(
+        &state.db,
+        AlbumsListParams {
+            sort,
+            order,
+            limit,
+            q: q.q,
+            cursor: q.cursor,
+        },
+    )
+    .await?;
+    let items = page
+        .items
         .into_iter()
         .map(|r| crate::api::LibraryAlbumItem {
             id: r.id,
@@ -83,7 +106,11 @@ pub async fn list_library_albums(
             cover_path: r.cover_path,
         })
         .collect();
-    Ok(Json(LibraryAlbumListResponse { items, total }))
+    Ok(Json(LibraryAlbumListResponse {
+        items,
+        next_cursor: page.next_cursor,
+        has_more: page.has_more,
+    }))
 }
 
 pub async fn get_library_album(
