@@ -6,7 +6,7 @@ FRONTEND_DIR := frontend
 
 help:
 	@echo "Targets:"
-	@echo "  make prepare              Dev tools: overmind, npm ci, husky pre-commit hook"
+	@echo "  make prepare              Dev tools: overmind, npm ci, husky pre-commit (clippy + frontend)"
 	@echo "  make backend              Run API server (cargo run -p euterpe-server)"
 	@echo "  make frontend-install     cd frontend && npm ci"
 	@echo "  make frontend-generate    cd frontend && npm run generate:api"

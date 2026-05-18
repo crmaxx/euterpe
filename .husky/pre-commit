@@ -4,15 +4,34 @@ set -e
 root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
-if ! git diff --cached --name-only | grep -qE '^(frontend/|openapi/)'; then
+staged="$(git diff --cached --name-only)"
+
+run_rust=false
+run_frontend=false
+
+if echo "$staged" | grep -qE '\.rs$|(^|/)Cargo\.(toml|lock)$'; then
+  run_rust=true
+fi
+
+if echo "$staged" | grep -qE '^(frontend/|openapi/)'; then
+  run_frontend=true
+fi
+
+if [ "$run_rust" = false ] && [ "$run_frontend" = false ]; then
   exit 0
 fi
 
-cd frontend
-if [ ! -d node_modules ]; then
-  echo "pre-commit: run 'cd frontend && npm ci' first" >&2
-  exit 1
+if [ "$run_rust" = true ]; then
+  cargo clippy --workspace -- -D warnings
 fi
 
-npm run generate:api
-npm run lint
+if [ "$run_frontend" = true ]; then
+  cd frontend
+  if [ ! -d node_modules ]; then
+    echo "pre-commit: run 'cd frontend && npm ci' first" >&2
+    exit 1
+  fi
+
+  npm run generate:api
+  npm run lint
+fi

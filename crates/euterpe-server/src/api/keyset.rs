@@ -8,9 +8,10 @@ use crate::error::ApiError;
 
 const CURSOR_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SortOrder {
+    #[default]
     Asc,
     Desc,
 }
@@ -29,12 +30,6 @@ impl SortOrder {
             Self::Asc => "asc",
             Self::Desc => "desc",
         }
-    }
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::Asc
     }
 }
 
