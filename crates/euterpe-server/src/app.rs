@@ -52,10 +52,18 @@ pub fn app(state: AppState) -> Router {
                 .post(add_favorites)
                 .delete(remove_favorites),
         )
-        .route("/api/v1/downloads", post(downloads::create_download).get(downloads::list_downloads))
+        .route(
+            "/api/v1/downloads",
+            post(downloads::create_download)
+                .get(downloads::list_downloads),
+        )
+        .route(
+            "/api/v1/downloads/purge",
+            post(downloads::purge_finished_downloads),
+        )
         .route(
             "/api/v1/downloads/{id}",
-            get(downloads::get_download).delete(downloads::cancel_download),
+            get(downloads::get_download).delete(downloads::delete_download),
         )
         .route("/api/v1/library/scan", post(library::start_library_scan))
         .route(

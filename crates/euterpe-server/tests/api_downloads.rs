@@ -11,8 +11,13 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
+use euterpe_server::api::DownloadJobType;
+use euterpe_server::db::download_jobs;
+use euterpe_server::services::download::DownloadJobPayload;
+
 use support::{
-    load_spec, schema_from_spec, state_with_download_mock, validate_schema, DownloadMockQobuz,
+    load_spec, schema_from_spec, state_with_download_mock, test_state, validate_schema,
+    DownloadMockQobuz,
 };
 
 #[tokio::test]
@@ -155,4 +160,112 @@ async fn download_job_completes_via_worker() {
         }
     }
     panic!("job did not complete in time");
+}
+
+#[tokio::test]
+async fn purge_finished_deletes_terminal_jobs() {
+    let state = test_state().await;
+    let pool = state.db.clone();
+    let payload = DownloadJobPayload {
+        album_api_id: Some("1".into()),
+    };
+
+    let queued = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
+        .await
+        .unwrap();
+    let running = download_jobs::insert_queued(&pool, DownloadJobType::Album, 2, 6, Some(&payload))
+        .await
+        .unwrap();
+    download_jobs::claim_running(&pool, running).await.unwrap();
+    let done = download_jobs::insert_queued(&pool, DownloadJobType::Album, 3, 6, Some(&payload))
+        .await
+        .unwrap();
+    download_jobs::claim_running(&pool, done).await.unwrap();
+    download_jobs::finish_success(&pool, done).await.unwrap();
+    let failed = download_jobs::insert_queued(&pool, DownloadJobType::Album, 4, 6, Some(&payload))
+        .await
+        .unwrap();
+    download_jobs::finish_failed(&pool, failed, "err").await.unwrap();
+
+    let app = app::app(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/downloads/purge")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["deleted"], 2);
+    let spec = load_spec();
+    validate_schema(
+        &schema_from_spec(&spec, "DownloadPurgeResponse"),
+        &json,
+    );
+
+    assert!(download_jobs::get(&pool, queued).await.unwrap().is_some());
+    assert!(download_jobs::get(&pool, running).await.unwrap().is_some());
+    assert!(download_jobs::get(&pool, done).await.unwrap().is_none());
+    assert!(download_jobs::get(&pool, failed).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn delete_with_purge_removes_terminal_job() {
+    let state = test_state().await;
+    let pool = state.db.clone();
+    let payload = DownloadJobPayload {
+        album_api_id: Some("1".into()),
+    };
+    let id = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
+        .await
+        .unwrap();
+    download_jobs::claim_running(&pool, id).await.unwrap();
+    download_jobs::finish_success(&pool, id).await.unwrap();
+
+    let app = app::app(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/downloads/{id}?purge=1"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(download_jobs::get(&pool, id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn delete_with_purge_rejects_running_job() {
+    let state = test_state().await;
+    let pool = state.db.clone();
+    let payload = DownloadJobPayload {
+        album_api_id: Some("1".into()),
+    };
+    let id = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
+        .await
+        .unwrap();
+    download_jobs::claim_running(&pool, id).await.unwrap();
+
+    let app = app::app(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/downloads/{id}?purge=1"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(download_jobs::get(&pool, id).await.unwrap().is_some());
 }

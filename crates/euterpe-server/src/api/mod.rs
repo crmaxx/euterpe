@@ -6,7 +6,7 @@ mod server;
 
 pub use downloads::{
     CreateDownloadRequest, CreateDownloadResponse, DownloadJob, DownloadJobListResponse,
-    DownloadJobStatus, DownloadJobType, JobProgressEvent,
+    DownloadJobStatus, DownloadJobType, DownloadPurgeResponse, JobProgressEvent,
 };
 pub use health::{ErrorBody, ErrorResponse, HealthResponse};
 pub use qobuz::{

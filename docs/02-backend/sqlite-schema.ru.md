@@ -24,9 +24,9 @@ CREATE TABLE settings (
 
 Ключи (Phase 2, один аккаунт): `qobuz.user_id`, `qobuz.uat_enc`, … Legacy: `qobuz.email` (deprecated).
 
-Ключи (Phase 6+ / FP-2): `qobuz.active_account_id` → `qobuz_accounts.id`.
+Ключи (Phase 6+ / FP-10): `qobuz.active_account_id` → `qobuz_accounts.id`.
 
-### qobuz_accounts (future, FP-1 / FP-2)
+### qobuz_accounts (future, FP-1 / FP-10)
 
 Несколько привязанных аккаунтов Qobuz; UAT только encrypted.
 
@@ -59,9 +59,9 @@ CREATE TABLE qobuz_favorites (
     artist_name TEXT,
     synced_at TEXT NOT NULL,
     removed INTEGER NOT NULL DEFAULT 0,
-    -- FP-2: qobuz_account_id INTEGER NOT NULL REFERENCES qobuz_accounts(id),
+    -- FP-10: qobuz_account_id INTEGER NOT NULL REFERENCES qobuz_accounts(id),
     UNIQUE (entity_type, qobuz_id)
-    -- FP-2: UNIQUE (qobuz_account_id, entity_type, qobuz_id)
+    -- FP-10: UNIQUE (qobuz_account_id, entity_type, qobuz_id)
 );
 CREATE INDEX idx_qobuz_favorites_entity ON qobuz_favorites (entity_type, removed);
 ```

@@ -2,7 +2,7 @@
 
 Все фазы — **строгий TDD** ([development-process.ru.md](development-process.ru.md)).
 
-**Фазы 0–5 выполнены** (baseline продукта). Дальнейшие идеи — **Phase 6+** и пункты **FP-1…FP-7** в [future-plans.ru.md](future-plans.ru.md).
+**Фазы 0–5 выполнены** (baseline продукта). Дальнейшие идеи — **Phase 6+** и пункты **FP-1…FP-10** в [future-plans.ru.md](future-plans.ru.md).
 
 ## Phase 0 — Документация ✅
 
@@ -55,93 +55,68 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - `lofty` tag read/write (`PATCH /api/v1/library/tracks/{id}`)
 - Обложка **после скачивания с Qobuz:** файл **`cover.<ext>`** в каталоге альбома (расширение по MIME ответа) + embed во все треки (`covers.rs`, вызывается из download worker)
 - UI `/library`: rescan, список альбомов/треков, превью обложки (`GET /api/v1/library/albums/{id}/cover`, плейсхолдер **No cover**), редактор **текстовых** тегов трека
-- **Не в scope Phase 5:** загрузка/замена обложки **из приложения** — см. **FP-7** в [future-plans.ru.md](future-plans.ru.md#fp-7-album-cover-ui); вручную можно положить **`cover.<ext>`** на диск
+- **Не в scope Phase 5:** загрузка/замена обложки **из приложения** — см. **FP-6** в [future-plans.ru.md](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui); вручную можно положить **`cover.<ext>`** на диск
 - TDD: tag round-trip fixtures, `api_library`, Vitest
 
-## Phase 6+ — Qobuz UX и multi-account (будущее)
+## Phase 6+ — Qobuz UX и future plans (будущее)
 
 См. детали: [future-plans.ru.md](future-plans.ru.md).
 
-### FP-8 — Индекс сразу после download
-
-- После альбома: upsert `albums` + **все `tracks`** из `album/get` (без обязательного rescan)
-- Сейчас: только `albums` (FP-8a); треки — FP-8b
-- См. [future-plans.ru.md — FP-8](future-plans.ru.md#fp-8--библиотека-сразу-после-скачивания-без-обязательного-rescan)
-
-### FP-10 — Параллельный library scan
-
-- Очередь подкаталогов + пул воркеров (default 10) — для **legacy** и repair, не для свежих download
-- См. [future-plans.ru.md — FP-10](future-plans.ru.md#fp-10--параллельное-сканирование-library-очередь--пул-воркеров)
-
-### FP-1 — Токен из приложения (OAuth → БД)
+### FP-1 — Токен из приложения (OAuth → БД) ✅
 
 - OAuth flow в UI Euterpe (`/api/v1/qobuz/oauth/start|callback`)
 - Сохранение `user_auth_token` в `qobuz_accounts` (encrypted)
-- Без ручной вставки токена в env (env остаётся fallback)
-- TDD: mock OAuth + DB round-trip
+- Без ручной вставки токена в env
 
-**После:** Phase 2 backend, вместе с Phase 4 Settings UI.
+### FP-2 — Очередь: purge и удаление jobs ✅
 
-### FP-2 — Выбор пользователя Qobuz
+- `POST /api/v1/downloads/purge`, `DELETE …?purge=1`
+- UI: «Clear history», удаление строки
+- См. [future-plans.ru.md — FP-2](future-plans.ru.md#fp-2--очередь-загрузок-очистка-и-удаление-заданий-)
 
-- Несколько привязанных аккаунтов Qobuz на одном инстансе
-- `qobuz.active_account_id` — от кого sync / favorites / downloads
-- UI: переключатель аккаунта в header/settings
-- `qobuz_favorites`, `download_jobs`, `qobuz_sync_runs` scoped by `qobuz_account_id`
-- TDD: switch active → API uses correct mock client
+### FP-3 — Favorites: сортировка и фильтр
 
-**После:** FP-1 (желательно) или параллельно с Phase 4.
+- **Сортировка на сервере:** `sort` / `order` в `GET …/favorites` + SQL `ORDER BY` — FP-3a–FP-3c
+- Фильтр **в библиотеке / нет** — FP-3d; **поиск** — FP-3e; **обложки** — FP-3f
+- См. [future-plans.ru.md — FP-3](future-plans.ru.md#fp-3--favorites-сортировка-таблицы)
 
-### FP-3 — Очередь загрузок: очистка и удаление
+### FP-7 — Индекс сразу после download
 
-- **Полная очистка** — удалить все старые jobs (`completed` / `failed` / `cancelled`), не трогая `queued` и `running`
-- **Удаление по одному** — убрать конкретную запись из очереди (отдельно от cancel активного job)
-- API + UI `/queue`; TDD: `api_downloads`, Vitest
+- После альбома: upsert `albums` + **все `tracks`** из `album/get` (без обязательного rescan)
+- Сейчас: только `albums` (FP-7a); треки — FP-7b
+- См. [future-plans.ru.md — FP-7](future-plans.ru.md#fp-7--библиотека-сразу-после-скачивания-без-обязательного-rescan)
 
-### FP-4 — Favorites: сортировка и фильтр
+### FP-4 — Автозаполнение тегов (каталоги)
 
-- **Сортировка на сервере:** `sort` / `order` в `GET …/favorites` + SQL `ORDER BY` (клиент — manual sort / повторный запрос) — FP-4a–FP-4c в [future-plans.ru.md](future-plans.ru.md#fp-4--favorites-сортировка-таблицы)
-- Фильтр по **в библиотеке / нет** — FP-4d
-- **Поиск** — FP-4e (`q` на API при пагинации)
-- **Обложки** в списке — FP-4f
+- MusicBrainz, Discogs, GnuDB, TrackType.org — [future-plans.ru.md — FP-4](future-plans.ru.md#fp-4--автозаполнение-тегов-из-внешних-каталогов)
 
-**Целевая фаза:** Phase 2b (API) / Phase 4b (UI). Детали: [future-plans.ru.md](future-plans.ru.md#fp-4--favorites-сортировка-таблицы).
+### FP-5 — Теги из Qobuz при скачивании
 
-### FP-8 — После download: запись в `albums` и scan
+- `write_tags` после download — [future-plans.ru.md — FP-5](future-plans.ru.md#fp-5--автопроставление-тегов-из-qobuz-при-скачивании)
 
-- Worker upsert в `albums` с `qobuz_album_id` из job → корректное **«В библиотеке»** в избранном; опционально инкрементальный scan треков
-- Детали: [future-plans.ru.md](future-plans.ru.md#fp-8-library-after-download)
+### FP-6 — Обложка альбома из UI
 
-### FP-5 — Автозаполнение тегов (каталоги)
+- Upload/replace cover — [future-plans.ru.md — FP-6](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui)
 
-- Запросы к **MusicBrainz**, **Discogs**, **GnuDB**, **TrackType.org** (приоритет, rate limits, ключи на сервере)
-- UI: lookup → превью → запись в файл (`lofty`)
-- Детали: [future-plans.ru.md](future-plans.ru.md#fp-5-metadata-lookup)
+### FP-8 — List API: keyset-пагинация
 
-### FP-6 — Теги из Qobuz при скачивании
+- Единый контракт `limit` / `sort` / `order` / `cursor` — [future-plans.ru.md — FP-8](future-plans.ru.md#fp-8--коллекции-в-api-keyset-пагинация-и-сортировка)
 
-- После записи файла в worker вызывать **`write_tags`** из данных `album/get` + `TrackSummary` (title, album, artist, track #, год из даты релиза, Qobuz id в комментарии)
-- «Максимум» полей — расширить модели **`euterpe-qobuz`** под реальный JSON API (жанр, диск, лейбл, ISRC и т.д.) и замапить в lofty; учесть `spawn_blocking`, порядок с embed обложки, skip при совпадении размера файла
-- Детали: [future-plans.ru.md](future-plans.ru.md#fp-6-qobuz-download-tags)
+### FP-9 — Параллельный library scan
 
-### FP-7 — Обложка альбома: загрузка и замена из UI
+- Очередь + пул воркеров (legacy/repair) — [future-plans.ru.md — FP-9](future-plans.ru.md#fp-9--параллельное-сканирование-library-очередь--пул-воркеров)
 
-- `PUT` / `POST multipart` на сервер (например `PUT /api/v1/library/albums/{id}/cover`) → валидация изображения → запись **`cover.<ext>`** (MIME → расширение, как при Qobuz-download) → обновление `albums.cover_path` → **re-embed** во все треки через `embed_cover_in_track` / `covers.rs`
-- UI Library: кнопка «Заменить обложку», превью после успеха; опционально удаление обложки (очистка файла + `cover_path` + удаление picture из тегов)
-- TDD: `api_library`, Vitest; проверка path traversal и лимита размера файла
+### FP-10 — Multi-account Qobuz ⏸
 
-**Целевая фаза:** **Phase 5b** / **Phase 6**. Детали: [future-plans.ru.md](future-plans.ru.md#fp-7-album-cover-ui)
-
-### FP-9 — List API: keyset-пагинация и сортировка
-
-- Единый контракт **`limit` / `sort` / `order` / `cursor`** (whitelist сортировки на ресурс; **без** `OFFSET`); ответ с **`next_cursor`** / **`has_more`**; UI — manual sort + запросы «следующая страница» по курсору (TanStack + react-query)
-- Детали: [future-plans.ru.md](future-plans.ru.md#fp-9-api-collections-pagination-sort)
+- Несколько аккаунтов, active switcher — отложено
+- См. [future-plans.ru.md — FP-10](future-plans.ru.md#fp-10--выбор-активного-пользователя-qobuz--отложено)
 
 ### Порядок внедрения (рекомендуемый)
 
 ```
 Phase 0–5 ✅ (текущий baseline)
-  → FP-1 OAuth + qobuz_accounts table
-  → FP-2 multi-account + UI switcher
-  → FP-3…FP-9 и др. по приоритету (см. future-plans.ru.md)
+  → FP-1 OAuth + qobuz_accounts table ✅
+  → FP-2 queue purge ✅
+  → FP-3…FP-9 по приоритету
+  → FP-10 multi-account (когда понадобится)
 ```

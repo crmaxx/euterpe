@@ -89,6 +89,11 @@ pub struct DownloadJobListResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadPurgeResponse {
+    pub deleted: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobProgressEvent {
     pub id: i64,
     pub progress_pct: f64,

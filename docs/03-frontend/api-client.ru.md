@@ -44,7 +44,7 @@ Latest row from `qobuz_sync_runs` or `{ "run": null }`.
 **Response 200:** `{ "membership": "Studio", "user_auth_token_refreshed": false }`  
 **401:** invalid or expired token — UI показывает инструкцию обновления из play.qobuz.com
 
-### Qobuz accounts (future FP-1 / FP-2)
+### Qobuz accounts (future FP-1 / FP-10)
 
 | Method | Path | Описание |
 |--------|------|----------|
