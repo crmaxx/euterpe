@@ -3,6 +3,7 @@ FROM node:22-bookworm AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
+COPY openapi/openapi.yaml /app/openapi/openapi.yaml
 COPY frontend/ ./
 RUN npm run generate:api && npm run build
 
