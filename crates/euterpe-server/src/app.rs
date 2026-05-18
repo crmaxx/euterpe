@@ -16,12 +16,13 @@ use tower_http::trace::TraceLayer;
 use tracing::Level;
 
 use crate::api::{
-    HealthResponse, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest, QobuzSyncResponse,
-    QobuzTestLoginRequest, QobuzTestLoginResponse,
+    HealthResponse, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest,
+    QobuzSyncLatestResponse, QobuzSyncResponse, QobuzTestLoginRequest, QobuzTestLoginResponse,
+    ServerInfoResponse,
 };
 use crate::config::AppConfig;
 use crate::credentials::{self, QobuzCredentials};
-use crate::db::{self, favorites};
+use crate::db::{self, favorites, sync_runs};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
@@ -32,6 +33,7 @@ use crate::state::AppState;
 
 pub fn app(state: AppState) -> Router {
     let protected = Router::new()
+        .route("/api/v1/qobuz/sync/latest", get(qobuz_sync_latest))
         .route("/api/v1/qobuz/test-login", post(qobuz_test_login))
         .route("/api/v1/qobuz/sync", post(qobuz_sync_handler))
         .route(
@@ -51,10 +53,15 @@ pub fn app(state: AppState) -> Router {
             middleware::admin_auth,
         ));
 
-    Router::new()
+    let mut router = Router::new()
         .route("/health", get(health))
         .route("/api/openapi.json", get(openapi_json))
-        .merge(protected)
+        .route("/api/v1/server/info", get(server_info))
+        .merge(protected);
+
+    router = crate::static_files::apply_fallback(router, &state.config);
+
+    router
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
@@ -135,6 +142,26 @@ async fn health() -> Json<HealthResponse> {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
+}
+
+async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoResponse>, ApiError> {
+    let credentials_configured =
+        credentials::load_from_env_or_db(&state.config, &state.db)
+            .await?
+            .is_some();
+    Ok(Json(ServerInfoResponse {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        library_path: state.config.library_path.display().to_string(),
+        credentials_configured,
+        admin_auth_required: state.config.admin_password.is_some(),
+    }))
+}
+
+async fn qobuz_sync_latest(
+    State(state): State<AppState>,
+) -> Result<Json<QobuzSyncLatestResponse>, ApiError> {
+    let run = sync_runs::latest(&state.db).await?;
+    Ok(Json(QobuzSyncLatestResponse { run }))
 }
 
 async fn openapi_json() -> Result<Json<serde_json::Value>, ApiError> {
@@ -263,6 +290,7 @@ pub mod test_support {
             library_path,
             download_concurrency: 2,
             dev_verbose: false,
+            static_dir: std::path::PathBuf::new(),
         };
         let pool = db::connect(&config.database_url).await.unwrap();
         db::migrate(&pool).await.unwrap();

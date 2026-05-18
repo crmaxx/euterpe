@@ -8,6 +8,16 @@ Runtime: `GET /api/openapi.json` — spec в JSON.
 
 Base path: `/api/v1`
 
+## Server
+
+### GET /api/v1/server/info
+
+Public snapshot (no secrets): `version`, `library_path`, `credentials_configured`, `admin_auth_required`.
+
+### GET /api/v1/qobuz/sync/latest
+
+Latest row from `qobuz_sync_runs` or `{ "run": null }`.
+
 ## Health
 
 ### GET /health

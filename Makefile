@@ -1,0 +1,38 @@
+# Euterpe development shortcuts
+.PHONY: help prepare backend frontend frontend-install frontend-generate frontend-dev dev dev-stop
+
+FRONTEND_DIR := frontend
+
+help:
+	@echo "Targets:"
+	@echo "  make prepare              Install dev tools (Overmind via Homebrew on macOS)"
+	@echo "  make backend              Run API server (cargo run -p euterpe-server)"
+	@echo "  make frontend-install     cd frontend && npm ci"
+	@echo "  make frontend-generate    cd frontend && npm run generate:api"
+	@echo "  make frontend-dev         cd frontend && npm run dev"
+	@echo "  make frontend             install + generate + dev (Vite on :5173)"
+	@echo "  make dev                  overmind start (Procfile: backend + frontend)"
+	@echo "  make dev-stop             overmind quit"
+
+prepare:
+	@command -v overmind >/dev/null 2>&1 || brew install overmind
+
+backend:
+	cargo run -p euterpe-server
+
+frontend-install:
+	cd $(FRONTEND_DIR) && npm ci
+
+frontend-generate: frontend-install
+	cd $(FRONTEND_DIR) && npm run generate:api
+
+frontend-dev: frontend-generate
+	cd $(FRONTEND_DIR) && npm run dev
+
+frontend: frontend-dev
+
+dev:
+	overmind start
+
+dev-stop:
+	overmind quit

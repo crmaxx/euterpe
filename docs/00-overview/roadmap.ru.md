@@ -39,11 +39,13 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - REST: `POST/GET/DELETE /api/v1/downloads`, SSE `GET /api/v1/events`
 - TDD: state machine unit tests, `api_downloads`, `api_events`
 
-## Phase 4 — Frontend
+## Phase 4 — Frontend ✅
 
-- Vite + React + shadcn
-- Screens: Settings, Favorites, Queue
-- TDD: Vitest + MSW
+- Vite + React + shadcn (`frontend/`)
+- Screens: Settings, Favorites, Queue, Library (placeholder)
+- `GET /api/v1/server/info`, `GET /api/v1/qobuz/sync/latest`
+- SPA static via `EUTERPE_STATIC_DIR` + Docker multi-stage
+- TDD: Vitest + MSW (`npm run test` in `frontend/`)
 
 ## Phase 5 — Library & tags
 
@@ -74,6 +76,19 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - TDD: switch active → API uses correct mock client
 
 **После:** FP-1 (желательно) или параллельно с Phase 4.
+
+### FP-3 — Очередь загрузок: очистка и удаление
+
+- **Полная очистка** — удалить все старые jobs (`completed` / `failed` / `cancelled`), не трогая `queued` и `running`
+- **Удаление по одному** — убрать конкретную запись из очереди (отдельно от cancel активного job)
+- API + UI `/queue`; TDD: `api_downloads`, Vitest
+
+### FP-4 — Favorites: сортировка
+
+- Сортировка таблицы по **Title**, **Artist**, **In library** (клик по заголовку, asc/desc)
+- Сначала client-side (TanStack Table); при необходимости — `sort`/`order` в API
+
+**Целевая фаза:** Phase 4b. Детали: [future-plans.ru.md](future-plans.ru.md#fp-3--очередь-загрузок-очистка-и-удаление-заданий).
 
 ### Порядок внедрения (рекомендуемый)
 

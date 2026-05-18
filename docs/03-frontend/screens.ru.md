@@ -20,6 +20,7 @@
 - Toolbar: Sync now, Add by URL/search (Phase 2)
 - Row: Download, Remove from Qobuz favorites, Add to favorites
 - Bulk select + bulk download queue
+- **FP-4 (будущее):** сортировка по Title, Artist, In library (клик по заголовку)
 
 **Tests:** table renders mock data; sync mutation invalidates query.
 
@@ -27,6 +28,7 @@
 
 - Jobs: type, title, status, progress bar, cancel
 - Live updates via SSE or polling
+- **FP-3 (будущее):** «Очистить историю» (все terminal jobs, не queued/running); удаление одной строки из очереди
 
 **Tests:** progress bar at 50% when event received.
 

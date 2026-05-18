@@ -132,12 +132,97 @@ QobuzSessionPool {
 
 ---
 
+## FP-3 — Очередь загрузок: очистка и удаление заданий
+
+### Проблема сейчас
+
+На Phase 3–4 в UI есть **отмена** активного job (`DELETE /downloads/{id}` → `cancelled`), но нет:
+
+- массовой уборки «старых» записей в списке;
+- удаления конкретной строки из истории очереди (не путать с cancel running).
+
+### Цель
+
+1. **Полная очистка очереди** — одной операцией убрать все **завершённые/устаревшие** jobs, не трогая:
+   - **новые** (`queued`);
+   - **активные** (`running`).
+   - Типично удаляются: `completed`, `failed`, `cancelled` (точный набор — зафиксировать в OpenAPI).
+
+2. **Персональное удаление** — кнопка у строки: убрать **один** job из списка/БД (для finished jobs; для `queued`/`running` — либо запрет, либо сначала cancel).
+
+### Backend (черновик)
+
+| Endpoint | Назначение |
+|----------|------------|
+| `POST /api/v1/downloads/purge` | Удалить все jobs со статусом ∉ `{queued, running}`; ответ `{ "deleted": N }` |
+| `DELETE /api/v1/downloads/{id}?purge=1` | Удалить запись job из БД (не cancel); **409** если `running` без предварительной отмены |
+
+Альтернатива: отдельный `DELETE` только для terminal status; cancel остаётся как сейчас.
+
+### UI (`/queue`)
+
+- Toolbar: **«Очистить историю»** + confirm dialog
+- Row action: **«Удалить»** (иконка) для terminal jobs; для running — **Cancel** как сейчас
+
+### Milestones (TDD)
+
+| ID | Scope |
+|----|--------|
+| FP-3a | OpenAPI + `download_jobs::purge_finished` + contract tests |
+| FP-3b | `DELETE` purge single job + state rules |
+| FP-3c | Queue UI: purge + per-row delete (Vitest + MSW) |
+
+**Целевая фаза:** **Phase 4b** (доработка UI) / **Phase 3b** (API).
+
+---
+
+## FP-4 — Favorites: сортировка таблицы
+
+### Проблема сейчас
+
+Список избранного (`GET /api/v1/qobuz/favorites`) отображается в порядке БД/sync без сортировки по колонкам.
+
+### Цель
+
+Клиентская (или server-side) сортировка по:
+
+| Колонка | Поле |
+|---------|------|
+| Title | `title` |
+| Artist | `artist_name` |
+| In library | `in_library` |
+
+- Клик по заголовку колонки → asc/desc toggle (TanStack Table `getSortedRowModel`)
+- Сохранение выбора в `sessionStorage` optional
+
+### API (опционально)
+
+Если понадобится серверная сортировка на больших списках:
+
+`GET /api/v1/qobuz/favorites?sort=title&order=asc`
+
+На первом этапе достаточно **client-side** sort по текущей странице.
+
+### Milestones (TDD)
+
+| ID | Scope |
+|----|--------|
+| FP-4a | Vitest: click Title header → rows reordered |
+| FP-4b | Artist + In library sort |
+| FP-4c | (optional) query params + SQL `ORDER BY` |
+
+**Целевая фаза:** **Phase 4b** (только frontend) или **Phase 2b** при server-side sort.
+
+---
+
 ## Связь с дорожной картой
 
 | Функция | Рекомендуемая фаза |
 |---------|-------------------|
 | FP-1 OAuth in-app + DB | Phase 2b / 4 |
 | FP-2 Multi-account + switch | Phase 2c / 4 |
+| FP-3 Queue purge + delete job | Phase 3b / 4b |
+| FP-4 Favorites column sort | Phase 4b |
 | Ручной token / env | Phase 1–2 (остаётся) |
 
 См. [roadmap.ru.md](roadmap.ru.md) — секция «Phase 6+ / Future».

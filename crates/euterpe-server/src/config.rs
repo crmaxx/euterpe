@@ -17,6 +17,8 @@ pub struct AppConfig {
     pub download_concurrency: usize,
     /// Verbose HTTP + Qobuz API debug logs (`EUTERPE_DEV=true`).
     pub dev_verbose: bool,
+    /// Static SPA root (`index.html` + assets). Empty = disabled.
+    pub static_dir: PathBuf,
 }
 
 impl AppConfig {
@@ -66,6 +68,10 @@ impl AppConfig {
             .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
 
+        let static_dir = PathBuf::from(
+            env::var("EUTERPE_STATIC_DIR").unwrap_or_else(|_| "frontend/dist".into()),
+        );
+
         Ok(Self {
             bind,
             database_url,
@@ -76,6 +82,7 @@ impl AppConfig {
             library_path,
             download_concurrency,
             dev_verbose,
+            static_dir,
         })
     }
 

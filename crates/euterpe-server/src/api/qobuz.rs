@@ -23,6 +23,28 @@ pub struct QobuzSyncResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzSyncRunSummary {
+    pub id: i64,
+    pub status: String,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub albums_total: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub albums_added: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub albums_removed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzSyncLatestResponse {
+    pub run: Option<QobuzSyncRunSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QobuzFavoriteItem {
     /// Value for `album/get` and `POST /downloads` (`album_api_id`).
     pub album_api_id: String,

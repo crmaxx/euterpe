@@ -219,6 +219,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         library_path,
         download_concurrency: 2,
         dev_verbose: false,
+        static_dir: std::path::PathBuf::new(),
     };
     let pool = db::connect(&config.database_url).await.unwrap();
     db::migrate(&pool).await.unwrap();
