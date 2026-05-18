@@ -10,6 +10,7 @@ struct FavoriteRow {
     album_api_id: Option<String>,
     title: Option<String>,
     artist_name: Option<String>,
+    local_album_id: Option<i64>,
 }
 
 /// `album_api_id` is stored in `slug` column: short ref, long slug, or catalog id for `album/get`.
@@ -116,10 +117,16 @@ pub async fn list_albums(
 
     let rows: Vec<FavoriteRow> = sqlx::query_as(
         r#"
-        SELECT qobuz_id, slug AS album_api_id, title, artist_name
-        FROM qobuz_favorites
-        WHERE entity_type = 'album' AND removed = 0
-        ORDER BY title COLLATE NOCASE
+        SELECT
+            f.qobuz_id,
+            f.slug AS album_api_id,
+            f.title,
+            f.artist_name,
+            a.id AS local_album_id
+        FROM qobuz_favorites f
+        LEFT JOIN albums a ON a.qobuz_album_id = f.qobuz_id
+        WHERE f.entity_type = 'album' AND f.removed = 0
+        ORDER BY f.title COLLATE NOCASE
         LIMIT ? OFFSET ?
         "#,
     )
@@ -138,8 +145,8 @@ pub async fn list_albums(
             qobuz_id: r.qobuz_id,
             title: r.title.unwrap_or_default(),
             artist_name: r.artist_name.unwrap_or_default(),
-            in_library: false,
-            local_album_id: None,
+            in_library: r.local_album_id.is_some(),
+            local_album_id: r.local_album_id,
         })
         .collect();
 

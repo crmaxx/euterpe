@@ -272,6 +272,35 @@ async fn run_album_job(
         });
     }
 
+    if let Err(e) = crate::library::register_download::register_album_from_qobuz_download(
+        &deps.pool,
+        &deps.config.library_path,
+        album_id,
+        &album,
+        quality,
+    )
+    .await
+    {
+        tracing::warn!(
+            job_id,
+            error = %e,
+            "register downloaded album in library index failed"
+        );
+    }
+
+    if let Err(e) = crate::library::covers::apply_album_cover_after_download(
+        &deps.http,
+        &deps.pool,
+        &deps.config.library_path,
+        &album,
+        quality,
+        Some(album_id),
+    )
+    .await
+    {
+        tracing::warn!(job_id, error = %e, "album cover download/embed failed");
+    }
+
     download_jobs::finish_success(&deps.pool, job_id).await?;
     Ok(())
 }
@@ -595,6 +624,111 @@ mod tests {
             6,
         );
         assert_eq!(std::fs::read(track1).unwrap(), b"fake-flac-bytes");
+
+        let lib_album_id = crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
+            .await
+            .unwrap();
+        assert!(
+            lib_album_id.is_some(),
+            "album row for favorites in_library JOIN (qobuz_album_id=job.qobuz_id)"
+        );
+    }
+
+    /// Favorites / download job use catalog id 99; `album/get` may use a different `summary.id`.
+    /// `albums.qobuz_album_id` must still match the job for `in_library`.
+    #[tokio::test]
+    async fn worker_registers_album_with_job_qobuz_id_not_only_summary_id() {
+        let dir = tempdir().unwrap();
+        let body = b"x";
+        let app = stream_mock_router(body);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let stream_url = format!("http://{addr}/stream");
+        let album = AlbumDetail {
+            summary: AlbumSummary {
+                id: 2000,
+                qobuz_id: None,
+                title: "Other Id Album".into(),
+                artist: Some(ArtistRef {
+                    id: 1,
+                    name: "Band".into(),
+                }),
+                artists: None,
+                image: None,
+                release_date_original: None,
+                hires: None,
+                album_ref: None,
+                slug: None,
+                list_id: None,
+            },
+            tracks: Some(euterpe_qobuz::AlbumTracks {
+                items: vec![TrackSummary {
+                    id: 1,
+                    title: "One".into(),
+                    track_number: Some(1),
+                    duration: None,
+                    performer: None,
+                    hires_streamable: None,
+                }],
+            }),
+            description: None,
+        };
+
+        let pool = db::connect("sqlite::memory:").await.unwrap();
+        db::migrate(&pool).await.unwrap();
+        let job_id = download_jobs::insert_queued(
+            &pool,
+            DownloadJobType::Album,
+            99,
+            6,
+            Some(&crate::services::download::DownloadJobPayload {
+                album_api_id: Some("ref".into()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let (events, _) = broadcast::channel(8);
+        let config = Arc::new(AppConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            database_url: "sqlite::memory:".into(),
+            admin_password: None,
+            master_key: None,
+            qobuz_user_id: None,
+            qobuz_auth_token: None,
+            library_path: dir.path().to_path_buf(),
+            download_concurrency: 2,
+            dev_verbose: false,
+            static_dir: std::path::PathBuf::new(),
+        });
+
+        let deps = WorkerDeps {
+            pool: pool.clone(),
+            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+                album,
+                stream_url,
+            })),
+            config,
+            events,
+            http: Client::new(),
+        };
+
+        run_job(job_id, &deps).await.unwrap();
+
+        assert!(
+            crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            crate::db::albums::find_id_by_qobuz_album_id(&pool, 2000)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

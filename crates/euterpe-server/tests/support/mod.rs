@@ -226,6 +226,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
 
     let (job_tx, job_rx) = mpsc::channel(32);
     let (events, _) = broadcast::channel(16);
+    let (scan_events, _) = broadcast::channel(16);
     let qobuz: Arc<Mutex<dyn QobuzApi>> = Arc::new(Mutex::new(mock));
     let config = Arc::new(config);
 
@@ -235,6 +236,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         qobuz: Arc::clone(&qobuz),
         job_tx,
         events: events.clone(),
+        scan_events,
     };
 
     spawn_worker(

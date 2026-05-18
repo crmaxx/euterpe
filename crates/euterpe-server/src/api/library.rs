@@ -1,0 +1,116 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryScanStartResponse {
+    pub scan_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryScanRunSummary {
+    pub id: i64,
+    pub status: String,
+    pub files_seen: i64,
+    pub files_indexed: i64,
+    pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryScanLatestResponse {
+    pub run: Option<LibraryScanRunSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanProgressEvent {
+    pub scan_id: i64,
+    pub files_seen: i64,
+    pub files_indexed: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryAlbumItem {
+    pub id: i64,
+    pub title: String,
+    pub artist_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    pub track_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryAlbumListResponse {
+    pub items: Vec<LibraryAlbumItem>,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryTrackItem {
+    pub id: i64,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disc_number: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_sec: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryAlbumDetailResponse {
+    pub id: i64,
+    pub title: String,
+    pub artist_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cover_path: Option<String>,
+    pub tracks: Vec<LibraryTrackItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryTrackDetailResponse {
+    pub id: i64,
+    pub album_id: i64,
+    pub title: String,
+    pub artist_name: String,
+    pub album_title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disc_number: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_sec: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryTrackTagsPatchRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub album_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disc_number: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+}

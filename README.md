@@ -77,16 +77,19 @@ EUTERPE_STATIC_DIR=frontend/dist cargo run -p euterpe-server
 | UI | Vite, React, Tailwind, TanStack Query/Table, shadcn/ui |
 | Deploy | Docker (`/data` + `/music` volumes) |
 
-## Roadmap (short)
+## Future plans (short)
 
-1. **Phase 0** — Documentation
-2. **Phase 1** — `euterpe-qobuz` library (TDD)
-3. **Phase 2** — Axum + SQLite + favorites sync API
-4. **Phase 3** — Download jobs + SSE
-5. **Phase 4** — React UI ✅
-6. **Phase 5** — Tags, covers, library rescan
+Delivered work is Phases **0–5** ([roadmap](docs/00-overview/roadmap.ru.md)). Next ideas ([`future-plans.ru.md`](docs/00-overview/future-plans.ru.md)):
 
-Details: [docs/00-overview/roadmap.ru.md](docs/00-overview/roadmap.ru.md)
+1. **FP-1** — Qobuz OAuth in-app → encrypted token in DB (env stays fallback)
+2. **FP-2** — Multiple Qobuz accounts + active switcher for sync/favorites/downloads
+3. **FP-3** — Download queue: purge finished jobs + delete single history rows
+4. **FP-4** — Favorites table sort (title / artist / in library)
+5. **FP-5** — Metadata lookup from external catalogs (MusicBrainz, Discogs, …) → apply via `lofty`
+6. **FP-6** — Auto-write tags from Qobuz `album/get` right after each track download
+7. **FP-7** — Replace/upload album art from Library UI → `cover.<ext>` (MIME) + DB + re-embed in tracks
+
+Details: [docs/00-overview/future-plans.ru.md](docs/00-overview/future-plans.ru.md) (Russian; full context per FP).
 
 ## Qobuz authentication (2026)
 

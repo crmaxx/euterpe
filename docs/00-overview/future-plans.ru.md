@@ -1,6 +1,6 @@
 # Планы на будущее
 
-Документ фиксирует функции **вне текущих Phase 0–5**, но согласованные с архитектурой Euterpe. Реализация — **строгий TDD**, как и весь проект.
+Документ фиксирует функции **вне текущих Phase 0–5**, но согласованные с архитектурой Euterpe. Реализация — **строгий TDD**, как и весь проект. Нумерация FP-1…FP-9 — порядок обсуждения, не обязательно порядок релизов.
 
 ## FP-1 — Получение Qobuz-токена из приложения
 
@@ -22,12 +22,14 @@
 
 ### Backend (черновик)
 
-| Endpoint | Назначение |
-|----------|------------|
-| `GET /api/v1/qobuz/oauth/start` | URL для редиректа + `state` (CSRF) |
-| `GET /api/v1/qobuz/oauth/callback` | Обмен code → UAT, запись в `qobuz_accounts` |
-| `POST /api/v1/qobuz/accounts/:id/refresh` | Обновление UAT (если API поддерживает) |
-| `DELETE /api/v1/qobuz/accounts/:id` | Отвязать аккаунт |
+
+| Endpoint                                  | Назначение                                  |
+| ----------------------------------------- | ------------------------------------------- |
+| `GET /api/v1/qobuz/oauth/start`           | URL для редиректа + `state` (CSRF)          |
+| `GET /api/v1/qobuz/oauth/callback`        | Обмен code → UAT, запись в `qobuz_accounts` |
+| `POST /api/v1/qobuz/accounts/:id/refresh` | Обновление UAT (если API поддерживает)      |
+| `DELETE /api/v1/qobuz/accounts/:id`       | Отвязать аккаунт                            |
+
 
 Референс реализации OAuth: [qobuz-dl-go](https://github.com/Aeneaj/qobuz-dl-go), [qobuz-dl PR #331](https://github.com/vitiko98/qobuz-dl/pull/331).
 
@@ -40,7 +42,7 @@
 - `uat_obtained_at`, `uat_expires_at` (если удаётся распарсить JWT `exp`)
 - `oauth_refresh_token` — optional, если появится в flow
 
-**Не** хранить в `settings` plaintext; env `EUTERPE_QOBUZ_*` остаётся fallback для headless Docker.
+**Не** хранить в `settings` plaintext; env `EUTERPE_QOBUZ_`* остаётся fallback для headless Docker.
 
 ### UI
 
@@ -50,12 +52,14 @@
 
 ### Milestones (TDD)
 
-| ID | Scope |
-|----|--------|
+
+| ID    | Scope                                                       |
+| ----- | ----------------------------------------------------------- |
 | FP-1a | OAuth start/callback + insert `qobuz_accounts` (mock Qobuz) |
-| FP-1b | UI connect flow (Vitest + MSW) |
-| FP-1c | Live OAuth test `#[ignore]` |
-| FP-1d | Auto-refresh / уведомление об истечении |
+| FP-1b | UI connect flow (Vitest + MSW)                              |
+| FP-1c | Live OAuth test `#[ignore]`                                 |
+| FP-1d | Auto-refresh / уведомление об истечении                     |
+
 
 **Целевая фаза:** **Phase 2b** (после базового API Phase 2) или начало **Phase 4** вместе с Settings UI.
 
@@ -92,11 +96,13 @@ qobuz_favorites.qobuz_account_id NOT NULL  -- избранное per account
 
 ### API (черновик)
 
-| Endpoint | Назначение |
-|----------|------------|
-| `GET /api/v1/qobuz/accounts` | Список привязанных аккаунтов (без UAT) |
-| `POST /api/v1/qobuz/accounts/active` | `{ "account_id": 2 }` |
-| `GET /api/v1/qobuz/accounts/active` | Текущий активный |
+
+| Endpoint                             | Назначение                             |
+| ------------------------------------ | -------------------------------------- |
+| `GET /api/v1/qobuz/accounts`         | Список привязанных аккаунтов (без UAT) |
+| `POST /api/v1/qobuz/accounts/active` | `{ "account_id": 2 }`                  |
+| `GET /api/v1/qobuz/accounts/active`  | Текущий активный                       |
+
 
 Все существующие routes (`/qobuz/sync`, `/qobuz/favorites`, `/downloads`) используют **active account**, если не передан заголовок `X-Euterpe-Qobuz-Account: <id>` (опционально для API power users).
 
@@ -121,12 +127,14 @@ QobuzSessionPool {
 
 ### Milestones (TDD)
 
-| ID | Scope |
-|----|--------|
+
+| ID    | Scope                                           |
+| ----- | ----------------------------------------------- |
 | FP-2a | Migration `qobuz_accounts`, `active_account_id` |
-| FP-2b | API list + set active; tests |
-| FP-2c | Scope favorites/sync by `qobuz_account_id` |
-| FP-2d | UI account switcher |
+| FP-2b | API list + set active; tests                    |
+| FP-2c | Scope favorites/sync by `qobuz_account_id`      |
+| FP-2d | UI account switcher                             |
+
 
 **Целевая фаза:** **Phase 2c** (после FP-1) или **Phase 4** вместе с Settings.
 
@@ -144,18 +152,19 @@ QobuzSessionPool {
 ### Цель
 
 1. **Полная очистка очереди** — одной операцией убрать все **завершённые/устаревшие** jobs, не трогая:
-   - **новые** (`queued`);
-   - **активные** (`running`).
-   - Типично удаляются: `completed`, `failed`, `cancelled` (точный набор — зафиксировать в OpenAPI).
-
+  - **новые** (`queued`);
+  - **активные** (`running`).
+  - Типично удаляются: `completed`, `failed`, `cancelled` (точный набор — зафиксировать в OpenAPI).
 2. **Персональное удаление** — кнопка у строки: убрать **один** job из списка/БД (для finished jobs; для `queued`/`running` — либо запрет, либо сначала cancel).
 
 ### Backend (черновик)
 
-| Endpoint | Назначение |
-|----------|------------|
-| `POST /api/v1/downloads/purge` | Удалить все jobs со статусом ∉ `{queued, running}`; ответ `{ "deleted": N }` |
+
+| Endpoint                                | Назначение                                                                              |
+| --------------------------------------- | --------------------------------------------------------------------------------------- |
+| `POST /api/v1/downloads/purge`          | Удалить все jobs со статусом ∉ `{queued, running}`; ответ `{ "deleted": N }`            |
 | `DELETE /api/v1/downloads/{id}?purge=1` | Удалить запись job из БД (не cancel); **409** если `running` без предварительной отмены |
+
 
 Альтернатива: отдельный `DELETE` только для terminal status; cancel остаётся как сейчас.
 
@@ -166,11 +175,13 @@ QobuzSessionPool {
 
 ### Milestones (TDD)
 
-| ID | Scope |
-|----|--------|
+
+| ID    | Scope                                                      |
+| ----- | ---------------------------------------------------------- |
 | FP-3a | OpenAPI + `download_jobs::purge_finished` + contract tests |
-| FP-3b | `DELETE` purge single job + state rules |
-| FP-3c | Queue UI: purge + per-row delete (Vitest + MSW) |
+| FP-3b | `DELETE` purge single job + state rules                    |
+| FP-3c | Queue UI: purge + per-row delete (Vitest + MSW)            |
+
 
 **Целевая фаза:** **Phase 4b** (доработка UI) / **Phase 3b** (API).
 
@@ -180,50 +191,304 @@ QobuzSessionPool {
 
 ### Проблема сейчас
 
-Список избранного (`GET /api/v1/qobuz/favorites`) отображается в порядке БД/sync без сортировки по колонкам.
+Список избранного (`GET /api/v1/qobuz/favorites`) отображается в порядке БД/sync без сортировки по колонкам; **нет поля поиска** по названию / исполнителю; **нет миниатюр обложек** в таблице (данные обложки с Qobuz при sync либо не сохраняются в DTO, либо не отдаются отдельным URL для `<img>`).
 
 ### Цель
 
-Клиентская (или server-side) сортировка по:
+**Сортировка — сразу на сервере:** `GET /api/v1/qobuz/favorites` принимает `sort` и `order`; ответ приходит уже в нужном порядке (`ORDER BY` в SQL с whitelist колонок). Клиент только отображает порядок и переключает параметры запроса (TanStack Table **manual sorting** / `getManualSortingRowModel`, без локальной пересортировки всего списка как источника правды).
 
-| Колонка | Поле |
-|---------|------|
-| Title | `title` |
-| Artist | `artist_name` |
-| In library | `in_library` |
+| Колонка    | Параметр `sort` | Поле в SQL      |
+| ---------- | --------------- | --------------- |
+| Title      | `title`         | `title`         |
+| Artist     | `artist`        | `artist_name`   |
+| In library | `in_library`    | выражение `in_library` (JOIN) |
 
-- Клик по заголовку колонки → asc/desc toggle (TanStack Table `getSortedRowModel`)
-- Сохранение выбора в `sessionStorage` optional
+- Значения по умолчанию зафиксировать в OpenAPI (например `sort=title`, `order=asc`).
+- Сохранение последнего выбора в `sessionStorage` optional.
 
-### API (опционально)
+**Поиск:** поле над таблицей — при пагинации обязателен **серверный** фильтр `GET …/favorites?q=…` + `LIKE` по `title` / `artist_name` (и тесты `api_qobuz`). При отсутствии пагинации допускается client-side только как временный режим.
 
-Если понадобится серверная сортировка на больших списках:
+**Обложки:** колонка или ведущая миниатюра слева от названия: приоритет **локальная** обложка из библиотеки (`albums.cover_path` / `GET …/library/albums/{id}/cover`, если `in_library`), иначе **URL с Qobuz** (после расширения sync или `album/get` кэша — URL из `image.thumbnail` / `small` / `large` в ответе API, сохранённые в БД или отдаваемые в OpenAPI как `cover_url` без прокси либо через безопасный прокси с TTL, если нужен CORS/кэш).
 
-`GET /api/v1/qobuz/favorites?sort=title&order=asc`
+### API
 
-На первом этапе достаточно **client-side** sort по текущей странице.
+Сортировка и **пагинация по ключам** (keyset / seek: **без** `OFFSET` и без «страницы по номеру»; размер страницы задаётся **`LIMIT`** уже **после** предиката «после курсора»):
+
+`GET /api/v1/qobuz/favorites?sort=title&order=asc&limit=50&cursor=<opaque>`
+
+- `sort` ∈ `{ title, artist, in_library }` (whitelist); неверное значение → **400** или fallback на default (решение зафиксировать в OpenAPI).
+- `order` ∈ `{ asc, desc }`.
+- `limit` — размер страницы (верхняя граница на сервере, напр. ≤ 100).
+- **`cursor`** — непрозрачная строка (например base64url), кодирующая **набор значений ключей** текущей позиции: поля, по которым идёт `ORDER BY` (включая стабильный **tie-breaker**, обычно суррогатный id строки), чтобы следующий запрос продолжил выборку условием вида «после этой точки в порядке сортировки». Пустой / отсутствующий `cursor` — первая страница.
+
+Тот же **стиль query-параметров и ответа** для списков зафиксировать как общий контракт (**FP-9**): `limit`, `sort`, `order`, `cursor`; в теле ответа — **общая форма** (`items`, `next_cursor`, при необходимости `has_more`; опционально отдельный endpoint для `total`, если нужен точный счётчик без полного скана).
+
+Поиск и обложки (черновик):
+
+| Параметр / поле | Назначение |
+|-----------------|------------|
+| `GET …/favorites?q=…` | Серверный поиск по title / artist_name |
+| `cover_url` в элементе списка | Прямая ссылка на картинку Qobuz или относительный путь к прокси `GET /api/v1/qobuz/favorites/{qobuz_id}/cover` (решение по безопасности и кэшу зафиксировать в OpenAPI) |
+
+### Milestones (TDD)
+
+
+| ID    | Scope                                                                                                                                                 |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FP-4a | OpenAPI: `sort` / `order` / `limit` / **`cursor`** + whitelist; форма ответа **как в FP-9** (keyset); `favorites::list_albums` + SQL `ORDER BY` + условие «после курсора» + `api_qobuz` тесты                                                   |
+| FP-4b | Vitest: смена сортировки / «следующая страница» → новый запрос с `cursor`/`sort`/`order`, порядок строк как у сервера                                                            |
+| FP-4c | Artist + In library: те же query params, покрытие в SQL для `artist_name` и колонки `in_library`                                                       |
+| FP-4d | Фильтр **в библиотеке / нет**: query `in_library=1` или `in_library=0` + `WHERE` (или эквивалент по JOIN) + Vitest                                           |
+| FP-4e | Поиск: OpenAPI `q` + SQL + `api_qobuz`; поле в UI, запрос при debounce                                                                                |
+| FP-4f | Обложки: колонка/превью; DTO `cover_url` или прокси-endpoint; приоритет Library при `in_library`; Vitest + MSW                                       |
+
+
+**Целевая фаза:** **Phase 4b** (frontend + контракт) и **Phase 2b** (SQL/OpenAPI на сервере для сортировки в первую очередь).
+
+---
+
+
+
+## FP-8 — Библиотека и избранное после скачивания Qobuz
+
+### Проблема
+
+Колонка **«В библиотеке»** в избранном строится по `JOIN albums ON albums.qobuz_album_id = qobuz_favorites.qobuz_id`. Файлы на диске после download **не гарантировали** строку в `albums` с тем же `qobuz_album_id`, что и в избранном (до полного `library/scan` и без `QOBUZ_ALBUM_ID` в тегах).
+
+### Сделано в worker (baseline)
+
+После успешной загрузки **всех** треков альбома выполняется upsert в `albums`: `qobuz_album_id` = `download_jobs.qobuz_id` (тот же идентификатор, что в `qobuz_favorites`), плюс `path` под каталог загрузки. Файл обложки **`cover.<ext>`** (расширение по `Content-Type` и сниффингу тела ответа) привязывается к этой же строке (в т.ч. если `album/get` даёт другой `summary.id`).
+
+### Что остаётся (опционально)
+
+- **Индексация треков** (`tracks`) для страницы Library по-прежнему через `POST …/library/scan` (или будущий **инкрементальный** scan только каталога альбома без обхода всей библиотеки).
+- **Уже лежащие** файлы без повторного download: rescan + FP-6 (`QOBUZ_ALBUM_ID` в тегах) или отдельная команда «сопоставить с избранным».
+
+### Milestones (TDD)
+
+
+| ID    | Scope                                                                        |
+| ----- | ---------------------------------------------------------------------------- |
+| FP-8a | (done) worker: `register_album_from_qobuz_download` + тесты `euterpe-server` |
+| FP-8b | (optional) POST scan с `root` = каталог альбома или авто-scan после download |
+| FP-8c | UI: подсказка «запустите сканирование» если альбом в индексе без треков      |
+
+
+**Целевая фаза:** **Phase 3b** / **Phase 5b** (доработка вместе с FP-6).
+
+---
+
+
+
+## FP-5 — Автозаполнение тегов из внешних каталогов
+
+### Проблема
+
+После rip или загрузки файлы часто с **неполными или неточными** тегами; ручное редактирование в Library утомительно.
+
+### Цель
+
+Подсказка / автозаполнение метаданных по запросу к открытым и полуоткрытым источникам (с приоритетом и fallback):
+
+
+| Источник                                                   | Назначение (черновик)                                                           |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [MusicBrainz](https://musicbrainz.org/doc/MusicBrainz_API) | Релизы, MBID, AcoustID (через отдельный сервис при необходимости)               |
+| [Discogs](https://www.discogs.com/developers/)             | Каталог релизов, обложки (лицензия/attribution по правилам Discogs)             |
+| **GnuDB**                                                  | Freedb-совместимые данные (CD TOC / длительности треков)                        |
+| [TrackType.org](https://tracktype.org/)                    | Дополнительный справочник метаданных (если API/условия использования позволяют) |
+
+
+Пользователь выбирает кандидата (или доверяет лучшему совпадению) → превью diff → запись в файл через существующий путь `lofty` (как в Phase 5).
+
+### Ограничения
+
+- **Ключи и rate limits** — Discogs и др. требуют регистрации приложения; ключи только на сервере (env), не в браузере.
+- **Юридическое** — соблюдать ToS каждого API; кэшировать ответы разумно, не злоупотреблять.
+- **Совпадение** — эвристика (artist/album/title/duration, TOC) + явный «не уверен» в UI.
+
+### Backend / UI (черновик)
+
+
+| Компонент                                         | Идея                                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------------- |
+| `POST /api/v1/library/tracks/:id/metadata/lookup` | Вход: опционально принудительный провайдер; выход: список кандидатов + поля |
+| `POST /api/v1/library/tracks/:id/metadata/apply`  | Применить выбранный кандидат → `lofty` + обновление индекса                 |
+
+
+### Milestones (TDD)
+
+
+| ID    | Scope                                                          |
+| ----- | -------------------------------------------------------------- |
+| FP-5a | MusicBrainz lookup по artist+album (mock HTTP) + DTO           |
+| FP-5b | Discogs lookup + конфиг `EUTERPE_DISCOGS_*`                    |
+| FP-5c | GnuDB / freedb-style path (если актуален для сценария CD rip)  |
+| FP-5d | UI Library: кнопка «Подтянуть теги», таблица кандидатов, apply |
+
+
+**Целевая фаза:** **Phase 5b** / **Phase 6** (после стабилизации ручного редактирования тегов).
+
+---
+
+
+
+## FP-6 — Автопроставление тегов из Qobuz при скачивании
+
+### Проблема сейчас
+
+Worker Phase 3 (`download_track` в `euterpe-server`) после записи файла **не вызывает** текстовые теги: только переименование `.part` → финальный файл. Метаданные из ответа `album/get` (и связанных вызовов) **не переносятся** в ID3/Vorbis-комментарии. Отдельно после альбома выполняется только **обложка** (`cover.<ext>` по MIME + embed через lofty в `covers.rs`) — без title/artist/album и т.д.
+
+### Цель
+
+После успешной загрузки трека **автоматически** записывать в файл максимально полный набор тегов, доступный из уже имеющихся (или расширенных) данных Qobuz, через существующий путь `**library/tags.rs`** (`TrackTags` + `write_tags`, lofty).
+
+### Что уже можно сопоставить «из коробки» (текущие модели `euterpe-qobuz`)
+
+
+| Тег / поле     | Источник в Rust-моделях                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------ |
+| Title          | `TrackSummary.title`                                                                             |
+| Album          | `AlbumSummary.title`                                                                             |
+| Artist         | `AlbumSummary.artist` (политика vs `TrackSummary.performer` — зафиксировать явно)                |
+| Track #        | `TrackSummary.track_number`                                                                      |
+| Year           | парсинг из `AlbumSummary.release_date_original` (строка даты)                                    |
+| Qobuz track id | `TrackSummary.id` → уже поддержано в `TrackTags` / комментарий `QOBUZ_TRACK_ID`                  |
+| Длительность   | опционально из свойств файла после записи (как в `read_tags`), не обязательно дублировать из API |
+
+
+### Расширение для «максимума»
+
+Реальный JSON `album/get` у Qobuz обычно **богаче**, чем десериализуется в `AlbumDetail` / `TrackSummary`: поля вроде жанра, лейбла, номера диска, ISRC, композиторов и т.д. **отбрасываются**, если их нет в структурах serde.
+
+- Снять образец ответа API (или опереться на официальную спецификацию) и добавить в `**euterpe-qobuz`** опциональные поля (`#[serde(default)]`).
+- Замапить на lofty: стандартные `Accessor` + при необходимости `UserText` / `ItemKey` для полей без прямого сеттера.
+- **Запись `QOBUZ_ALBUM_ID`**: в `read_tags` уже есть разбор из комментария; в `write_tags` при желании дописать симметричную вставку (сейчас пишется в основном track id).
+
+### Технические заметки
+
+- **Async vs lofty:** `write_tags` синхронный — в worker вызывать из `**spawn_blocking`** (или отдельный sync шаг), чтобы не блокировать runtime.
+- **Порядок с обложкой:** сейчас embed обложки идёт **после** всех треков альбома; избежать лишних двойных `save` на файл или явно задокументировать порядок «теги → обложка» / объединить в один проход при рефакторинге.
+- **Пропуск повторной загрузки:** если файл уже существует и размер совпал с remote — `download_track` **выходит без записи**; теги не обновятся. Нужна политика: опция «ретег при совпадении размера», отдельная команда, или оставить как есть.
+- **Форматы:** MP3 (format_id 5) и FLAC — тестировать оба; lofty поддерживает оба типа.
+
+### Связь с FP-5
+
+FP-5 — внешние каталоги (MusicBrainz, Discogs, …) для **уже лежащих** файлов. FP-6 — **источник правды Qobuz сразу при download**; пересечение минимальное, но UI «дотянуть теги» может дополнять FP-6, если в API не хватает полей.
+
+### Milestones (TDD)
+
+
+| ID    | Scope                                                                                                      |
+| ----- | ---------------------------------------------------------------------------------------------------------- |
+| FP-6a | Функция сборки `TrackTags` из `AlbumDetail` + `TrackSummary` + unit-тесты (год из даты, artist policy)     |
+| FP-6b | Вызов после успешного `rename` в worker + `spawn_blocking` + интеграционный тест на mock album + temp file |
+| FP-6c | (optional) Запись `QOBUZ_ALBUM_ID` в комментарий + round-trip с `read_tags`                                |
+| FP-6d | Расширение моделей `euterpe-qobuz` по реальному JSON + маппинг жанр/диск/лейбл и др. в lofty               |
+| FP-6e | (optional) Настройка / флаг «ретег при skip по размеру»                                                    |
+
+
+**Целевая фаза:** **Phase 3b** (доработка download) или **Phase 5b** вместе с полировкой библиотеки; не блокирует FP-5.
+
+---
+
+
+
+## FP-7 — Обложка альбома: загрузка и замена из UI
+
+### Проблема сейчас
+
+После Phase 5 в UI отображается **только существующая** обложка (файл по `albums.cover_path`, отдаётся `GET /api/v1/library/albums/{id}/cover`). Заменить или загрузить новую картинку **из приложения** нельзя — только вручную положить **`cover.<ext>`** на диск (устаревший `folder.jpg` при желании удалять вручную; при необходимости обновить БД rescan’ом, если логика индекса начнёт подхватывать файл без `cover_path`).
+
+### Цель
+
+1. **API:** приём изображения (например `PUT /api/v1/library/albums/{id}/cover` с `multipart/form-data` или `image/jpeg` body), валидация типа/размера, безопасная запись под каталог альбома в библиотеке.
+2. **БД:** обновить `albums.cover_path` (относительный путь, как после Qobuz-download).
+3. **Файлы:** записать **`cover.<ext>`** (тип и расширение по MIME тела / заголовка, как в `covers.rs` при download), затем **re-embed** во все аудиофайлы треков этого альбома через **`embed_cover_in_track`** (`covers.rs`) с корректным `MimeType` в тегах.
+4. **UI Library:** кнопка «Заменить обложку», превью, обработка ошибок; опционально «Удалить обложку» (очистка `cover_path`, файл, снятие picture из тегов — отдельное решение по UX).
+
+### Безопасность
+
+- Тот же класс проверок, что и у `GET …/cover`: путь только **внутри** `EUTERPE_LIBRARY_PATH`, запрет `..`, лимит размера тела.
+- При включённом admin auth — только для авторизованных клиентов.
+
+### Milestones (TDD)
+
+
+| ID    | Scope                                                                           |
+| ----- | ------------------------------------------------------------------------------- |
+| FP-7a | OpenAPI + `PUT`/`POST` cover + `api_library` (multipart, 400/413, happy path)   |
+| FP-7b | Запись **`cover.<ext>`** по MIME + `set_cover_path` + re-embed по трекам с тем же `MimeType` |
+| FP-7c | UI Library: file input, optimistic превью, инвалидация запросов альбома/обложки |
+
+
+**Целевая фаза:** **Phase 5b** / **Phase 6**.
+
+---
+
+<a id="fp-9-api-collections-pagination-sort"></a>
+
+## FP-9 — Коллекции в API: keyset-пагинация и сортировка
+
+### Проблема
+
+Списочные эндпоинты (избранное, библиотека альбомов/треков, очередь загрузок и др.) не должны расходиться в контракте пагинации; в частности **не использовать смещение `OFFSET`** (и номер страницы как его производную): на больших таблицах это даёт деградацию и нестабильные окна при вставках/удалениях. Нужна **пагинация по набору ключей** (keyset): курсор кодирует значения полей сортировки + tie-breaker; при необходимости ограничить выборку используется **`LIMIT`** без `OFFSET`.
+
+### Цель
+
+1. **OpenAPI:** для каждого list-ресурса — единый стиль параметров (или явный поднабор с пометкой «не применимо»):
+   - `limit` — размер страницы (жёсткий максимум на сервере);
+   - `sort` — **только** whitelist для данного ресурса;
+   - `order` ∈ `{ asc, desc }`;
+   - **`cursor`** — опакованный **набор ключей** позиции (значения колонок `ORDER BY` + уникальный идентификатор строки); отсутствие / пустое значение — первая страница;
+   - опционально `q`, фильтры (`in_library` и т.д.) — по ресурсу, в том же стиле именования.
+2. **Ответ:** единая обёртка, например `{ "items": [...], "next_cursor": "<opaque>|null", "has_more": true }`. Полный **`total`** — только если осознанно приемлем по стоимости (отдельный запрос или кэш); не смешивать с обязательным полем каждой страницы без обоснования.
+3. **Сервер:** выборка **только** `WHERE … ORDER BY … LIMIT` с условием «строго после декодированного keyset»; состав `ORDER BY` **детерминирован** (всегда добавлять tie-breaker). Неверный `sort` или битый `cursor` → **400** с понятной ошибкой; смена `sort`/`order`/`q`/фильтров — клиент **сбрасывает** `cursor`.
+4. **UI:** таблицы с серверными данными — **TanStack Table** в режиме **manual** сортировки и пагинации по **курсору** (кнопка «ещё» / бесконечный скролл / страницы «вперёд» на основе `next_cursor`, без номера offset-страницы как источника правды).
+
+### Охват (по мере внедрения)
+
+| Область | Примеры эндпоинтов |
+|---------|-------------------|
+| Qobuz   | `GET …/qobuz/favorites`, при необходимости списки вокруг sync |
+| Library | `GET …/library/albums`, `GET …/library/tracks` (и родственные списки) |
+| Queue   | `GET …/downloads` / история jobs |
+| Прочее  | любые новые коллекции — только с контрактом FP-9 |
+
+### Связь с FP-4
+
+Реализация **FP-4** (избранное: сортировка, фильтр, поиск, обложки) **встраивается** в контракт FP-9 для `favorites`; FP-9 задаёт правила для остальных коллекций и для переиспользования в UI.
 
 ### Milestones (TDD)
 
 | ID | Scope |
 |----|--------|
-| FP-4a | Vitest: click Title header → rows reordered |
-| FP-4b | Artist + In library sort |
-| FP-4c | (optional) query params + SQL `ORDER BY` |
+| FP-9a | OpenAPI / ADR: keyset-поля, кодирование `cursor`, форма ответа (`items`, `next_cursor`, `has_more`), ошибки; эталон на одном list + тест |
+| FP-9b | **favorites** на keyset + пересечение с FP-4a + Vitest |
+| FP-9c | **Library** списки (альбомы/треки) + `api_library` |
+| FP-9d | **Downloads** + `api_downloads` |
+| FP-9e | Общий фронтовый слой: «сортировка / следующая страница → query + cursor» + MSW |
 
-**Целевая фаза:** **Phase 4b** (только frontend) или **Phase 2b** при server-side sort.
+**Целевая фаза:** **Phase 2b** (контракт + первые эндпоинты) / **Phase 4b** (UI на всех экранах со списками).
 
 ---
 
 ## Связь с дорожной картой
 
-| Функция | Рекомендуемая фаза |
-|---------|-------------------|
-| FP-1 OAuth in-app + DB | Phase 2b / 4 |
-| FP-2 Multi-account + switch | Phase 2c / 4 |
-| FP-3 Queue purge + delete job | Phase 3b / 4b |
-| FP-4 Favorites column sort | Phase 4b |
-| Ручной token / env | Phase 1–2 (остаётся) |
+
+| Функция                                                      | Рекомендуемая фаза   |
+| ------------------------------------------------------------ | -------------------- |
+| FP-1 OAuth in-app + DB                                       | Phase 2b / 4         |
+| FP-2 Multi-account + switch                                  | Phase 2c / 4         |
+| FP-3 Queue purge + delete job                                | Phase 3b / 4b        |
+| FP-4 Favorites: server sort, filter, search, covers          | Phase 2b / 4b        |
+| FP-5 Теги: Discogs / GnuDB / MusicBrainz / TrackType.org     | Phase 5b / 6         |
+| FP-6 Теги из Qobuz при download                              | Phase 3b / 5b        |
+| FP-7 Обложка альбома из UI (upload / replace)                | Phase 5b / 6         |
+| FP-8 Библиотека после download + инкрементальный scan (опц.) | Phase 3b / 5b        |
+| FP-9 List API: keyset-пагинация (`cursor`) + сортировка + UI     | Phase 2b / 4b        |
+| Ручной token / env                                           | Phase 1–2 (остаётся) |
+
 
 См. [roadmap.ru.md](roadmap.ru.md) — секция «Phase 6+ / Future».
 
@@ -232,3 +497,5 @@ QobuzSessionPool {
 - Несколько **локальных** пользователей Euterpe (RBAC) — отдельная тема; FP-2 только про **аккаунты Qobuz** на одном инстансе
 - Синхронизация избранного **между** двумя Qobuz-аккаунтами
 - Публичный multi-tenant SaaS
+- Live code reload
+

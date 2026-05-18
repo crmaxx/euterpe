@@ -23,6 +23,7 @@ async fn static_spa_fallback_serves_index() {
         state.db.clone(),
         state.job_tx.clone(),
         state.events.clone(),
+        state.scan_events.clone(),
     )
     .await
     .unwrap();

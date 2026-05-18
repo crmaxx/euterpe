@@ -9,6 +9,7 @@ import {
 import { subscribeJobProgress, type DownloadJob } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { formatQualityLabel } from "@/lib/quality";
 
 export function QueuePage() {
   const { data, isLoading } = useDownloads();
@@ -82,7 +83,7 @@ function JobRow({
         <div>
           <p className="font-medium">{title}</p>
           <p className="text-xs text-muted-foreground">
-            #{job.id} · {job.job_type} · quality {job.quality} · {job.status}
+            #{job.id} · {job.job_type} · {formatQualityLabel(job.quality)} · {job.status}
           </p>
         </div>
         {canCancel ? (
