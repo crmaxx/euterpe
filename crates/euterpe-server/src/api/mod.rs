@@ -1,5 +1,6 @@
 mod downloads;
 mod health;
+mod integrations;
 pub mod keyset;
 mod library;
 mod qobuz;
@@ -13,6 +14,12 @@ pub use downloads::{
     DownloadJobStatus, DownloadJobType, DownloadPurgeResponse, JobProgressEvent,
 };
 pub use health::{ErrorBody, ErrorResponse, HealthResponse};
+pub use integrations::{
+    AlbumMetadataApplyRequest, AlbumMetadataApplyResponse, AlbumMetadataLookupRequest,
+    AlbumMetadataLookupResponse, IntegrationCreateRequest, IntegrationListItem,
+    IntegrationPatchRequest, IntegrationResponse, IntegrationsCatalogResponse,
+    IntegrationsListResponse,
+};
 pub use qobuz::{
     QobuzAccountListItem, QobuzAccountsListResponse, QobuzConnectionStatusResponse,
     QobuzFavoriteItem, QobuzFavoritesListResponse,

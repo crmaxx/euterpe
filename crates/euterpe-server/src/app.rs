@@ -26,7 +26,7 @@ use crate::db::{self, favorites, sync_runs};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
-use crate::routes::{downloads, events, library, qobuz as qobuz_routes};
+use crate::routes::{downloads, events, integrations, library, qobuz as qobuz_routes};
 use crate::services::download::{spawn_worker, WorkerDeps};
 use crate::services::qobuz_sync;
 use crate::state::AppState;
@@ -87,6 +87,27 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/library/tracks/{id}",
             get(library::get_library_track).patch(library::patch_library_track_tags),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/metadata/lookup",
+            post(integrations::album_metadata_lookup),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/metadata/apply",
+            post(integrations::album_metadata_apply),
+        )
+        .route(
+            "/api/v1/integrations",
+            get(integrations::list_integrations).post(integrations::create_integration),
+        )
+        .route(
+            "/api/v1/integrations/catalog",
+            get(integrations::integrations_catalog),
+        )
+        .route(
+            "/api/v1/integrations/{id}",
+            axum::routing::patch(integrations::patch_integration)
+                .delete(integrations::delete_integration),
         )
         .route("/api/v1/events", get(events::subscribe_events))
         .layer(axum::middleware::from_fn_with_state(

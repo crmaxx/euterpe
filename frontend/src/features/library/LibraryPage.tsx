@@ -18,7 +18,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { flattenKeysetPages } from "@/api/hooks/keyset";
+import { TagAutofillBar } from "@/features/library/TagAutofillBar";
 import { useToast } from "@/hooks/use-toast";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/api/hooks";
 
 function trackToTagForm(d: LibraryTrackDetailResponse): LibraryTrackTagsPatchRequest {
   return {
@@ -179,6 +182,7 @@ function TrackTagsEditorForm({
 
 export function LibraryPage() {
   const { toast } = useToast();
+  const qc = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
   const [q, setQ] = useState("");
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
@@ -235,6 +239,15 @@ export function LibraryPage() {
 
   const tagEditorCanConfirm =
     editingTrackId != null && !!trackQuery.data && !trackQuery.isLoading;
+
+  const handleAutofillApplied = useCallback(() => {
+    if (editingTrackId != null) {
+      void qc.invalidateQueries({ queryKey: queryKeys.libraryTrack(editingTrackId) });
+    }
+    if (selectedAlbumId != null) {
+      void qc.invalidateQueries({ queryKey: queryKeys.libraryAlbum(selectedAlbumId) });
+    }
+  }, [qc, editingTrackId, selectedAlbumId]);
 
   return (
     <div className="space-y-6">
@@ -327,18 +340,24 @@ export function LibraryPage() {
                 {selectedAlbumId ? "Loading…" : "Select an album"}
               </div>
             ) : (
-              <div className="flex gap-4">
+              <div className="flex items-start gap-4">
                 <LibraryAlbumCover
                   albumId={albumDetail.id}
                   coverPath={albumDetail.cover_path}
-                  className="size-28 sm:size-32"
+                  className="size-28 shrink-0 sm:size-32"
                 />
-                <div className="min-w-0 flex-1">
-                  <h3 className="text-sm font-medium">{albumDetail.title}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {albumDetail.artist_name}
-                    {albumDetail.year != null ? ` · ${albumDetail.year}` : ""}
-                  </p>
+                <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium">{albumDetail.title}</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {albumDetail.artist_name}
+                      {albumDetail.year != null ? ` · ${albumDetail.year}` : ""}
+                    </p>
+                  </div>
+                  <TagAutofillBar
+                    albumId={albumDetail.id}
+                    onApplied={handleAutofillApplied}
+                  />
                 </div>
               </div>
             )}
@@ -401,7 +420,7 @@ export function LibraryPage() {
           </>
         ) : trackQuery.data ? (
           <TrackTagsEditorForm
-            key={trackQuery.data.id}
+            key={`${trackQuery.data.id}-${trackQuery.dataUpdatedAt}`}
             trackId={editingTrackId}
             track={trackQuery.data}
             onClose={closeTagEditor}

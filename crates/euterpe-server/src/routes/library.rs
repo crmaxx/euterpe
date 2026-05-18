@@ -94,18 +94,25 @@ pub async fn list_library_albums(
         },
     )
     .await?;
-    let items = page
-        .items
-        .into_iter()
-        .map(|r| crate::api::LibraryAlbumItem {
+    let mut items = Vec::with_capacity(page.items.len());
+    for r in page.items {
+        let cover_path = covers::ensure_album_cover_path(
+            &state.db,
+            &state.config.library_path,
+            r.id,
+            r.path.as_deref(),
+            r.cover_path.as_deref(),
+        )
+        .await?;
+        items.push(crate::api::LibraryAlbumItem {
             id: r.id,
             title: r.title,
             artist_name: r.artist_name,
             year: r.year,
             track_count: r.track_count,
-            cover_path: r.cover_path,
-        })
-        .collect();
+            cover_path,
+        });
+    }
     Ok(Json(LibraryAlbumListResponse {
         items,
         next_cursor: page.next_cursor,
@@ -130,6 +137,14 @@ pub async fn get_library_album(
     } else {
         String::new()
     };
+    let cover_path = covers::ensure_album_cover_path(
+        &state.db,
+        &state.config.library_path,
+        album.id,
+        album.path.as_deref(),
+        album.cover_path.as_deref(),
+    )
+    .await?;
     let track_rows = tracks::list_by_album(&state.db, id).await?;
     let tracks_list: Vec<LibraryTrackItem> = track_rows
         .into_iter()
@@ -149,7 +164,7 @@ pub async fn get_library_album(
         title: album.title,
         artist_name,
         year: album.year,
-        cover_path: album.cover_path,
+        cover_path,
         tracks: tracks_list,
     }))
 }
@@ -161,13 +176,16 @@ pub async fn get_library_album_cover(
     let album = albums::get_by_id(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
-    let rel = album
-        .cover_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| ApiError::Message("album cover not found".into()))?;
-    let path = covers::resolve_library_relative_file(&state.config.library_path, rel)?;
+    let rel = covers::ensure_album_cover_path(
+        &state.db,
+        &state.config.library_path,
+        album.id,
+        album.path.as_deref(),
+        album.cover_path.as_deref(),
+    )
+    .await?
+    .ok_or_else(|| ApiError::Message("album cover not found".into()))?;
+    let path = covers::resolve_library_relative_file(&state.config.library_path, &rel)?;
     let bytes = tokio::fs::read(&path)
         .await
         .map_err(|_| ApiError::Message("cover file not found".into()))?;

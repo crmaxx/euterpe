@@ -85,9 +85,10 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - После альбома: upsert `albums` + **все `tracks`** из `album/get` (без обязательного rescan) — FP-7a–7c
 - См. [future-plans.ru.md — FP-7](future-plans.ru.md#fp-7--библиотека-сразу-после-скачивания-без-обязательного-rescan)
 
-### FP-5 — Автозаполнение тегов (каталоги)
+### FP-5 — Автозаполнение тегов (каталоги) ✅
 
-- MusicBrainz, Discogs, GnuDB, TrackType.org — [future-plans.ru.md — FP-4](future-plans.ru.md#fp-4--автозаполнение-тегов-из-внешних-каталогов)
+- Интеграции в Settings; MusicBrainz, Discogs, GnuDB, TrackType.org; lookup/apply по альбому + picker в Library
+- [future-plans.ru.md — FP-4](future-plans.ru.md#fp-4--автозаполнение-тегов-из-внешних-каталогов), [07-integrations](../07-integrations/README.ru.md)
 
 ### FP-6 — Теги из Qobuz при скачивании ✅
 

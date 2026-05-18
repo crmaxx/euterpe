@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use euterpe_qobuz::QobuzApi;
+use reqwest::Client;
 use sqlx::SqlitePool;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
@@ -14,6 +15,7 @@ use crate::error::ApiError;
 pub struct AppState {
     pub db: SqlitePool,
     pub config: Arc<AppConfig>,
+    pub http: Client,
     pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     pub job_tx: mpsc::Sender<i64>,
     pub events: broadcast::Sender<JobProgressEvent>,
@@ -38,9 +40,15 @@ impl AppState {
             Arc::new(Mutex::new(Box::new(NoopQobuz)))
         };
 
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| ApiError::Config(e.to_string()))?;
+
         Ok(Self {
             db,
             config,
+            http,
             qobuz,
             job_tx,
             events,

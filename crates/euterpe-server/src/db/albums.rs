@@ -240,6 +240,7 @@ pub async fn list_keyset(
             a.title,
             COALESCE(ar.name, '') AS artist_name,
             a.year,
+            a.path,
             a.cover_path,
             (SELECT COUNT(*) FROM tracks t WHERE t.album_id = a.id) AS track_count
         FROM albums a
@@ -277,6 +278,7 @@ pub struct AlbumListRow {
     pub title: String,
     pub artist_name: String,
     pub year: Option<i32>,
+    pub path: Option<String>,
     pub cover_path: Option<String>,
     pub track_count: i64,
 }

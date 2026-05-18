@@ -278,6 +278,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     let state = AppState {
         db: pool.clone(),
         config: Arc::clone(&config),
+        http: Client::new(),
         qobuz: Arc::clone(&qobuz),
         job_tx,
         events: events.clone(),

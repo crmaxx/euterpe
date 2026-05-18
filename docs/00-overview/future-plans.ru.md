@@ -297,10 +297,11 @@ register_library_from_qobuz_download(pool, library_root, favorite_catalog_id, al
 
 | ID    | Scope                                                          |
 | ----- | -------------------------------------------------------------- |
-| FP-4a | MusicBrainz lookup по artist+album (mock HTTP) + DTO           |
-| FP-4b | Discogs lookup + конфиг `EUTERPE_DISCOGS_*`                    |
-| FP-4c | GnuDB / freedb-style path (если актуален для сценария CD rip)  |
-| FP-4d | UI Library: кнопка «Подтянуть теги», таблица кандидатов, apply |
+| FP-4a | (done) MusicBrainz lookup + DTO + mock HTTP tests              |
+| FP-4b | (done) Discogs lookup + token в `integrations` (encrypted)     |
+| FP-4c | (done) GnuDB freedb-style lookup (best-effort HTTP)            |
+| FP-4d | (done) Settings integrations + Library autofill + picker       |
+| FP-4e | (done) TrackType.org provider (best-effort)                    |
 
 
 **Целевая фаза:** **Phase 5b** / **Phase 6** (после стабилизации ручного редактирования тегов).

@@ -109,6 +109,76 @@ fn qobuz_catalog_ids_for_cover(
     out
 }
 
+fn is_album_cover_filename(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower == "folder.jpg" {
+        return true;
+    }
+    if let Some(ext) = lower.strip_prefix("cover.") {
+        return matches!(ext, "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp");
+    }
+    false
+}
+
+/// Find `cover.<ext>` or legacy `folder.jpg` under an album directory (relative to library root).
+pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Option<String> {
+    let album_rel = album_rel_dir.trim().trim_end_matches('/').replace('\\', "/");
+    if album_rel.is_empty() {
+        return None;
+    }
+    let album_dir = library_root.join(&album_rel);
+    if !album_dir.is_dir() {
+        return None;
+    }
+    const PREFERRED: &[&str] = &[
+        "cover.jpg",
+        "cover.jpeg",
+        "cover.png",
+        "cover.webp",
+        "cover.gif",
+        "folder.jpg",
+    ];
+    for name in PREFERRED {
+        if album_dir.join(name).is_file() {
+            return Some(format!("{album_rel}/{name}"));
+        }
+    }
+    let mut names: Vec<String> = std::fs::read_dir(&album_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| is_album_cover_filename(n))
+        .collect();
+    names.sort();
+    names
+        .first()
+        .map(|name| format!("{album_rel}/{name}"))
+}
+
+/// If `cover_path` is missing or stale, discover a file on disk and persist it on the album row.
+pub async fn ensure_album_cover_path(
+    pool: &sqlx::SqlitePool,
+    library_root: &Path,
+    album_id: i64,
+    album_path: Option<&str>,
+    current_cover: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    if let Some(rel) = current_cover.map(str::trim).filter(|s| !s.is_empty()) {
+        if resolve_library_relative_file(library_root, rel).is_ok() {
+            return Ok(Some(rel.to_string()));
+        }
+    }
+    let Some(dir) = album_path.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(current_cover.map(str::to_string));
+    };
+    let Some(rel) = discover_album_cover_rel(library_root, dir) else {
+        return Ok(None);
+    };
+    albums::set_cover_path(pool, album_id, &rel).await?;
+    Ok(Some(rel))
+}
+
 /// Resolve a library-relative path (POSIX `rel` under `library_root`). Rejects `..` and path
 /// components that are not plain single-segment names (no absolute paths, no backslashes).
 pub fn resolve_library_relative_file(library_root: &Path, rel: &str) -> Result<PathBuf, ApiError> {
@@ -305,6 +375,17 @@ mod mime_tests {
 mod path_tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn discover_finds_cover_jpg() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("cover.jpg"), b"img").unwrap();
+        std::fs::write(album.join("01 - Song.flac"), b"x").unwrap();
+        let rel = discover_album_cover_rel(dir.path(), "Artist/Album").unwrap();
+        assert_eq!(rel, "Artist/Album/cover.jpg");
+    }
 
     #[test]
     fn resolve_rejects_double_dot() {

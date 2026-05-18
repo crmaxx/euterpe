@@ -2,6 +2,7 @@ pub mod albums;
 pub mod artists;
 pub mod download_jobs;
 pub mod favorites;
+pub mod integrations;
 pub mod library_scan_runs;
 pub mod qobuz_accounts;
 pub mod settings;
@@ -116,5 +117,6 @@ mod tests {
         assert!(names.contains(&"library_scan_runs".to_string()));
         assert!(names.contains(&"qobuz_accounts".to_string()));
         assert!(names.contains(&"qobuz_oauth_states".to_string()));
+        assert!(names.contains(&"integrations".to_string()));
     }
 }

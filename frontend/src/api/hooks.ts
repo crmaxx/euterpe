@@ -39,6 +39,9 @@ export const queryKeys = {
     ["libraryAlbums", params] as const,
   libraryAlbum: (id: number) => ["libraryAlbum", id] as const,
   libraryTrack: (id: number) => ["libraryTrack", id] as const,
+  integrations: (type?: string) => ["integrations", type ?? "all"] as const,
+  integrationsCatalog: (type?: string) =>
+    ["integrationsCatalog", type ?? "all"] as const,
 };
 
 export function useServerInfo() {
@@ -117,6 +120,98 @@ export function usePatchTrackTags() {
       void qc.invalidateQueries({ queryKey: queryKeys.libraryTrack(vars.id) });
       void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
       void qc.invalidateQueries({ queryKey: ["libraryAlbum"] });
+    },
+  });
+}
+
+export function useIntegrations(type: "tag_source" = "tag_source") {
+  return useQuery({
+    queryKey: queryKeys.integrations(type),
+    queryFn: () => api.listIntegrations(type),
+  });
+}
+
+export function useIntegrationsCatalog(type: "tag_source" = "tag_source") {
+  return useQuery({
+    queryKey: queryKeys.integrationsCatalog(type),
+    queryFn: () => api.integrationsCatalog(type),
+  });
+}
+
+export function useCreateIntegration() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.createIntegration,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+}
+
+export function usePatchIntegration() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: number;
+      body: Parameters<typeof api.patchIntegration>[1];
+    }) => api.patchIntegration(id, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+}
+
+export function useDeleteIntegration() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.deleteIntegration,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["integrations"] });
+    },
+  });
+}
+
+export function useAlbumMetadataLookup() {
+  return useMutation({
+    mutationFn: ({
+      albumId,
+      integrationId,
+      page = 1,
+    }: {
+      albumId: number;
+      integrationId: number;
+      page?: number;
+    }) =>
+      api.albumMetadataLookup(albumId, {
+        integration_id: integrationId,
+        page,
+      }),
+  });
+}
+
+export function useAlbumMetadataApply() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      albumId,
+      integrationId,
+      candidateId,
+    }: {
+      albumId: number;
+      integrationId: number;
+      candidateId: string;
+    }) =>
+      api.albumMetadataApply(albumId, {
+        integration_id: integrationId,
+        candidate_id: candidateId,
+      }),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ["libraryAlbum", vars.albumId] });
+      void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+      void qc.invalidateQueries({ queryKey: ["libraryTrack"] });
     },
   });
 }
