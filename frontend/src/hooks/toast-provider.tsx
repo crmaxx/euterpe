@@ -1,19 +1,5 @@
 import * as React from "react";
-
-type ToastMessage = {
-  id: string;
-  title: string;
-  description?: string;
-  variant?: "default" | "destructive";
-};
-
-type ToastContextValue = {
-  toasts: ToastMessage[];
-  toast: (msg: Omit<ToastMessage, "id">) => void;
-  dismiss: (id: string) => void;
-};
-
-const ToastContext = React.createContext<ToastContextValue | null>(null);
+import { ToastContext, type ToastMessage } from "@/hooks/toast-context";
 
 export function ToastStateProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastMessage[]>([]);
@@ -35,12 +21,4 @@ export function ToastStateProvider({ children }: { children: React.ReactNode }) 
       {children}
     </ToastContext.Provider>
   );
-}
-
-export function useToast() {
-  const ctx = React.useContext(ToastContext);
-  if (!ctx) {
-    throw new Error("useToast must be used within ToastStateProvider");
-  }
-  return ctx;
 }

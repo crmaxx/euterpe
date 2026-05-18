@@ -110,6 +110,7 @@ export function FavoritesPage() {
     [download.isPending, queueOne, remove, toast],
   );
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table API
   const table = useReactTable({
     data: items,
     columns,

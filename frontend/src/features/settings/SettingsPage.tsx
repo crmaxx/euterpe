@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useServerInfo, useTestLogin } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,10 +26,6 @@ export function SettingsPage() {
   const [userId, setUserId] = useState("");
   const [authToken, setAuthToken] = useState("");
   const [quality, setQuality] = useState<QualityId>(getDefaultQuality);
-
-  useEffect(() => {
-    setQuality(getDefaultQuality());
-  }, []);
 
   const runTest = async (persist: boolean) => {
     const id = Number(userId);

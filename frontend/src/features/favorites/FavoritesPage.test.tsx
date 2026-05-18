@@ -5,7 +5,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { server } from "@/test/msw/server";
 import { Toaster } from "@/components/toaster";
-import { ToastStateProvider } from "@/hooks/use-toast";
+import { ToastStateProvider } from "@/hooks/toast-provider";
 import { FavoritesPage } from "./FavoritesPage";
 
 function renderFavorites() {

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { JobProgressEvent } from "@/api/client";
-import { ToastStateProvider } from "@/hooks/use-toast";
+import { ToastStateProvider } from "@/hooks/toast-provider";
 import { QueuePage } from "./QueuePage";
 
 class MockEventSource {
