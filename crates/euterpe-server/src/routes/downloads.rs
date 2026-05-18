@@ -109,7 +109,20 @@ pub async fn create_download(
     quality_from_format_id(body.quality)
         .ok_or_else(|| ApiError::bad_request("unsupported quality (use 5, 6, 7, or 27)"))?;
 
-    let job_id = queue_album_download(&state, album_api_id, body.quality, body.qobuz_id).await?;
+    let resolved_api_id = if let Some(catalog_id) = body.qobuz_id.filter(|id| *id > 0) {
+        crate::services::download::resolve_album_api_id_for_state(
+            &state,
+            catalog_id,
+            None,
+        )
+        .await?
+        .unwrap_or_else(|| album_api_id.to_string())
+    } else {
+        album_api_id.to_string()
+    };
+
+    let job_id =
+        queue_album_download(&state, &resolved_api_id, body.quality, body.qobuz_id).await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(CreateDownloadResponse { job_id }),
@@ -134,9 +147,9 @@ pub async fn create_download_by_url(
         let guard = state.qobuz.lock().await;
         guard.album_ref(&album_ref).await?.summary
     };
-    let album_api_id = summary
-        .pick_album_api_id(summary.id)
-        .unwrap_or_else(|| summary.api_album_id());
+    // Keep the same `album_id` that just succeeded in `album/get` (UPC / short ref).
+    // `pick_album_api_id` may return a human slug that 404s on a second request.
+    let album_api_id = album_ref;
 
     let job_id =
         queue_album_download(&state, &album_api_id, body.quality, Some(summary.id)).await?;

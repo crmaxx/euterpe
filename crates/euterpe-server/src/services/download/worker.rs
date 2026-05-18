@@ -55,6 +55,7 @@ async fn fetch_album_detail(
     deps: &WorkerDeps,
 ) -> Result<AlbumDetail, ApiError> {
     let guard = deps.qobuz.lock().await;
+    let mut last_err: Option<QobuzError> = None;
 
     if let Some(api_id) = stored_api_id.map(str::trim).filter(|s| !s.is_empty()) {
         tracing::debug!(
@@ -73,6 +74,15 @@ async fn fetch_album_detail(
                     "album/get ok"
                 );
                 return Ok(album);
+            }
+            Err(e @ QobuzError::NotFound { .. }) => {
+                tracing::warn!(
+                    job_id,
+                    api_album_id = %api_id,
+                    error = %e,
+                    "stored album_api_id not found, trying fallbacks"
+                );
+                last_err = Some(e);
             }
             Err(e) => return Err(e.into()),
         }
@@ -98,7 +108,7 @@ async fn fetch_album_detail(
     }
 
     let numeric = catalog_id.to_string();
-    let mut last_err: Option<QobuzError> = None;
+    push_album_api_candidate(&mut candidates, &numeric);
 
     for api_id in &candidates {
         tracing::debug!(job_id, qobuz_id = catalog_id, api_album_id = %api_id, "album/get attempt");
@@ -157,15 +167,32 @@ async fn fetch_album_detail(
             .or(results.first());
 
         if let Some(hit) = pick {
-            let api_id = hit.api_album_id();
             tracing::info!(
                 job_id,
                 qobuz_id = catalog_id,
-                api_album_id = %api_id,
                 hit_id = hit.id,
+                preferred = %hit.preferred_album_get_id(),
                 "album/search match, retry album/get"
             );
-            return guard.album_ref(&api_id).await.map_err(Into::into);
+            for api_id in hit.album_get_candidate_ids() {
+                tracing::debug!(job_id, api_album_id = %api_id, "album/get attempt (search hit)");
+                match guard.album_ref(&api_id).await {
+                    Ok(album) => {
+                        tracing::info!(
+                            job_id,
+                            api_album_id = %api_id,
+                            resolved_id = album.summary.id,
+                            "album/get ok (search hit)"
+                        );
+                        return Ok(album);
+                    }
+                    Err(e @ QobuzError::NotFound { .. }) => {
+                        tracing::warn!(job_id, api_album_id = %api_id, error = %e, "album/get failed");
+                        last_err = Some(e);
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
         }
     }
 
@@ -559,6 +586,7 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                product_id: None,
                 genre: Some(GenreRef {
                     id: Some(1),
                     name: "Rock".into(),
@@ -717,6 +745,7 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                product_id: None,
                 genre: None,
                 label: None,
             },
@@ -819,6 +848,7 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                product_id: None,
                 genre: None,
                 label: None,
             },
@@ -945,6 +975,7 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                product_id: None,
                 genre: None,
                 label: None,
             },
@@ -1042,6 +1073,7 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                product_id: None,
                 genre: None,
                 label: None,
             },

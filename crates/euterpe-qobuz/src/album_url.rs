@@ -42,7 +42,7 @@ pub fn parse_album_url(input: &str) -> Result<String, AlbumUrlError> {
     }
 
     let last = segments.last().copied().unwrap();
-    if segments.len() >= 2 && last.chars().all(|c| c.is_ascii_digit()) {
+    if last.chars().all(|c| c.is_ascii_digit()) {
         return Ok(last.to_string());
     }
     Ok(segments[0].to_string())
@@ -74,6 +74,10 @@ mod tests {
         assert_eq!(
             parse_album_url("https://www.qobuz.com/fr-fr/album/foo-bar/123?utm=1").unwrap(),
             "123"
+        );
+        assert_eq!(
+            parse_album_url("https://open.qobuz.com/album/0819224015406").unwrap(),
+            "0819224015406"
         );
     }
 

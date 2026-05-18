@@ -98,6 +98,7 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                product_id: None,
                 genre: Some(GenreRef {
                     id: Some(1),
                     name: "Classical".into(),

@@ -123,6 +123,7 @@ async fn download_job_completes_via_worker() {
             album_ref: None,
             slug: None,
             list_id: None,
+            product_id: None,
             genre: None,
             label: None,
         },

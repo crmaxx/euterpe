@@ -34,6 +34,8 @@ pub struct AlbumSummary {
     pub slug: Option<String>,
     /// Raw numeric JSON `id` when it differs from catalog `id` (often UPC in favorites).
     pub list_id: Option<u64>,
+    /// String JSON `id` when all digits (UPC / EAN) — preferred for `album/get` over slug.
+    pub product_id: Option<String>,
     pub genre: Option<GenreRef>,
     pub label: Option<LabelRef>,
 }
@@ -47,14 +49,49 @@ impl AlbumSummary {
 
     /// Prefer non-numeric `album/get` ids when `api_album_id()` would be the catalog id string.
     pub fn pick_album_api_id(&self, catalog_id: u64) -> Option<String> {
-        let api = self.api_album_id();
-        if api.parse::<u64>().ok() != Some(catalog_id) {
-            return Some(api);
+        let preferred = self.preferred_album_get_id();
+        if preferred.parse::<u64>().ok() != Some(catalog_id) {
+            return Some(preferred);
         }
         self.album_ref
             .clone()
+            .or_else(|| self.product_id.clone())
             .or_else(|| self.slug.clone())
             .filter(|s| !s.trim().is_empty())
+    }
+
+    /// Best single id for `album/get` (short ref, UPC string, catalog id; slug is often wrong).
+    pub fn preferred_album_get_id(&self) -> String {
+        if let Some(r) = self.album_ref.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            return r.to_string();
+        }
+        if let Some(p) = self.product_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            return p.to_string();
+        }
+        self.id.to_string()
+    }
+
+    /// Ids to try for `album/get`, most reliable first.
+    pub fn album_get_candidate_ids(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut push = |s: &str| {
+            let t = s.trim();
+            if t.is_empty() || out.iter().any(|c| c == t) {
+                return;
+            }
+            out.push(t.to_string());
+        };
+        if let Some(r) = &self.album_ref {
+            push(r);
+        }
+        if let Some(p) = &self.product_id {
+            push(p);
+        }
+        push(&self.id.to_string());
+        if let Some(s) = &self.slug {
+            push(s);
+        }
+        out
     }
 
     /// Value for `album/get` `album_id` — short ref, then long slug, then numeric catalog id.
@@ -135,6 +172,18 @@ impl<'de> Deserialize<'de> for AlbumSummary {
             _ => None,
         };
 
+        let product_id = match &raw.id {
+            serde_json::Value::String(s) => {
+                let t = s.trim();
+                if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
+                    Some(t.to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
         Ok(Self {
             id,
             qobuz_id: explicit_qobuz,
@@ -147,6 +196,7 @@ impl<'de> Deserialize<'de> for AlbumSummary {
             album_ref,
             slug,
             list_id,
+            product_id,
             genre: raw.genre,
             label: raw.label,
         })
@@ -229,6 +279,22 @@ mod tests {
     fn rejects_large_id_without_qobuz_id_or_slug() {
         let json = r#"{"id": 225770297, "title": "Test"}"#;
         assert!(serde_json::from_str::<AlbumSummary>(json).is_err());
+    }
+
+    #[test]
+    fn preferred_album_get_id_prefers_upc_over_slug() {
+        let json = r#"{
+            "id": "0191018548094",
+            "qobuz_id": 37158035,
+            "slug": "origo-regium-1993-1994-abigor",
+            "title": "Origo Regium"
+        }"#;
+        let a: AlbumSummary = serde_json::from_str(json).unwrap();
+        assert_eq!(a.id, 37158035);
+        assert_eq!(a.product_id.as_deref(), Some("0191018548094"));
+        assert_eq!(a.preferred_album_get_id(), "0191018548094");
+        let candidates = a.album_get_candidate_ids();
+        assert_eq!(candidates.first().map(String::as_str), Some("0191018548094"));
     }
 
     #[test]
