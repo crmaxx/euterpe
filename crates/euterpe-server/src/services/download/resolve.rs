@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 /// Best `album_id` for Qobuz `album/get` (short ref, long slug, or catalog id string).
 pub async fn resolve_album_api_id(
     pool: &SqlitePool,
-    qobuz: &Arc<Mutex<dyn QobuzApi>>,
+    qobuz: &Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     catalog_id: u64,
     from_request: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
@@ -28,7 +28,7 @@ pub async fn resolve_album_api_id(
     }
 
     let guard = qobuz.lock().await;
-    resolve_from_qobuz_favorites(&*guard, catalog_id)
+    resolve_from_qobuz_favorites(&**guard, catalog_id)
         .await
         .map_err(Into::into)
 }
@@ -144,9 +144,10 @@ mod tests {
     #[tokio::test]
     async fn resolve_prefers_explicit_request_id() {
         let pool = pool().await;
-        let qobuz: Arc<Mutex<dyn QobuzApi>> = Arc::new(Mutex::new(ResolveMockQobuz {
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
+            Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
             catalog_lookup: Some((99, "from-qobuz".into())),
-        }));
+        })));
         let got = resolve_album_api_id(&pool, &qobuz, 99, Some("from-request"))
             .await
             .unwrap();
@@ -159,9 +160,10 @@ mod tests {
         favorites::upsert_album(&pool, 42, "Album", "Artist", Some("local-ref"))
             .await
             .unwrap();
-        let qobuz: Arc<Mutex<dyn QobuzApi>> = Arc::new(Mutex::new(ResolveMockQobuz {
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
+            Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
             catalog_lookup: Some((42, "qobuz-ref".into())),
-        }));
+        })));
         let got = resolve_album_api_id(&pool, &qobuz, 42, None)
             .await
             .unwrap();
@@ -171,9 +173,10 @@ mod tests {
     #[tokio::test]
     async fn resolve_falls_back_to_favorites_catalog_scan() {
         let pool = pool().await;
-        let qobuz: Arc<Mutex<dyn QobuzApi>> = Arc::new(Mutex::new(ResolveMockQobuz {
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
+            Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
             catalog_lookup: Some((393908828, "zg7pv28g4mldg".into())),
-        }));
+        })));
         let got = resolve_album_api_id(&pool, &qobuz, 393908828, None)
             .await
             .unwrap();

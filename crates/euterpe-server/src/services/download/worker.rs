@@ -27,7 +27,7 @@ pub fn quality_from_format_id(id: u8) -> Option<Quality> {
 
 pub struct WorkerDeps {
     pub pool: SqlitePool,
-    pub qobuz: Arc<Mutex<dyn QobuzApi>>,
+    pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     pub config: Arc<AppConfig>,
     pub events: broadcast::Sender<JobProgressEvent>,
     pub http: Client,
@@ -86,7 +86,7 @@ async fn fetch_album_detail(
     }
 
     if candidates.is_empty() {
-        if let Ok(Some(api_id)) = resolve_from_qobuz_favorites(&*guard, catalog_id).await {
+        if let Ok(Some(api_id)) = resolve_from_qobuz_favorites(&**guard, catalog_id).await {
             tracing::info!(
                 job_id,
                 qobuz_id = catalog_id,
@@ -591,8 +591,10 @@ mod tests {
             database_url: "sqlite::memory:".into(),
             admin_password: None,
             master_key: None,
-            qobuz_user_id: None,
-            qobuz_auth_token: None,
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
@@ -602,10 +604,10 @@ mod tests {
         let album_for_assert = album.clone();
         let deps = WorkerDeps {
             pool: pool.clone(),
-            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+            qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album,
                 stream_url,
-            })),
+            }))),
             config,
             events,
             http: Client::new(),
@@ -696,8 +698,10 @@ mod tests {
             database_url: "sqlite::memory:".into(),
             admin_password: None,
             master_key: None,
-            qobuz_user_id: None,
-            qobuz_auth_token: None,
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
@@ -706,10 +710,10 @@ mod tests {
 
         let deps = WorkerDeps {
             pool: pool.clone(),
-            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+            qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album,
                 stream_url,
-            })),
+            }))),
             config,
             events,
             http: Client::new(),
@@ -806,8 +810,10 @@ mod tests {
             database_url: "sqlite::memory:".into(),
             admin_password: None,
             master_key: None,
-            qobuz_user_id: None,
-            qobuz_auth_token: None,
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
@@ -816,10 +822,10 @@ mod tests {
 
         let deps = WorkerDeps {
             pool: pool.clone(),
-            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+            qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album: album.clone(),
                 stream_url: format!("http://{addr}/stream"),
-            })),
+            }))),
             config,
             events,
             http: Client::new(),
@@ -897,8 +903,10 @@ mod tests {
             database_url: "sqlite::memory:".into(),
             admin_password: None,
             master_key: None,
-            qobuz_user_id: None,
-            qobuz_auth_token: None,
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
@@ -907,10 +915,10 @@ mod tests {
 
         let deps = WorkerDeps {
             pool: pool.clone(),
-            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+            qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album: album.clone(),
                 stream_url: format!("http://{addr}/stream"),
-            })),
+            }))),
             config,
             events,
             http: Client::new(),
@@ -982,8 +990,10 @@ mod tests {
             database_url: "sqlite::memory:".into(),
             admin_password: None,
             master_key: None,
-            qobuz_user_id: None,
-            qobuz_auth_token: None,
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
@@ -992,10 +1002,10 @@ mod tests {
 
         let deps = WorkerDeps {
             pool: pool.clone(),
-            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+            qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album,
                 stream_url: format!("http://{addr}/stream"),
-            })),
+            }))),
             config,
             events,
             http: Client::new(),

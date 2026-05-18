@@ -51,6 +51,8 @@
 
 ### 05 — Qobuz API
 
+Локальные зеркала сторонних клиентов (qobuz-dl, streamrip, …): каталог **`docs/references/`** (в `.gitignore`). Сводка путей и auth: [oauth-and-tokens.ru.md](05-qobuz/oauth-and-tokens.ru.md), [reference-implementation.ru.md](05-qobuz/reference-implementation.ru.md).
+
 - [README.ru.md](05-qobuz/README.ru.md)
 - [api-reference.ru.md](05-qobuz/api-reference.ru.md)
 - [authentication.ru.md](05-qobuz/authentication.ru.md)

@@ -21,18 +21,28 @@ use crate::api::{
     ServerInfoResponse,
 };
 use crate::config::AppConfig;
-use crate::credentials::{self, QobuzCredentials};
+use crate::credentials;
 use crate::db::{self, favorites, sync_runs};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
-use crate::routes::{downloads, events, library};
+use crate::routes::{downloads, events, library, qobuz as qobuz_routes};
 use crate::services::download::{spawn_worker, WorkerDeps};
 use crate::services::qobuz_sync;
 use crate::state::AppState;
 
 pub fn app(state: AppState) -> Router {
     let protected = Router::new()
+        .route("/api/v1/qobuz/oauth/start", get(qobuz_routes::oauth_start))
+        .route(
+            "/api/v1/qobuz/accounts",
+            get(qobuz_routes::list_accounts),
+        )
+        .route(
+            "/api/v1/qobuz/connection",
+            get(qobuz_routes::connection_status),
+        )
+        .route("/api/v1/qobuz/logout", post(qobuz_routes::logout))
         .route("/api/v1/qobuz/sync/latest", get(qobuz_sync_latest))
         .route("/api/v1/qobuz/test-login", post(qobuz_test_login))
         .route("/api/v1/qobuz/sync", post(qobuz_sync_handler))
@@ -76,6 +86,10 @@ pub fn app(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/api/openapi.json", get(openapi_json))
         .route("/api/v1/server/info", get(server_info))
+        .route(
+            "/api/v1/qobuz/oauth/callback",
+            get(qobuz_routes::oauth_callback),
+        )
         .merge(protected);
 
     router = crate::static_files::apply_fallback(router, &state.config);
@@ -167,7 +181,7 @@ async fn health() -> Json<HealthResponse> {
 
 async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoResponse>, ApiError> {
     let credentials_configured =
-        credentials::load_from_env_or_db(&state.config, &state.db)
+        credentials::load_active(&state.config, &state.db)
             .await?
             .is_some();
     Ok(Json(ServerInfoResponse {
@@ -190,20 +204,10 @@ async fn openapi_json() -> Result<Json<serde_json::Value>, ApiError> {
 }
 
 async fn qobuz_test_login(
-    State(state): State<AppState>,
     Json(body): Json<QobuzTestLoginRequest>,
 ) -> Result<Json<QobuzTestLoginResponse>, ApiError> {
     let client = credentials::connect_ephemeral(body.user_id, &body.auth_token).await?;
     client.verify_session().await?;
-
-    if body.persist {
-        let master = state.master_key()?;
-        let creds = QobuzCredentials {
-            user_id: body.user_id,
-            auth_token: body.auth_token.clone(),
-        };
-        credentials::persist(&state.db, master, &creds).await?;
-    }
 
     Ok(Json(QobuzTestLoginResponse {
         membership: credentials::membership_label(&client),
@@ -306,8 +310,10 @@ pub mod test_support {
             master_key: Some(
                 crate::crypto::MasterKey::parse(&hex::encode([1u8; 32])).unwrap(),
             ),
-            qobuz_user_id: None,
-            qobuz_auth_token: None,
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: None,
             library_path,
             download_concurrency: 2,
             dev_verbose: false,

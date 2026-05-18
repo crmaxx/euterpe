@@ -72,6 +72,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/qobuz/oauth/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Start Qobuz OAuth (browser redirect URL)
+         * @description Returns the Qobuz sign-in URL and a CSRF `state` stored server-side.
+         *     Credentials are only stored via OAuth callback into `qobuz_accounts` (not env).
+         */
+        get: operations["qobuzOAuthStart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/qobuz/oauth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * OAuth callback (Qobuz redirects here)
+         * @description Exchanges `code` for UAT, upserts `qobuz_accounts`, sets active account, reloads client. Redirects to SPA settings.
+         */
+        get: operations["qobuzOAuthCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/qobuz/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Qobuz connection status (no secrets) */
+        get: operations["getQobuzConnection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/qobuz/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disconnect active Qobuz account
+         * @description Deletes the active account row, clears `qobuz.active_account_id`, reloads API client.
+         */
+        post: operations["qobuzLogout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/qobuz/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List linked Qobuz accounts (no UAT) */
+        get: operations["listQobuzAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/qobuz/test-login": {
         parameters: {
             query?: never;
@@ -81,7 +176,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Verify Qobuz session token */
+        /** Verify Qobuz session token (debug only; does not persist) */
         post: operations["qobuzTestLogin"];
         delete?: never;
         options?: never;
@@ -322,11 +417,35 @@ export interface components {
             /** Format: int64 */
             user_id: number;
             auth_token: string;
-            /**
-             * @description Save encrypted credentials to settings (requires EUTERPE_MASTER_KEY)
-             * @default false
-             */
-            persist: boolean;
+        };
+        QobuzOAuthStartResponse: {
+            /** Format: uri */
+            authorize_url: string;
+            state: string;
+        };
+        QobuzConnectionStatusResponse: {
+            connected: boolean;
+            /** Format: int64 */
+            active_account_id?: number;
+            /** Format: int64 */
+            qobuz_user_id?: number;
+            display_name?: string;
+            membership_label?: string;
+            master_key_configured: boolean;
+        };
+        QobuzAccountListItem: {
+            /** Format: int64 */
+            id: number;
+            label?: string;
+            /** Format: int64 */
+            qobuz_user_id: number;
+            display_name?: string;
+            membership_label?: string;
+            uat_obtained_at: string;
+            is_active: boolean;
+        };
+        QobuzAccountsListResponse: {
+            items: components["schemas"]["QobuzAccountListItem"][];
         };
         QobuzTestLoginResponse: {
             membership: string;
@@ -644,6 +763,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QobuzSyncLatestResponse"];
+                };
+            };
+        };
+    };
+    qobuzOAuthStart: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Authorize URL and state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QobuzOAuthStartResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    qobuzOAuthCallback: {
+        parameters: {
+            query?: {
+                /** @description Authorization code (Qobuz may send `code_autorisation` instead) */
+                code?: string;
+                /** @description Authorization code as returned by Qobuz sign-in redirect */
+                code_autorisation?: string;
+                /** @description CSRF state (embedded in redirect_url from oauth/start; optional if only one pending flow) */
+                state?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to settings with success query param */
+            307: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    getQobuzConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Connection status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QobuzConnectionStatusResponse"];
+                };
+            };
+        };
+    };
+    qobuzLogout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    listQobuzAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accounts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QobuzAccountsListResponse"];
                 };
             };
         };

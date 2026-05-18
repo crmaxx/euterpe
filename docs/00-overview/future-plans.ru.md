@@ -1,6 +1,6 @@
 # Планы на будущее
 
-Документ фиксирует функции **вне текущих Phase 0–5**, но согласованные с архитектурой Euterpe. Реализация — **строгий TDD**, как и весь проект. Нумерация FP-1…FP-9 — порядок обсуждения, не обязательно порядок релизов.
+Документ фиксирует функции **вне текущих Phase 0–5**, но согласованные с архитектурой Euterpe. Реализация — **строгий TDD**, как и весь проект. Нумерация FP-1…FP-10 — порядок обсуждения, не обязательно порядок релизов.
 
 ## FP-1 — Получение Qobuz-токена из приложения
 
@@ -31,7 +31,7 @@
 | `DELETE /api/v1/qobuz/accounts/:id`       | Отвязать аккаунт                            |
 
 
-Референс реализации OAuth: [qobuz-dl-go](https://github.com/Aeneaj/qobuz-dl-go), [qobuz-dl PR #331](https://github.com/vitiko98/qobuz-dl/pull/331).
+Референс реализации OAuth: исходники **qobuz-dl-go** в `docs/references/qobuz-dl-go` (клон вручную); при необходимости ветка **qobuz-dl** с PR #331 в `docs/references/qobuz-dl`. Сводка путей: [oauth-and-tokens.ru.md](../05-qobuz/oauth-and-tokens.ru.md).
 
 ### Хранение в БД
 
@@ -42,7 +42,7 @@
 - `uat_obtained_at`, `uat_expires_at` (если удаётся распарсить JWT `exp`)
 - `oauth_refresh_token` — optional, если появится в flow
 
-**Не** хранить в `settings` plaintext; env `EUTERPE_QOBUZ_`* остаётся fallback для headless Docker.
+**Не** хранить UAT в `settings` или env; только `qobuz_accounts` + OAuth в UI (см. FP-1).
 
 ### UI
 
@@ -249,32 +249,83 @@ QobuzSessionPool {
 
 
 
-## FP-8 — Библиотека и избранное после скачивания Qobuz
+## FP-8 — Библиотека сразу после скачивания (без обязательного rescan)
 
 ### Проблема
 
-Колонка **«В библиотеке»** в избранном строится по `JOIN albums ON albums.qobuz_album_id = qobuz_favorites.qobuz_id`. Файлы на диске после download **не гарантировали** строку в `albums` с тем же `qobuz_album_id`, что и в избранном (до полного `library/scan` и без `QOBUZ_ALBUM_ID` в тегах).
+1. **Избранное:** колонка «В библиотеке» — `JOIN albums ON albums.qobuz_album_id = qobuz_favorites.qobuz_id`.
+2. **Library UI:** список альбомов/треков читается из SQLite (`albums`, `tracks`), а не с диска на лету.
 
-### Сделано в worker (baseline)
+После download worker уже держит **`AlbumDetail`**, список `TrackSummary`, финальные пути (`library/paths::track_path`) и знает `download_jobs.qobuz_id`. **Полный `POST …/library/scan`** для только что скачанного альбома избыточен: те же поля приходится заново читать с диска (lofty + SHA256), хотя источник правды уже в памяти.
 
-После успешной загрузки **всех** треков альбома выполняется upsert в `albums`: `qobuz_album_id` = `download_jobs.qobuz_id` (тот же идентификатор, что в `qobuz_favorites`), плюс `path` под каталог загрузки. Файл обложки **`cover.<ext>`** (расширение по `Content-Type` и сниффингу тела ответа) привязывается к этой же строке (в т.ч. если `album/get` даёт другой `summary.id`).
+### Принцип (целевое поведение)
 
-### Что остаётся (опционально)
+| Событие | Индексация |
+|---------|------------|
+| Успешный download альбома | **Сразу** upsert `artists` → `albums` → все `tracks` из `album/get` + относительные `path`, `qobuz_*_id`, обложка (`cover.<ext>`) |
+| Файлы добавлены вручную / старая библиотека | `library/scan` (FP-10 — параллельный обход) |
+| Починка рассинхрона | Опциональный rescan каталога или всей библиотеки |
 
-- **Индексация треков** (`tracks`) для страницы Library по-прежнему через `POST …/library/scan` (или будущий **инкрементальный** scan только каталога альбома без обхода всей библиотеки).
-- **Уже лежащие** файлы без повторного download: rescan + FP-6 (`QOBUZ_ALBUM_ID` в тегах) или отдельная команда «сопоставить с избранным».
+Rescan остаётся **инструментом восстановления**, а не обязательным шагом после каждой загрузки.
+
+### Сделано сейчас (частично)
+
+- **FP-8a (done):** после всех треков — `register_album_from_qobuz_download`: только строка **`albums`** + `path`, `qobuz_album_id` = `download_jobs.qobuz_id`.
+- Обложка: `apply_album_cover_after_download` → `cover.<ext>` + привязка к альбому.
+
+**Не сделано:** строки в **`tracks`** → страница Library пуста по трекам до первого scan.
+
+### Целевая реализация (`register_download.rs`)
+
+Один вызов в конце `run_album_job` (после цикла download, до/после cover — зафиксировать порядок с FP-6):
+
+```
+register_library_from_qobuz_download(pool, library_root, favorite_catalog_id, album, quality)
+  → artist upsert (как сейчас)
+  → album upsert → album_id
+  → для каждого TrackSummary в album.tracks:
+        path = track_path(library_root, album, track, quality.format_id())
+        tracks::upsert из API-полей (title, track_number, duration, qobuz_track_id, year, …)
+        file_mtime / size с диска (stat), file_hash — опционально (см. ниже)
+  → albums.cover_path после cover step
+```
+
+**Источник полей:** `AlbumDetail` / `TrackSummary` (плюс FP-6 для записи в файл и симметрии с `read_tags`). **Не** вызывать `read_tags` / полный SHA256 по всему файлу на hot path, если метаданные уже из Qobuz — иначе теряется смысл «данные уже есть».
+
+| Поле БД | Откуда |
+|---------|--------|
+| `albums.*` | `AlbumSummary` + `favorite_catalog_id` |
+| `tracks.title`, `track_number`, `duration_sec` | `TrackSummary` |
+| `tracks.qobuz_track_id` | `TrackSummary.id` |
+| `tracks.path` | `track_path(...)` (тот же, что при download) |
+| `tracks.file_mtime` | `metadata()` после записи файла |
+| `tracks.file_hash` | **опционально** (отложить или sample hash); не блокировать FP-8 |
+
+Пропуск повторной загрузки (файл есть, размер совпал): трек **всё равно** upsert в БД по API + path — файл на диске уже есть.
+
+### Связь с FP-6 и FP-10
+
+- **FP-6** — запись тегов **в файл**; FP-8 — запись **в индекс SQLite**. Логично делать в одном проходе после `rename` (теги → stat → `tracks::upsert`) или один раз в конце альбома из API без повторного чтения файла.
+- **FP-10** — ускорение **полного** обхода для legacy; не заменяет FP-8 для новых download.
+
+### API
+
+Без новых endpoints: поведение только в download worker. Опционально позже: `POST …/library/scan?root=<album_dir>` только для ручного repair (FP-8e).
 
 ### Milestones (TDD)
 
 
-| ID    | Scope                                                                        |
-| ----- | ---------------------------------------------------------------------------- |
-| FP-8a | (done) worker: `register_album_from_qobuz_download` + тесты `euterpe-server` |
-| FP-8b | (optional) POST scan с `root` = каталог альбома или авто-scan после download |
-| FP-8c | UI: подсказка «запустите сканирование» если альбом в индексе без треков      |
+| ID    | Scope                                                                                         |
+| ----- | --------------------------------------------------------------------------------------------- |
+| FP-8a | (done) upsert `albums` после download                                                         |
+| FP-8b | Upsert **всех `tracks`** альбома из `AlbumDetail` + paths; тест worker/mock без `library/scan` |
+| FP-8c | Интеграция: после download альбом виден в `GET …/library/albums` и треки в `…/albums/{id}`   |
+| FP-8d | Согласовать порядок с FP-6 (теги в файл + индекс); skip-by-size всё равно индексирует       |
+| FP-8e | (optional) Scan одного каталога альбома для repair / файлов вне worker                      |
+| FP-8f | UI: убрать/смягчить подсказку «запустите сканирование» для свежих download                  |
 
 
-**Целевая фаза:** **Phase 3b** / **Phase 5b** (доработка вместе с FP-6).
+**Целевая фаза:** **Phase 3b / 5b** (FP-8b раньше FP-10: быстрый выигрыш без параллельного scan).
 
 ---
 
@@ -473,6 +524,86 @@ FP-5 — внешние каталоги (MusicBrainz, Discogs, …) для **у
 
 ---
 
+## FP-10 — Параллельное сканирование Library (очередь + пул воркеров)
+
+### Проблема сейчас
+
+`POST /api/v1/library/scan` обходит всю библиотеку **одним** `WalkDir` в одной async-задаче (`services/library_scan.rs`). На больших каталогах (десятки тысяч файлов, полный SHA256 каждого файла) первый и повторный scan занимают много времени и не используют диск/CPU параллельно.
+
+### Цель
+
+Ускорить полный rescan за счёт **фиксированного пула воркеров** (по умолчанию **10**), общей **очереди подкаталогов** и координатора, который наполняет очередь с верхнего уровня.
+
+### Согласованная модель (после ревью идеи)
+
+Идея пользователя **в целом верна**; ниже — уточнения, чтобы не упереться в SQLite и «жёсткую» структуру каталогов.
+
+| Роль | Поведение |
+|------|-----------|
+| **Координатор** (одна задача на scan run) | Читает только **прямых потомков** `EUTERPE_LIBRARY_PATH` (ожидаемый layout: `{Artist}/{Album}/…`). Каждый подкаталог верхнего уровня → одна запись в очереди. Не индексирует файлы сам (только постановка задач). |
+| **Очередь** | Общая для всех воркеров: `path` + `depth` + `priority`. Воркеры **забирают** задачу (async channel / mutex + heap). **Не** порождать отдельную OS-thread на каждую папку — держать ровно `N` долгоживущих воркеров. |
+| **Воркер** (пул из `N`, default 10) | Берёт каталог из очереди → обходит **только его поддерево**. Для каждого аудиофайла — тот же `index_file`, что сейчас. При входе во **вложенную** директорию может **положить её в очередь** вместо немедленного рекурсивного обхода (см. приоритет). |
+| **Приоритет** | Чем **глубже** поддерево относительно корня задачи исполнителя — тем **выше** приоритет (LIFO внутри ветки: сначала альбомы/вложенные папки, потом соседи). Реализация: `priority = base + depth` или отдельная **стековая** очередь на воркера + общая очередь для корневых «исполнителей». |
+| **Лимит** | `EUTERPE_LIBRARY_SCAN_WORKERS` (env), default **10**. Один активный scan run, как сейчас (`SCAN_ALREADY_RUNNING`). |
+
+```mermaid
+flowchart LR
+  coord[Coordinator]
+  q[(Work queue)]
+  w1[Worker 1]
+  w2[Worker 2]
+  wN[Worker N]
+  db[(SQLite)]
+  coord -->|artist dirs| q
+  q --> w1
+  q --> w2
+  q --> wN
+  w1 -->|index_file| db
+  w2 --> db
+  wN --> db
+  w1 -.->|nested dirs, high priority| q
+```
+
+### Поправки к исходной формулировке
+
+1. **«Многопоточность»** — в Rust-сервере это **пул concurrent tokio-задач** (и при необходимости `spawn_blocking` для тяжёлого I/O/хеша), не бесконечный spawn thread на папку.
+2. **«Исполнитель» = первый уровень** — соответствует layout загрузок Euterpe (`library/Artist/Album/track.flac`). Если у пользователя другая схема (`Genre/Artist/…` или плоский корень), координатор должен уметь **fallback**: одна задача «весь root» или настраиваемая глубина seed (`EUTERPE_LIBRARY_SCAN_SEED_DEPTH`, default 1).
+3. **Не дублировать обход**: перед постановкой в очередь — `visited` / canonical path (symlink-safe), иначе два воркера проиндексируют одно и то же.
+4. **SQLite**: параллельные `upsert` требуют **WAL** + пул соединений (`sqlx`); при contention — короткие транзакции на файл или batch. Имеет смысл вынести в тот же FP или FP-10b **пропуск неизменённых** файлов (`mtime` + size без полного SHA256), иначе 10 воркеров упрутся в чтение диска.
+5. **Прогресс SSE** — атомарные счётчики `files_seen` / `files_indexed`; периодический flush в `library_scan_runs` как сейчас (`PROGRESS_EVERY`).
+6. **MVP vs полная версия**:
+   - **FP-10a (MVP):** координатор кладёт в очередь только каталоги **уровня Artist**; воркер делает **локальный** `WalkDir` по всему поддереву исполнителя (без re-enqueue вложенных папок). Уже даёт ~linear speedup до `N` на типичной библиотеке.
+   - **FP-10b:** динамическая постановка вложенных каталогов в общую очередь с приоритетом (как в исходной идее).
+
+### API / конфиг
+
+| Параметр | Назначение |
+|----------|------------|
+| `EUTERPE_LIBRARY_SCAN_WORKERS` | Размер пула (default 10, min 1, max разумный cap e.g. 32) |
+| `EUTERPE_LIBRARY_SCAN_SEED_DEPTH` | Сколько уровней от корня координатор кладёт в очередь (default 1) |
+| (опционально) body `POST …/library/scan` | `{ "workers": 10 }` переопределяет env на один run |
+
+OpenAPI / `ScanProgressEvent` **без breaking change**; опционально поле `queue_depth` в SSE для отладки.
+
+### Связь с другими FP
+
+- **FP-8b** — индексация альбома **сразу в worker** после download (без scan); приоритетнее отдельной задачи в очереди FP-10.
+- **FP-8e / FP-10** — полный или subtree scan только для файлов **вне** download worker (legacy, ручные копии, repair).
+- **FP-9** — пагинация списков Library; UX для новых загрузок зависит от FP-8b, не от rescan.
+
+### Milestones (TDD)
+
+| ID | Scope |
+|----|--------|
+| FP-10a | Очередь + пул `N` воркеров; seed = подкаталоги 1-го уровня; локальный `WalkDir` на задачу; тесты на temp tree с 2+ «artist» |
+| FP-10b | Re-enqueue вложенных каталогов с приоритетом; `visited`; stress-тест без дублей в `tracks` |
+| FP-10c | Env + cap workers; документация layout; `#[ignore]` live benchmark note |
+| FP-10d | (опционально) skip unchanged files (mtime/size) перед SHA256 |
+
+**Целевая фаза:** **Phase 5b / 6** (после стабилизации FP-8 и пула SQLite).
+
+---
+
 ## Связь с дорожной картой
 
 
@@ -485,8 +616,9 @@ FP-5 — внешние каталоги (MusicBrainz, Discogs, …) для **у
 | FP-5 Теги: Discogs / GnuDB / MusicBrainz / TrackType.org     | Phase 5b / 6         |
 | FP-6 Теги из Qobuz при download                              | Phase 3b / 5b        |
 | FP-7 Обложка альбома из UI (upload / replace)                | Phase 5b / 6         |
-| FP-8 Библиотека после download + инкрементальный scan (опц.) | Phase 3b / 5b        |
+| FP-8 Индекс Library сразу после download (+ scan для legacy)   | Phase 3b / 5b        |
 | FP-9 List API: keyset-пагинация (`cursor`) + сортировка + UI     | Phase 2b / 4b        |
+| FP-10 Параллельный library scan (очередь, пул воркеров)        | Phase 5b / 6         |
 | Ручной token / env                                           | Phase 1–2 (остаётся) |
 
 

@@ -5,7 +5,7 @@ use euterpe_qobuz::{
     AlbumDetail, AlbumSummary, ArtistRef, Page, PageRequest, QobuzApi, QobuzError, Quality,
     StreamUrl, TrackSummary,
 };
-use euterpe_server::app::test_support::test_state;
+pub use euterpe_server::app::test_support::test_state;
 use euterpe_server::AppState;
 use tokio::sync::Mutex;
 
@@ -200,8 +200,25 @@ impl QobuzApi for DownloadMockQobuz {
     }
 }
 
+pub async fn seed_active_qobuz_account(state: &AppState, user_id: u64, token: &str) {
+    use euterpe_qobuz::OAuthLoginResult;
+    use euterpe_server::credentials;
+
+    let master = state.master_key().expect("master key in test state");
+    let login = OAuthLoginResult {
+        user_id,
+        user_auth_token: token.to_string(),
+        display_name: None,
+        membership_label: None,
+    };
+    credentials::persist_oauth_account(&state.db, master, &login)
+        .await
+        .expect("seed account");
+}
+
 pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     use euterpe_server::config::AppConfig;
+    use euterpe_server::crypto::MasterKey;
     use euterpe_server::db;
     use euterpe_server::services::download::{spawn_worker, WorkerDeps};
     use reqwest::Client;
@@ -213,9 +230,11 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         bind: "127.0.0.1:0".parse().unwrap(),
         database_url: "sqlite::memory:".into(),
         admin_password: None,
-        master_key: None,
-        qobuz_user_id: Some(1),
-        qobuz_auth_token: Some("test".into()),
+        master_key: Some(MasterKey::parse(&hex::encode([1u8; 32])).unwrap()),
+        public_base_url: "http://127.0.0.1:8080".into(),
+        oauth_state_ttl: std::time::Duration::from_secs(600),
+        qobuz_api_base: None,
+        qobuz_play_base: None,
         library_path,
         download_concurrency: 2,
         dev_verbose: false,
@@ -227,7 +246,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     let (job_tx, job_rx) = mpsc::channel(32);
     let (events, _) = broadcast::channel(16);
     let (scan_events, _) = broadcast::channel(16);
-    let qobuz: Arc<Mutex<dyn QobuzApi>> = Arc::new(Mutex::new(mock));
+    let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = Arc::new(Mutex::new(Box::new(mock)));
     let config = Arc::new(config);
 
     let state = AppState {
@@ -238,6 +257,8 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         events: events.clone(),
         scan_events,
     };
+
+    seed_active_qobuz_account(&state, 1, "test-token").await;
 
     spawn_worker(
         job_rx,
@@ -255,11 +276,10 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
 
 pub async fn state_with_mock(mock: MockQobuz) -> AppState {
     let mut state = test_state().await;
-    let mut config = (*state.config).clone();
-    config.qobuz_user_id = Some(1);
-    config.qobuz_auth_token = Some("test-token".into());
-    state.config = Arc::new(config);
-    state.qobuz = Arc::new(Mutex::new(mock));
+    seed_active_qobuz_account(&state, 1, "test-token").await;
+    state.qobuz = Arc::new(Mutex::new(
+        Box::new(mock) as Box<dyn QobuzApi + Send + Sync>,
+    ));
     state
 }
 

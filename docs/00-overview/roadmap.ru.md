@@ -62,6 +62,17 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 
 См. детали: [future-plans.ru.md](future-plans.ru.md).
 
+### FP-8 — Индекс сразу после download
+
+- После альбома: upsert `albums` + **все `tracks`** из `album/get` (без обязательного rescan)
+- Сейчас: только `albums` (FP-8a); треки — FP-8b
+- См. [future-plans.ru.md — FP-8](future-plans.ru.md#fp-8--библиотека-сразу-после-скачивания-без-обязательного-rescan)
+
+### FP-10 — Параллельный library scan
+
+- Очередь подкаталогов + пул воркеров (default 10) — для **legacy** и repair, не для свежих download
+- См. [future-plans.ru.md — FP-10](future-plans.ru.md#fp-10--параллельное-сканирование-library-очередь--пул-воркеров)
+
 ### FP-1 — Токен из приложения (OAuth → БД)
 
 - OAuth flow в UI Euterpe (`/api/v1/qobuz/oauth/start|callback`)

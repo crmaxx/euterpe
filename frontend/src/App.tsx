@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useServerInfo } from "@/api/hooks";
 import { Toaster } from "@/components/toaster";
@@ -10,7 +10,7 @@ import { LibraryPage } from "@/features/library/LibraryPage";
 import { QueuePage } from "@/features/queue/QueuePage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { ToastStateProvider } from "@/hooks/toast-provider";
-import { getAdminToken } from "@/lib/auth";
+import { ADMIN_UNAUTHORIZED_EVENT, getAdminToken } from "@/lib/auth";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,6 +21,13 @@ const queryClient = new QueryClient({
 function AppRoutes() {
   const [authed, setAuthed] = useState(() => !!getAdminToken());
   const { data: info, isLoading } = useServerInfo();
+
+  useEffect(() => {
+    const onUnauthorized = () => setAuthed(false);
+    window.addEventListener(ADMIN_UNAUTHORIZED_EVENT, onUnauthorized);
+    return () =>
+      window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
 
   if (isLoading) {
     return (

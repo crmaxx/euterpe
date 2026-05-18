@@ -14,7 +14,7 @@ use crate::error::ApiError;
 pub struct AppState {
     pub db: SqlitePool,
     pub config: Arc<AppConfig>,
-    pub qobuz: Arc<Mutex<dyn QobuzApi>>,
+    pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     pub job_tx: mpsc::Sender<i64>,
     pub events: broadcast::Sender<JobProgressEvent>,
     pub scan_events: broadcast::Sender<ScanProgressEvent>,
@@ -29,13 +29,13 @@ impl AppState {
         scan_events: broadcast::Sender<ScanProgressEvent>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
-        let qobuz: Arc<Mutex<dyn QobuzApi>> = if let Some(creds) =
-            credentials::load_from_env_or_db(&config, &db).await?
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = if let Some(creds) =
+            credentials::load_active(&config, &db).await?
         {
-            let client = credentials::build_client(&creds).await?;
-            Arc::new(Mutex::new(client))
+            let client = credentials::build_client(&creds, &config).await?;
+            Arc::new(Mutex::new(Box::new(client)))
         } else {
-            Arc::new(Mutex::new(NoopQobuz))
+            Arc::new(Mutex::new(Box::new(NoopQobuz)))
         };
 
         Ok(Self {
@@ -49,13 +49,25 @@ impl AppState {
     }
 
     pub async fn require_credentials(&self) -> Result<QobuzCredentials, ApiError> {
-        credentials::load_from_env_or_db(&self.config, &self.db)
+        credentials::load_active(&self.config, &self.db)
             .await?
             .ok_or_else(|| {
                 ApiError::Message(
-                    "Qobuz credentials not configured (env or settings)".into(),
+                    "Qobuz not connected — complete OAuth in Settings".into(),
                 )
             })
+    }
+
+    pub async fn reload_qobuz_from_db(&self) -> Result<(), ApiError> {
+        let new_client: Box<dyn QobuzApi + Send + Sync> = if let Some(creds) =
+            credentials::load_active(&self.config, &self.db).await?
+        {
+            Box::new(credentials::build_client(&creds, &self.config).await?)
+        } else {
+            Box::new(NoopQobuz)
+        };
+        *self.qobuz.lock().await = new_client;
+        Ok(())
     }
 
     pub fn master_key(&self) -> Result<&MasterKey, ApiError> {

@@ -114,7 +114,7 @@ GET user/login?email=...&password=...&app_id=...
 
 ## OAuth (будущее)
 
-Локальный OAuth flow — см. [oauth-and-tokens.ru.md](oauth-and-tokens.ru.md), [qobuz-dl-go](https://github.com/Aeneaj/qobuz-dl-go).
+Локальный OAuth flow — см. [oauth-and-tokens.ru.md](oauth-and-tokens.ru.md). Точки authorize/token и обмен `code` — по исходникам в **`docs/references/qobuz-dl-go`** (клон добавить локально; каталог в `.gitignore`).
 
 ## Кэширование credentials
 

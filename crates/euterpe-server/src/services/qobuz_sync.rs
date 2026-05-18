@@ -11,7 +11,7 @@ use crate::error::ApiError;
 
 pub async fn run(
     pool: &SqlitePool,
-    qobuz: Arc<Mutex<dyn QobuzApi>>,
+    qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
 ) -> Result<QobuzSyncResponse, ApiError> {
     let run_id = sync_runs::start(pool).await?;
 
@@ -206,8 +206,9 @@ mod tests {
             slug: Some("lutosawski-concertos-for-cello".into()),
             list_id: Some(3149020953969),
         };
-        let mock: Arc<Mutex<dyn QobuzApi>> =
-            Arc::new(Mutex::new(MockQobuz::new(vec![album])));
+        let mock: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
+            Arc::new(Mutex::new(Box::new(MockQobuz::new(vec![album]))
+                as Box<dyn QobuzApi + Send + Sync>));
 
         run(&pool, mock).await.unwrap();
 
@@ -223,7 +224,9 @@ mod tests {
         let pool = test_pool().await;
         let inner = MockQobuz::new(vec![album(1, "A"), album(2, "B")]);
         let albums = Arc::clone(&inner.albums);
-        let mock: Arc<Mutex<dyn QobuzApi>> = Arc::new(Mutex::new(inner));
+        let mock: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = Arc::new(Mutex::new(
+            Box::new(inner) as Box<dyn QobuzApi + Send + Sync>,
+        ));
 
         let r1 = run(&pool, Arc::clone(&mock)).await.unwrap();
         assert_eq!(r1.albums_total, 2);

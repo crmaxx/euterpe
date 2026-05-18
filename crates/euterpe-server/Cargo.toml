@@ -15,6 +15,7 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
 euterpe-qobuz = { path = "../euterpe-qobuz" }
 futures-util = "0.3"
 hex = "0.4"
@@ -39,6 +40,7 @@ sha2 = "0.10"
 [dev-dependencies]
 axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
+mockito = "1"
 jsonschema = "0.29"
 pretty_assertions = "1"
 serde_yaml = "0.9"

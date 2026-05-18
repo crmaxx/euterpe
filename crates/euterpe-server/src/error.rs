@@ -23,7 +23,11 @@ impl ApiError {
         match self {
             ApiError::Config(_) => "CONFIG_ERROR",
             ApiError::Message(msg) if msg.contains("MASTER_KEY") => "MASTER_KEY_REQUIRED",
-            ApiError::Message(msg) if msg.contains("credentials") => "QOBUZ_NOT_CONFIGURED",
+            ApiError::Message(msg)
+                if msg.contains("credentials") || msg.contains("not connected") =>
+            {
+                "QOBUZ_NOT_CONFIGURED"
+            }
             ApiError::Message(msg) if msg.contains("JOB_ALREADY_RUNNING") => "JOB_ALREADY_RUNNING",
             ApiError::Message(msg) if msg.contains("SCAN_ALREADY_RUNNING") => "SCAN_ALREADY_RUNNING",
             ApiError::Message(msg) if msg.contains("not found") => "NOT_FOUND",
@@ -39,7 +43,11 @@ impl ApiError {
         match self {
             ApiError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::Message(msg) if msg.contains("MASTER_KEY") => StatusCode::BAD_REQUEST,
-            ApiError::Message(msg) if msg.contains("credentials") => StatusCode::SERVICE_UNAVAILABLE,
+            ApiError::Message(msg)
+                if msg.contains("credentials") || msg.contains("not connected") =>
+            {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             ApiError::Message(msg) if msg.contains("JOB_ALREADY_RUNNING") => StatusCode::CONFLICT,
             ApiError::Message(msg) if msg.contains("SCAN_ALREADY_RUNNING") => StatusCode::CONFLICT,
             ApiError::Message(msg) if msg.contains("not found") => StatusCode::NOT_FOUND,

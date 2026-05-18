@@ -1,5 +1,30 @@
 # OAuth и auth-токены (актуально с 2025–2026)
 
+## Локальные референсы (`docs/references/`)
+
+Каталог `docs/references/` указан в `.gitignore`: в git не попадает, но на машине разработчика там лежат **клоны** сторонних репозиториев. По ним (а не по «памяти модели» или случайным веб-страницам) сверяются URL, параметры и форматы ответов.
+
+| Каталог | Исходный проект | Что смотреть для auth / токенов |
+|---------|-----------------|----------------------------------|
+| `docs/references/qobuz-dl/` | vitiko98/qobuz-dl | `qobuz_dl/qopy.py`: база API `https://www.qobuz.com/api.json/0.2/` (около строки 39), `user/login` по email/password в `api_call` / `auth` (около 44–130). **В этой копии нет браузерного OAuth** (модуль вроде `oauth.py` — из PR #331, его может не быть в вашем клоне). |
+| `docs/references/streamrip/` | nathom/streamrip | `streamrip/client/qobuz.py`: константа `QOBUZ_BASE_URL` (стр. ~26–27), загрузка `bundle.js` со страницы `https://play.qobuz.com/login` (~69–79), логин `user/login` с `user_id` + `user_auth_token` при `use_auth_token` (~183–211), сборка URL `…/0.2/{endpoint}` (~442–450). |
+| `docs/references/qobuz-sync/` | trevorstarick/qobuz-sync | `client/client.go`: `baseApp`, `baseAPI`, заголовок `X-User-Auth-Token` (~37–42); обход пароля через `AUTH_TOKEN` (~99–104). |
+| `docs/references/qobuz-qt/` | qobuz-qt (см. `docs/references/qobuz-qt.ru.md`) | `rust/src/api/client.rs`: `BASE_URL` (~12), **не браузерный OAuth**, а подписанный `GET …/oauth2/login` с `username`/`password` (~188–221); ответ `OAuthLoginResponse` — `rust/src/api/models.rs` (~6–19): поля `oauth2.access_token` и/или `user_auth_token`. |
+| `docs/references/qobuz-dl-go/` | Aeneaj/qobuz-dl-go | **Рекомендуется добавить клон сюда вручную.** Именно там искать **authorize URL**, **token URL**, `client_id`, `redirect_uri`, обмен `code` на токен для FP-1; после клонирования: поиск по дереву `rg -i 'authorize|token|oauth'` в этом каталоге. |
+
+Итог: **таблица эндпоинтов браузерного OAuth** для Euterpe — ниже (эталон: ветка `bug/newauth` / PR #331 в `docs/references/qobuz-dl`, файлы `qobuz_dl/core.py`, `qobuz_dl/qopy.py`, `qobuz_dl/bundle.py`). Клон **qobuz-dl-go** в `docs/references/` не содержит отдельного OAuth-модуля — только token login.
+
+### Браузерный OAuth (FP-1, зафиксировано по PR #331)
+
+| Шаг | URL / метод | Параметры | Ответ / результат |
+|-----|-------------|-----------|-------------------|
+| 1. Authorize (браузер) | `GET https://www.qobuz.com/signin/oauth` | `ext_app_id` = `app_id` из bundle.js; `redirect_url` = callback Euterpe (`EUTERPE_PUBLIC_BASE_URL` + `/api/v1/qobuz/oauth/callback`) | Редирект на `redirect_url` с `code` или `code_autorisation` в query |
+| 2. Exchange code | `GET https://www.qobuz.com/api.json/0.2/oauth/callback` | `code`, `private_key` (из bundle.js, `Bundle.get_private_key()`), `app_id` | JSON `{ "token": "<uat>" }` |
+| 3. Partner login | `POST https://www.qobuz.com/api.json/0.2/user/login?app_id=…` | Заголовки `X-App-Id`, `X-User-Auth-Token`; тело `extra=partner` | JSON с `user`, `user_auth_token`, `user.credential` |
+| 4. Euterpe | SQLite `qobuz_accounts` + `settings.qobuz.active_account_id` | UAT шифруется `EUTERPE_MASTER_KEY` | Пересборка `QobuzClient` без рестарта |
+
+Реализация в Rust: `euterpe-qobuz::oauth`, сервер `GET /api/v1/qobuz/oauth/start|callback`.
+
 ## Статус (проверено по референсам, май 2026)
 
 | Метод | Статус | Комментарий |
@@ -7,7 +32,7 @@
 | **Email + password** → `user/login` | **Не работает / deprecated** | Qobuz перевёл веб-логин на OAuth + reCAPTCHA; автоматический login по паролю в API даёт 401 ([qobuz-dl #329](https://github.com/vitiko98/qobuz-dl/issues/329), [streamrip #954](https://github.com/nathom/streamrip/issues/954)) |
 | **`user_id` + `user_auth_token`** → `user/login` | **Работает** | Режим streamrip `use_auth_token = true` |
 | **Только `X-User-Auth-Token`** (без login) | **Работает** | Как `AUTH_TOKEN` в [qobuz-sync](https://github.com/trevorstarick/qobuz-sync) |
-| **OAuth** (браузерный redirect) | **Рекомендуется** для CLI | [qobuz-dl-go](https://github.com/Aeneaj/qobuz-dl-go), PR [qobuz-dl #331](https://github.com/vitiko98/qobuz-dl/pull/331) |
+| **OAuth** (браузерный redirect) | **Рекомендуется** для CLI | Исходники: `docs/references/qobuz-dl-go` (после клонирования); контекст PR #331 — ветка/патч в `docs/references/qobuz-dl`, если вы тянете её отдельно |
 
 **Вывод для Euterpe:** в Docker и UI по умолчанию — **токен**, не пароль. Пароль в документации и env оставить только как legacy с предупреждением.
 
@@ -84,9 +109,10 @@ password_or_token = "<user_auth_token>"
 
 ## Способ 3 — OAuth из приложения Euterpe (план FP-1)
 
-По модели [qobuz-dl-go](https://github.com/Aeneaj/qobuz-dl-go):
+Эталон поведения CLI — репозиторий **qobuz-dl-go**; локально: `docs/references/qobuz-dl-go` (см. таблицу в начале файла). Там же искать точные **authorize** / **token** URL и параметры обмена `code`.
 
 ```bash
+# в upstream CLI (не в каждой копии qobuz-dl на Python)
 qobuz-dl oauth
 # локальный redirect → сохранение токена в config
 ```
@@ -150,4 +176,4 @@ Server Phase 2: хранить `qobuz.uat_expires_at` если удастся д
 
 - [authentication.ru.md](authentication.ru.md)
 - [api-reference.ru.md](api-reference.ru.md)
-- [reference-implementation.ru.md](reference-implementation.ru.md)
+- [reference-implementation.ru.md](reference-implementation.ru.md) — сводная таблица репозиториев и путей в `docs/references/`

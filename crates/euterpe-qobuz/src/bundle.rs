@@ -10,6 +10,7 @@ use crate::error::QobuzError;
 const BUNDLE_URL_RE: &str =
     r#"<script src="(/resources/\d+\.\d+\.\d+-[a-z]\d{3}/bundle\.js)"></script>"#;
 const APP_ID_RE: &str = r#"production:\{api:\{appId:"(?P<app_id>\d{9})""#;
+const PRIVATE_KEY_RE: &str = r#"privateKey:\s*"(?P<key>[A-Za-z0-9]{6,30})""#;
 const SEED_TZ_RE: &str =
     r#"[a-z]\.initialSeed\("(?P<seed>[\w=]+)",window\.utimezone\.(?P<timezone>[a-z]+)\)"#;
 
@@ -19,6 +20,13 @@ pub fn parse_app_id_from_bundle(bundle: &str) -> Result<String, QobuzError> {
     re.captures(bundle)
         .and_then(|c| c.name("app_id").map(|m| m.as_str().to_string()))
         .ok_or_else(|| QobuzError::BundleParse("app_id not found in bundle".into()))
+}
+
+/// OAuth `private_key` embedded in play.qobuz.com bundle.js (qobuz-dl PR #331).
+pub fn parse_private_key_from_bundle(bundle: &str) -> Option<String> {
+    let re = Regex::new(PRIVATE_KEY_RE).expect("valid private_key regex");
+    re.captures(bundle)
+        .and_then(|c| c.name("key").map(|m| m.as_str().to_string()))
 }
 
 fn capitalize_timezone(tz: &str) -> String {
