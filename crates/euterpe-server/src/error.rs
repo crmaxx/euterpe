@@ -38,6 +38,7 @@ impl ApiError {
                 "PROVIDER_UNAVAILABLE"
             }
             ApiError::Message(msg) if msg.contains("integration not found") => "NOT_FOUND",
+            ApiError::Message(msg) if msg.contains("PAYLOAD_TOO_LARGE") => "PAYLOAD_TOO_LARGE",
             ApiError::Qobuz(QobuzError::Authentication(_)) => "QOBUZ_AUTH_FAILED",
             ApiError::Qobuz(_) => "QOBUZ_UNAVAILABLE",
             ApiError::Message(_) => "BAD_REQUEST",
@@ -62,6 +63,9 @@ impl ApiError {
             ApiError::Message(msg) if msg.contains("PROVIDER_UNAVAILABLE") => {
                 StatusCode::BAD_GATEWAY
             }
+            ApiError::Message(msg) if msg.contains("PAYLOAD_TOO_LARGE") => {
+                StatusCode::PAYLOAD_TOO_LARGE
+            }
             ApiError::Qobuz(QobuzError::Authentication(_)) => StatusCode::UNAUTHORIZED,
             ApiError::Qobuz(_) => StatusCode::BAD_GATEWAY,
             ApiError::Message(_) => StatusCode::BAD_REQUEST,
@@ -75,6 +79,10 @@ impl ApiError {
 
     pub fn invalid_cursor(message: impl Into<String>) -> Self {
         ApiError::Message(format!("INVALID_CURSOR: {}", message.into()))
+    }
+
+    pub fn payload_too_large(message: impl Into<String>) -> Self {
+        ApiError::Message(format!("PAYLOAD_TOO_LARGE: {}", message.into()))
     }
 }
 

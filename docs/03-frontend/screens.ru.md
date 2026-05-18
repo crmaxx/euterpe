@@ -38,7 +38,7 @@
 - Album list + track list; превью обложки по `GET /api/v1/library/albums/{id}/cover` (плейсхолдер **No cover**, если нет пути или файла)
 - Редактирование **текстовых** тегов трека → `PATCH /api/v1/library/tracks/{id}`
 - Header shows last scan status
-- **Замена обложки из UI** — [FP-6](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui); после Qobuz-download сервер кладёт **`cover.<ext>`** (тип по MIME) и встраивает в файлы
+- **Replace cover** — `PUT /api/v1/library/albums/{id}/cover` (JPEG/PNG/WebP/BMP, до 20 MiB); после Qobuz-download обложка также пишется на диск и встраивается в треки
 
 **Tests:** album list renders; rescan button calls API.
 

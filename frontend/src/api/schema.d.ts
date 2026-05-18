@@ -392,7 +392,13 @@ export interface paths {
          *     Returns 404 if the album has no `cover_path` or the file is missing.
          */
         get: operations["getLibraryAlbumCover"];
-        put?: never;
+        /**
+         * Upload or replace album cover image
+         * @description Writes `cover.<ext>` under the album directory (from `albums.path`), updates
+         *     `albums.cover_path`, and embeds the image in all audio files of the album.
+         *     Maximum body size 20 MiB. Supported types JPEG, PNG, WebP, BMP.
+         */
+        put: operations["putLibraryAlbumCover"];
         post?: never;
         delete?: never;
         options?: never;
@@ -754,6 +760,12 @@ export interface components {
             genre?: string | null;
             path: string;
             duration_sec?: number | null;
+        };
+        AlbumCoverUploadResponse: {
+            /** @description Library-relative path to the cover file */
+            cover_path: string;
+            /** @description Number of track files that received embedded cover art */
+            tracks_embedded: number;
         };
         LibraryTrackTagsPatchRequest: {
             title?: string;
@@ -1520,9 +1532,50 @@ export interface operations {
                     "image/jpeg": string;
                     "image/png": string;
                     "image/webp": string;
+                    "image/bmp": string;
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    putLibraryAlbumCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "image/jpeg": string;
+                "image/png": string;
+                "image/webp": string;
+                "image/bmp": string;
+            };
+        };
+        responses: {
+            /** @description Cover saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumCoverUploadResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            /** @description Cover image exceeds size limit */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     getLibraryTrack: {
