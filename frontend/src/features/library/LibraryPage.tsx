@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useLibraryAlbum,
   useLibraryAlbumsKeyset,
@@ -13,6 +13,7 @@ import type {
   LibraryTrackTagsPatchRequest,
 } from "@/api/client";
 import { LibraryAlbumCover } from "@/features/library/LibraryAlbumCover";
+import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,12 +36,14 @@ function TrackTagsEditorForm({
   trackId,
   track,
   onClose,
+  onSaveReady,
   patchTags,
   toast,
 }: {
   trackId: number;
   track: LibraryTrackDetailResponse;
   onClose: () => void;
+  onSaveReady: (save: (() => void) | null) => void;
   patchTags: ReturnType<typeof usePatchTrackTags>;
   toast: ReturnType<typeof useToast>["toast"];
 }) {
@@ -48,7 +51,7 @@ function TrackTagsEditorForm({
     trackToTagForm(track),
   );
 
-  async function handleSave() {
+  const handleSave = useCallback(async () => {
     try {
       await patchTags.mutateAsync({ id: trackId, body: tagForm });
       toast({ title: "Tags saved" });
@@ -60,7 +63,12 @@ function TrackTagsEditorForm({
         variant: "destructive",
       });
     }
-  }
+  }, [trackId, tagForm, patchTags, onClose, toast]);
+
+  useEffect(() => {
+    onSaveReady(() => void handleSave());
+    return () => onSaveReady(null);
+  }, [handleSave, onSaveReady]);
 
   return (
     <>
@@ -161,11 +169,7 @@ function TrackTagsEditorForm({
         <Button type="button" variant="secondary" onClick={onClose}>
           Cancel
         </Button>
-        <Button
-          type="button"
-          disabled={patchTags.isPending}
-          onClick={() => void handleSave()}
-        >
+        <Button type="button" disabled={patchTags.isPending} onClick={() => void handleSave()}>
           Save
         </Button>
       </div>
@@ -179,6 +183,7 @@ export function LibraryPage() {
   const [q, setQ] = useState("");
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
+  const tagEditorSaveRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setQ(searchInput.trim()), 300);
@@ -214,9 +219,22 @@ export function LibraryPage() {
     }
   }
 
+  const bindTagEditorSave = useCallback((save: (() => void) | null) => {
+    tagEditorSaveRef.current = save;
+  }, []);
+
+  function closeTagEditor() {
+    tagEditorSaveRef.current = null;
+    setEditingTrackId(null);
+  }
+
   function openTagEditor(trackId: number) {
+    tagEditorSaveRef.current = null;
     setEditingTrackId(trackId);
   }
+
+  const tagEditorCanConfirm =
+    editingTrackId != null && !!trackQuery.data && !trackQuery.isLoading;
 
   return (
     <div className="space-y-6">
@@ -363,54 +381,46 @@ export function LibraryPage() {
         </section>
       </div>
 
-      {editingTrackId != null && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="w-full max-w-md space-y-4 rounded-lg border border-border bg-card p-4">
-            {trackQuery.isLoading ? (
-              <>
-                <h3 className="font-medium">Edit track tags</h3>
-                <p className="text-sm text-muted-foreground">Loading track…</p>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setEditingTrackId(null)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </>
-            ) : trackQuery.data ? (
-              <TrackTagsEditorForm
-                key={trackQuery.data.id}
-                trackId={editingTrackId}
-                track={trackQuery.data}
-                onClose={() => setEditingTrackId(null)}
-                patchTags={patchTags}
-                toast={toast}
-              />
-            ) : (
-              <>
-                <h3 className="font-medium">Edit track tags</h3>
-                <p className="text-sm text-destructive">Could not load track.</p>
-                <div className="flex justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setEditingTrackId(null)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+      <Modal
+        open={editingTrackId != null}
+        onClose={closeTagEditor}
+        onConfirm={
+          tagEditorCanConfirm ? () => tagEditorSaveRef.current?.() : undefined
+        }
+        confirmDisabled={!tagEditorCanConfirm || patchTags.isPending}
+      >
+        {editingTrackId == null ? null : trackQuery.isLoading ? (
+          <>
+            <h3 className="font-medium">Edit track tags</h3>
+            <p className="text-sm text-muted-foreground">Loading track…</p>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={closeTagEditor}>
+                Cancel
+              </Button>
+            </div>
+          </>
+        ) : trackQuery.data ? (
+          <TrackTagsEditorForm
+            key={trackQuery.data.id}
+            trackId={editingTrackId}
+            track={trackQuery.data}
+            onClose={closeTagEditor}
+            onSaveReady={bindTagEditorSave}
+            patchTags={patchTags}
+            toast={toast}
+          />
+        ) : (
+          <>
+            <h3 className="font-medium">Edit track tags</h3>
+            <p className="text-sm text-destructive">Could not load track.</p>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="secondary" onClick={closeTagEditor}>
+                Cancel
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }

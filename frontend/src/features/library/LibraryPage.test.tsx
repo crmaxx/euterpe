@@ -50,4 +50,77 @@ describe("LibraryPage", () => {
     );
     expect(await screen.findAllByText("No cover")).toHaveLength(2);
   });
+
+  it("does not save tags when opening the editor", async () => {
+    let patchCount = 0;
+    server.use(
+      http.patch("/api/v1/library/tracks/:id", () => {
+        patchCount += 1;
+        return HttpResponse.json({
+          id: 1,
+          album_id: 1,
+          title: "Track One",
+          artist_name: "Test Artist",
+          album_title: "Local Album",
+          track_number: 1,
+          year: 2020,
+          disc_number: 1,
+          genre: "Pop",
+          path: "a/t1.flac",
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+    await user.click(await screen.findByRole("button", { name: /edit tags/i }));
+    await screen.findByLabelText(/^title$/i);
+    expect(patchCount).toBe(0);
+  });
+
+  it("closes tag editor on Escape", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+    await user.click(await screen.findByRole("button", { name: /edit tags/i }));
+    await screen.findByLabelText(/^title$/i);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/^title$/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("saves track tags on Enter", async () => {
+    let patched = false;
+    server.use(
+      http.patch("/api/v1/library/tracks/:id", async ({ request }) => {
+        patched = true;
+        const body = (await request.json()) as { title?: string };
+        return HttpResponse.json({
+          id: 1,
+          album_id: 1,
+          title: body.title ?? "Track",
+          artist_name: "Test Artist",
+          album_title: "Local Album",
+          track_number: 1,
+          year: 2020,
+          disc_number: 1,
+          genre: "Pop",
+          path: "a/t1.flac",
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+    await user.click(await screen.findByRole("button", { name: /edit tags/i }));
+    const titleInput = await screen.findByLabelText(/title/i);
+    await user.clear(titleInput);
+    await user.type(titleInput, "Renamed");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(patched).toBe(true));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
 });
