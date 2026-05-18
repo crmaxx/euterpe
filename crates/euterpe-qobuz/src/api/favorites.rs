@@ -21,6 +21,19 @@ fn favorite_item_album_api_id(item: &serde_json::Value) -> Option<String> {
         if let Some(short) = parse_album_ref_value(v) {
             return Some(short);
         }
+        if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            if s.chars().all(|c| c.is_ascii_digit()) {
+                return Some(s.to_string());
+            }
+        }
+    }
+    if let Some(upc) = item
+        .get("upc")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(upc.to_string());
     }
     item.get("slug")
         .and_then(|v| v.as_str())
@@ -282,7 +295,25 @@ mod tests {
     }
 
     #[test]
-    fn favorite_item_api_id_from_slug_when_id_is_upc_numeric() {
+    fn favorite_item_api_id_from_numeric_id_string_when_upc() {
+        let item: serde_json::Value = serde_json::from_str(
+            r#"{
+                "id": "0191018548094",
+                "qobuz_id": 37158035,
+                "slug": "origo-regium-1993-1994-abigor",
+                "title": "Test"
+            }"#,
+        )
+        .unwrap();
+        assert!(favorite_item_matches_catalog(&item, 37158035));
+        assert_eq!(
+            favorite_item_album_api_id(&item).as_deref(),
+            Some("0191018548094")
+        );
+    }
+
+    #[test]
+    fn favorite_item_api_id_from_slug_when_id_is_json_number() {
         let item: serde_json::Value = serde_json::from_str(
             r#"{
                 "id": 3149020953969,

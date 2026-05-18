@@ -15,22 +15,39 @@ pub async fn resolve_album_api_id(
     catalog_id: u64,
     from_request: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
-    if let Some(id) = from_request.map(str::trim).filter(|s| !s.is_empty()) {
-        return Ok(Some(id.to_string()));
+    {
+        let guard = qobuz.lock().await;
+        if let Some(id) = resolve_from_qobuz_favorites(&**guard, catalog_id).await? {
+            return Ok(Some(id));
+        }
     }
 
     if let Some(meta) = favorites::album_meta(pool, catalog_id).await? {
         if let Some(id) = meta.slug.filter(|s| !s.trim().is_empty()) {
-            if id.parse::<u64>().ok() != Some(catalog_id) {
-                return Ok(Some(id));
+            let t = id.trim();
+            if t.chars().all(|c| c.is_ascii_digit()) {
+                return Ok(Some(t.to_string()));
+            }
+            if parse_album_ref(t).is_some() {
+                return Ok(Some(t.to_string()));
             }
         }
     }
 
-    let guard = qobuz.lock().await;
-    resolve_from_qobuz_favorites(&**guard, catalog_id)
-        .await
-        .map_err(Into::into)
+    if let Some(id) = from_request.map(str::trim).filter(|s| !s.is_empty()) {
+        return Ok(Some(id.to_string()));
+    }
+
+    Ok(None)
+}
+
+fn parse_album_ref(s: &str) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() || t.chars().all(|c| c.is_ascii_digit()) {
+        None
+    } else {
+        Some(t.to_string())
+    }
 }
 
 pub async fn resolve_album_api_id_for_state(
@@ -142,11 +159,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_prefers_explicit_request_id() {
+    async fn resolve_prefers_qobuz_favorites_over_explicit_slug_request() {
         let pool = pool().await;
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
-            catalog_lookup: Some((99, "from-qobuz".into())),
+            catalog_lookup: Some((99, "0191018548094".into())),
+        })));
+        let got = resolve_album_api_id(&pool, &qobuz, 99, Some("broken-slug"))
+            .await
+            .unwrap();
+        assert_eq!(got.as_deref(), Some("0191018548094"));
+    }
+
+    #[tokio::test]
+    async fn resolve_uses_explicit_request_when_no_other_source() {
+        let pool = pool().await;
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
+            Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
+            catalog_lookup: None,
         })));
         let got = resolve_album_api_id(&pool, &qobuz, 99, Some("from-request"))
             .await
@@ -155,19 +185,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolve_uses_local_favorite_slug_before_qobuz() {
+    async fn resolve_prefers_qobuz_favorites_over_local_slug() {
         let pool = pool().await;
-        favorites::upsert_album(&pool, 42, "Album", "Artist", Some("local-ref"), None)
+        favorites::upsert_album(&pool, 42, "Album", "Artist", Some("local-slug"), None)
             .await
             .unwrap();
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
-            catalog_lookup: Some((42, "qobuz-ref".into())),
+            catalog_lookup: Some((42, "0191018548094".into())),
         })));
         let got = resolve_album_api_id(&pool, &qobuz, 42, None)
             .await
             .unwrap();
-        assert_eq!(got.as_deref(), Some("local-ref"));
+        assert_eq!(got.as_deref(), Some("0191018548094"));
+    }
+
+    #[tokio::test]
+    async fn resolve_uses_local_upc_slug_when_qobuz_has_no_match() {
+        let pool = pool().await;
+        favorites::upsert_album(&pool, 42, "Album", "Artist", Some("0819224015406"), None)
+            .await
+            .unwrap();
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
+            Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
+            catalog_lookup: None,
+        })));
+        let got = resolve_album_api_id(&pool, &qobuz, 42, None)
+            .await
+            .unwrap();
+        assert_eq!(got.as_deref(), Some("0819224015406"));
     }
 
     #[tokio::test]

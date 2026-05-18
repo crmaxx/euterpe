@@ -22,9 +22,7 @@ fn album_fields(album: &AlbumSummary) -> (u64, String, String, Option<String>, O
                 .map(|a| a.name.clone())
         })
         .unwrap_or_default();
-    let album_api_id = album
-        .pick_album_api_id(album.id)
-        .unwrap_or_else(|| album.api_album_id());
+    let album_api_id = album.preferred_album_get_id();
     let cover_url = album.image.as_ref().and_then(|img| {
         img.thumbnail
             .clone()
@@ -197,6 +195,7 @@ mod tests {
             album_ref: None,
             slug: None,
             list_id: None,
+            product_id: None,
             genre: None,
             label: None,
         }
@@ -226,6 +225,7 @@ mod tests {
             album_ref: Some("zg7pv28g4mldg".into()),
             slug: Some("lutosawski-concertos-for-cello".into()),
             list_id: Some(3149020953969),
+            product_id: None,
             genre: None,
             label: None,
         };
