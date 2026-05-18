@@ -227,15 +227,17 @@ pub async fn patch_library_track_tags(
     tracks::update_metadata(
         &state.db,
         id,
-        &updated.title,
-        updated.track_number.map(|n| n as i32),
-        updated.year.map(|y| y as i32),
-        updated.disc_number.map(|d| d as i32),
-        updated
-            .genre
-            .as_deref()
-            .and_then(|g| if g.is_empty() { None } else { Some(g) }),
-        mtime.as_deref(),
+        tracks::TrackMetadataUpdate {
+            title: &updated.title,
+            track_number: updated.track_number.map(|n| n as i32),
+            year: updated.year.map(|y| y as i32),
+            disc_number: updated.disc_number.map(|d| d as i32),
+            genre: updated
+                .genre
+                .as_deref()
+                .and_then(|g| if g.is_empty() { None } else { Some(g) }),
+            file_mtime: mtime.as_deref(),
+        },
     )
     .await?;
 
