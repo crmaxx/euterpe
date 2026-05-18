@@ -1,7 +1,25 @@
+use serde_json::json;
 use sqlx::SqlitePool;
 
-use crate::api::{DownloadJob, DownloadJobStatus, DownloadJobType};
+use crate::api::keyset::{
+    decode_cursor, ensure_cursor_matches, finish_keyset_page, fingerprint_json, keyset_and_clause,
+};
+use crate::api::{DownloadJob, DownloadJobStatus, DownloadJobType, KeysetPage, SortKeyKind, SortKeyValue, SortOrder};
 use crate::error::ApiError;
+
+fn bind_sort_keys<'q, T>(
+    mut query: sqlx::query::QueryAs<'q, sqlx::Sqlite, T, sqlx::sqlite::SqliteArguments<'q>>,
+    binds: &'q [SortKeyValue],
+) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, T, sqlx::sqlite::SqliteArguments<'q>> {
+    for b in binds {
+        query = match b {
+            SortKeyValue::Text(s) => query.bind(s),
+            SortKeyValue::Int(n) => query.bind(n),
+            SortKeyValue::Bool(n) => query.bind(n),
+        };
+    }
+    query
+}
 use crate::services::download::DownloadJobPayload;
 
 #[derive(Debug, sqlx::FromRow)]
@@ -131,18 +149,143 @@ pub async fn get(pool: &SqlitePool, id: i64) -> Result<Option<DownloadJob>, ApiE
     row.map(|r| r.into_job()).transpose()
 }
 
-pub async fn list(pool: &SqlitePool, status: Option<DownloadJobStatus>) -> Result<Vec<DownloadJob>, ApiError> {
-    let rows: Vec<JobRow> = if let Some(s) = status {
-        sqlx::query_as("SELECT * FROM download_jobs WHERE status = ? ORDER BY id DESC")
-            .bind(s.as_str())
-            .fetch_all(pool)
-            .await?
-    } else {
-        sqlx::query_as("SELECT * FROM download_jobs ORDER BY id DESC")
-            .fetch_all(pool)
-            .await?
-    };
-    rows.into_iter().map(|r| r.into_job()).collect()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadsSort {
+    Id,
+    CreatedAt,
+    Status,
+}
+
+impl DownloadsSort {
+    pub fn parse(s: &str) -> Result<Self, ApiError> {
+        match s {
+            "id" => Ok(Self::Id),
+            "created_at" => Ok(Self::CreatedAt),
+            "status" => Ok(Self::Status),
+            _ => Err(ApiError::bad_request("sort must be id, created_at, or status")),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::CreatedAt => "created_at",
+            Self::Status => "status",
+        }
+    }
+
+    fn sort_sql(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::CreatedAt => "created_at",
+            Self::Status => "status",
+        }
+    }
+
+    fn key_kind(self) -> SortKeyKind {
+        match self {
+            Self::Id => SortKeyKind::Int,
+            _ => SortKeyKind::Text,
+        }
+    }
+
+    fn order_sql(self, order: SortOrder) -> String {
+        let dir = match order {
+            SortOrder::Asc => "ASC",
+            SortOrder::Desc => "DESC",
+        };
+        format!("{} {dir}, id ASC", self.sort_sql())
+    }
+
+    fn primary_key(self, row: &JobRow) -> SortKeyValue {
+        match self {
+            Self::Id => SortKeyValue::Int(row.id),
+            Self::CreatedAt => SortKeyValue::Text(row.created_at.clone()),
+            Self::Status => SortKeyValue::Text(row.status.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadsListParams {
+    pub sort: DownloadsSort,
+    pub order: SortOrder,
+    pub limit: u32,
+    pub status: Option<DownloadJobStatus>,
+    pub cursor: Option<String>,
+}
+
+pub async fn list_keyset(
+    pool: &SqlitePool,
+    params: DownloadsListParams,
+) -> Result<KeysetPage<DownloadJob>, ApiError> {
+    let fingerprint = fingerprint_json(&json!({
+        "status": params.status.map(|s| s.as_str()),
+    }));
+
+    let mut keyset_clause = String::new();
+    let mut keyset_binds: Vec<SortKeyValue> = Vec::new();
+    if let Some(ref cursor_str) = params.cursor {
+        let payload = decode_cursor(cursor_str)?;
+        let (primary, tie) = ensure_cursor_matches(
+            &payload,
+            params.sort.as_str(),
+            params.order,
+            &fingerprint,
+            params.sort.key_kind(),
+        )?;
+        let (clause, binds) = keyset_and_clause(
+            params.order,
+            params.sort.sort_sql(),
+            "id",
+            &primary,
+            tie,
+        );
+        keyset_clause = clause;
+        keyset_binds = binds;
+    }
+
+    let mut status_clause = String::new();
+    let status_bind: Option<String> = params.status.map(|s| s.as_str().to_string());
+
+    if status_bind.is_some() {
+        status_clause = " AND status = ?".to_string();
+    }
+
+    let fetch_limit = (params.limit as i64) + 1;
+    let order_by = params.sort.order_sql(params.order);
+    let sql = format!(
+        "SELECT * FROM download_jobs WHERE 1=1{status_clause} {keyset_clause} ORDER BY {order_by} LIMIT ?"
+    );
+
+    let mut query = sqlx::query_as::<_, JobRow>(&sql);
+    if let Some(ref st) = status_bind {
+        query = query.bind(st);
+    }
+    query = bind_sort_keys(query, &keyset_binds);
+    query = query.bind(fetch_limit);
+
+    let rows: Vec<JobRow> = query.fetch_all(pool).await?;
+    let sort = params.sort;
+    let page = finish_keyset_page(
+        rows,
+        params.limit as usize,
+        sort.as_str(),
+        params.order,
+        &fingerprint,
+        |r| (sort.primary_key(r), r.id),
+    );
+
+    let mut items = Vec::with_capacity(page.items.len());
+    for row in page.items {
+        items.push(row.into_job()?);
+    }
+
+    Ok(KeysetPage {
+        items,
+        next_cursor: page.next_cursor,
+        has_more: page.has_more,
+    })
 }
 
 pub async fn claim_running(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {

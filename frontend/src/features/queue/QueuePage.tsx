@@ -1,10 +1,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
-  queryKeys,
   useCancelDownload,
   useDownloads,
-  useFavorites,
+  useFavoritesFlat,
   usePurgeDownload,
   usePurgeFinishedDownloads,
 } from "@/api/hooks";
@@ -19,7 +18,7 @@ function isTerminalStatus(status: DownloadJob["status"]) {
 
 export function QueuePage() {
   const { data, isLoading } = useDownloads();
-  const { data: favorites } = useFavorites(0, 500);
+  const { items: favoriteItems } = useFavoritesFlat({ limit: 100 });
   const cancel = useCancelDownload();
   const purgeFinished = usePurgeFinishedDownloads();
   const purgeOne = usePurgeDownload();
@@ -28,16 +27,16 @@ export function QueuePage() {
 
   const titleByQobuzId = useMemo(() => {
     const map = new Map<number, string>();
-    for (const item of favorites?.items ?? []) {
+    for (const item of favoriteItems) {
       map.set(item.qobuz_id, `${item.artist_name} — ${item.title}`);
     }
     return map;
-  }, [favorites?.items]);
+  }, [favoriteItems]);
 
   useEffect(() => {
     const source = subscribeJobProgress((ev) => {
       setProgress((p) => ({ ...p, [ev.id]: ev.progress_pct }));
-      void qc.invalidateQueries({ queryKey: queryKeys.downloads });
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
     });
     return () => source.close();
   }, [qc]);

@@ -1,17 +1,22 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useLibraryAlbum,
-  useLibraryAlbums,
+  useLibraryAlbumsKeyset,
   useLibraryTrack,
   usePatchTrackTags,
   useScanLatest,
   useStartLibraryScan,
 } from "@/api/hooks";
-import type { LibraryTrackDetailResponse, LibraryTrackTagsPatchRequest } from "@/api/client";
+import type {
+  LibraryAlbumItem,
+  LibraryTrackDetailResponse,
+  LibraryTrackTagsPatchRequest,
+} from "@/api/client";
 import { LibraryAlbumCover } from "@/features/library/LibraryAlbumCover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { flattenKeysetPages } from "@/api/hooks/keyset";
 import { useToast } from "@/hooks/use-toast";
 
 function trackToTagForm(d: LibraryTrackDetailResponse): LibraryTrackTagsPatchRequest {
@@ -170,13 +175,26 @@ function TrackTagsEditorForm({
 
 export function LibraryPage() {
   const { toast } = useToast();
-  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [q, setQ] = useState("");
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
 
+  useEffect(() => {
+    const t = window.setTimeout(() => setQ(searchInput.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [searchInput]);
+
+  const listParams = useMemo(
+    () => ({ limit: 50, sort: "title" as const, order: "asc" as const, q: q || undefined }),
+    [q],
+  );
+
   const { data: scan } = useScanLatest();
   const startScan = useStartLibraryScan();
-  const { data: albums, isLoading } = useLibraryAlbums(0, 100, search);
+  const albumsQuery = useLibraryAlbumsKeyset(listParams);
+  const albumItems = flattenKeysetPages<LibraryAlbumItem>(albumsQuery.data);
+  const isLoading = albumsQuery.isLoading;
   const { data: albumDetail } = useLibraryAlbum(selectedAlbumId);
   const trackQuery = useLibraryTrack(editingTrackId);
   const patchTags = usePatchTrackTags();
@@ -229,8 +247,8 @@ export function LibraryPage() {
         <Label htmlFor="library-search">Search</Label>
         <Input
           id="library-search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
           placeholder="Title or artist"
         />
       </div>
@@ -238,13 +256,14 @@ export function LibraryPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">
-            Albums ({albums?.total ?? 0})
+            Albums ({albumItems.length}
+            {albumsQuery.hasNextPage ? "+" : ""})
           </div>
           {isLoading ? (
             <p className="p-4 text-sm text-muted-foreground">Loading…</p>
           ) : (
             <ul className="divide-y divide-border">
-              {(albums?.items ?? []).map((a) => (
+              {albumItems.map((a) => (
                 <li key={a.id}>
                   <button
                     type="button"
@@ -269,6 +288,18 @@ export function LibraryPage() {
               ))}
             </ul>
           )}
+          {albumsQuery.hasNextPage ? (
+            <div className="p-4">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={albumsQuery.isFetchingNextPage}
+                onClick={() => void albumsQuery.fetchNextPage()}
+              >
+                {albumsQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
+            </div>
+          ) : null}
         </section>
 
         <section className="rounded-lg border border-border">

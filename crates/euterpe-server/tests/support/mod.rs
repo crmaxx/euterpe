@@ -12,6 +12,8 @@ use tokio::sync::Mutex;
 pub struct MockQobuz {
     pub albums: Arc<Mutex<Vec<AlbumSummary>>>,
     pub fail_sync: bool,
+    /// Returned from `album_ref` when set.
+    pub album_ref_detail: Option<AlbumDetail>,
 }
 
 impl MockQobuz {
@@ -19,6 +21,15 @@ impl MockQobuz {
         Self {
             albums: Arc::new(Mutex::new(albums)),
             fail_sync: false,
+            album_ref_detail: None,
+        }
+    }
+
+    pub fn with_album_ref_detail(detail: AlbumDetail) -> Self {
+        Self {
+            albums: Arc::new(Mutex::new(vec![])),
+            fail_sync: false,
+            album_ref_detail: Some(detail),
         }
     }
 
@@ -87,7 +98,12 @@ impl QobuzApi for MockQobuz {
     }
 
     async fn album_ref(&self, _album_id: &str) -> Result<AlbumDetail, QobuzError> {
-        unimplemented!()
+        self.album_ref_detail
+            .clone()
+            .ok_or_else(|| QobuzError::NotFound {
+                endpoint: "album/get".into(),
+                message: "album_ref not configured in mock".into(),
+            })
     }
 
     async fn album_search(&self, _query: &str, _limit: u32) -> Result<Vec<AlbumSummary>, QobuzError> {

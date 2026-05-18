@@ -74,7 +74,98 @@ async fn library_scan_indexes_files() {
     assert_eq!(albums.status(), StatusCode::OK);
     let bytes = albums.into_body().collect().await.unwrap().to_bytes();
     let list: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(list["total"].as_i64().unwrap() >= 1);
+    assert!(list["items"].as_array().unwrap().len() >= 1);
+    assert_eq!(list["has_more"], false);
+}
+
+#[tokio::test]
+async fn library_albums_keyset_sort_and_search() {
+    let state = app::test_support::test_state().await;
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "Zed", None)
+            .await
+            .unwrap();
+    for (title, year) in [("Alpha", 2020), ("Beta", 2021), ("Gamma", 2019)] {
+        euterpe_server::db::albums::upsert(
+            &state.db,
+            euterpe_server::db::albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title,
+                year: Some(year),
+                qobuz_album_id: None,
+                path: None,
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let app = app::app(state);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?limit=2&sort=title&order=asc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &res.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+    assert_eq!(body["has_more"], true);
+    let cursor = body["next_cursor"].as_str().unwrap();
+
+    let page2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/library/albums?limit=2&sort=title&order=asc&cursor={cursor}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let p2: Value = serde_json::from_slice(
+        &page2.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(p2["items"][0]["title"], "Gamma");
+
+    let search = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?q=Bet&sort=title")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let s: Value = serde_json::from_slice(
+        &search.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(s["items"].as_array().unwrap().len(), 1);
+    assert_eq!(s["items"][0]["title"], "Beta");
+
+    let bad = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?sort=nope")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

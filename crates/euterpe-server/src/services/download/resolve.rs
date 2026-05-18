@@ -157,7 +157,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_uses_local_favorite_slug_before_qobuz() {
         let pool = pool().await;
-        favorites::upsert_album(&pool, 42, "Album", "Artist", Some("local-ref"))
+        favorites::upsert_album(&pool, 42, "Album", "Artist", Some("local-ref"), None)
             .await
             .unwrap();
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
