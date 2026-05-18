@@ -99,6 +99,12 @@ pub struct LibraryTrackDetailResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumCoverUploadResponse {
+    pub cover_path: String,
+    pub tracks_embedded: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryTrackTagsPatchRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,

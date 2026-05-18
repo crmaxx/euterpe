@@ -1,14 +1,14 @@
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use serde::Deserialize;
 
 use crate::api::{
-    LibraryAlbumDetailResponse, LibraryAlbumListResponse, LibraryScanLatestResponse,
-    LibraryScanStartResponse, LibraryScanRunSummary, LibraryTrackDetailResponse,
-    LibraryTrackItem, LibraryTrackTagsPatchRequest,
+    AlbumCoverUploadResponse, LibraryAlbumDetailResponse, LibraryAlbumListResponse,
+    LibraryScanLatestResponse, LibraryScanStartResponse, LibraryScanRunSummary,
+    LibraryTrackDetailResponse, LibraryTrackItem, LibraryTrackTagsPatchRequest,
 };
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
@@ -166,6 +166,39 @@ pub async fn get_library_album(
         year: album.year,
         cover_path,
         tracks: tracks_list,
+    }))
+}
+
+pub async fn put_library_album_cover(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<AlbumCoverUploadResponse>, ApiError> {
+    let album = albums::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("album not found".into()))?;
+    let album_rel = album
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ApiError::bad_request("album has no directory path on disk"))?;
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    let result = covers::write_album_cover_from_bytes(
+        &state.db,
+        &state.config.library_path,
+        id,
+        album_rel,
+        &body,
+        content_type,
+    )
+    .await?;
+    Ok(Json(AlbumCoverUploadResponse {
+        cover_path: result.cover_path,
+        tracks_embedded: result.tracks_embedded,
     }))
 }
 

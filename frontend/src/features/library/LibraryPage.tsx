@@ -6,12 +6,14 @@ import {
   usePatchTrackTags,
   useScanLatest,
   useStartLibraryScan,
+  useUploadLibraryAlbumCover,
 } from "@/api/hooks";
 import type {
   LibraryAlbumItem,
   LibraryTrackDetailResponse,
   LibraryTrackTagsPatchRequest,
 } from "@/api/client";
+import { MAX_ALBUM_COVER_BYTES } from "@/api/client";
 import { LibraryAlbumCover } from "@/features/library/LibraryAlbumCover";
 import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui/button";
@@ -22,6 +24,7 @@ import { TagAutofillBar } from "@/features/library/TagAutofillBar";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
+import { cn } from "@/lib/utils";
 
 function trackToTagForm(d: LibraryTrackDetailResponse): LibraryTrackTagsPatchRequest {
   return {
@@ -180,6 +183,9 @@ function TrackTagsEditorForm({
   );
 }
 
+const COVER_ACCEPT =
+  "image/jpeg,image/png,image/webp,image/bmp";
+
 export function LibraryPage() {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -188,6 +194,7 @@ export function LibraryPage() {
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
   const tagEditorSaveRef = useRef<(() => void) | null>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const t = window.setTimeout(() => setQ(searchInput.trim()), 300);
@@ -207,8 +214,46 @@ export function LibraryPage() {
   const { data: albumDetail } = useLibraryAlbum(selectedAlbumId);
   const trackQuery = useLibraryTrack(editingTrackId);
   const patchTags = usePatchTrackTags();
+  const uploadCover = useUploadLibraryAlbumCover();
 
   const scanRunning = scan?.run?.status === "running";
+
+  async function handleCoverFileSelected(
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || selectedAlbumId == null) return;
+    if (file.size > MAX_ALBUM_COVER_BYTES) {
+      toast({
+        title: "File too large",
+        description: "Cover image must be 20 MiB or smaller.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      const result = await uploadCover.mutateAsync({
+        albumId: selectedAlbumId,
+        file,
+      });
+      toast({
+        title: "Cover updated",
+        description:
+          result.tracks_embedded > 0
+            ? `Embedded in ${result.tracks_embedded} track(s).`
+            : undefined,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Unknown error";
+      toast({
+        title: "Cover upload failed",
+        description: message,
+        variant: "destructive",
+      });
+    }
+  }
 
   async function handleScan() {
     try {
@@ -341,11 +386,34 @@ export function LibraryPage() {
               </div>
             ) : (
               <div className="flex items-start gap-4">
-                <LibraryAlbumCover
-                  albumId={albumDetail.id}
-                  coverPath={albumDetail.cover_path}
-                  className="size-28 shrink-0 sm:size-32"
-                />
+                <label
+                  title="Replace cover"
+                  className={cn(
+                    "relative block shrink-0 cursor-pointer rounded-md transition hover:opacity-90",
+                    "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background",
+                    uploadCover.isPending && "pointer-events-none opacity-60",
+                  )}
+                >
+                  <LibraryAlbumCover
+                    albumId={albumDetail.id}
+                    coverPath={albumDetail.cover_path}
+                    className="size-28 sm:size-32"
+                  />
+                  <input
+                    ref={coverInputRef}
+                    type="file"
+                    accept={COVER_ACCEPT}
+                    className="sr-only"
+                    data-testid="album-cover-file-input"
+                    disabled={uploadCover.isPending}
+                    onChange={(ev) => void handleCoverFileSelected(ev)}
+                  />
+                  {uploadCover.isPending ? (
+                    <span className="absolute inset-0 flex items-center justify-center rounded-md bg-background/70 text-sm text-muted-foreground">
+                      …
+                    </span>
+                  ) : null}
+                </label>
                 <div className="flex min-w-0 flex-1 items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="text-sm font-medium">{albumDetail.title}</h3>

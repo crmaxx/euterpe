@@ -28,7 +28,8 @@ pub use qobuz::{
     QobuzTestLoginRequest, QobuzTestLoginResponse,
 };
 pub use library::{
-    LibraryAlbumDetailResponse, LibraryAlbumItem, LibraryAlbumListResponse,
+    AlbumCoverUploadResponse, LibraryAlbumDetailResponse, LibraryAlbumItem,
+    LibraryAlbumListResponse,
     LibraryScanLatestResponse, LibraryScanRunSummary, LibraryScanStartResponse,
     LibraryTrackDetailResponse, LibraryTrackItem, LibraryTrackTagsPatchRequest,
     ScanProgressEvent,

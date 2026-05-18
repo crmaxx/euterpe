@@ -165,6 +165,10 @@ export const handlers = [
     new HttpResponse(null, { status: 404 }),
   ),
 
+  http.put("/api/v1/library/albums/:id/cover", () =>
+    HttpResponse.json({ cover_path: "album/cover.jpg", tracks_embedded: 2 }),
+  ),
+
   http.get("/api/v1/library/albums/:id", ({ params }) =>
     HttpResponse.json({
       id: Number(params.id),

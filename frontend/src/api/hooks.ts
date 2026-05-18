@@ -12,6 +12,10 @@ import { ApiClientError } from "./errors";
 import type { KeysetListResponse } from "./keyset";
 import { flattenKeysetPages, useKeysetList } from "./hooks/keyset";
 import { getDefaultQuality } from "@/lib/quality";
+import {
+  fetchAlbumCoverBlobUrl,
+  revokeAlbumCoverBlobs,
+} from "@/features/library/albumCoverBlobCache";
 
 export type FavoritesListQuery = {
   limit?: number;
@@ -39,6 +43,8 @@ export const queryKeys = {
     ["libraryAlbums", params] as const,
   libraryAlbum: (id: number) => ["libraryAlbum", id] as const,
   libraryTrack: (id: number) => ["libraryTrack", id] as const,
+  albumCover: (albumId: number, coverPath: string) =>
+    ["albumCover", albumId, coverPath] as const,
   integrations: (type?: string) => ["integrations", type ?? "all"] as const,
   integrationsCatalog: (type?: string) =>
     ["integrationsCatalog", type ?? "all"] as const,
@@ -101,6 +107,37 @@ export function useStartLibraryScan() {
     mutationFn: api.startLibraryScan,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.scanLatest });
+      void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+    },
+  });
+}
+
+export function useAlbumCoverBlobUrl(
+  albumId: number,
+  coverPath?: string | null,
+) {
+  const path = coverPath?.trim() ?? "";
+  return useQuery({
+    queryKey: queryKeys.albumCover(albumId, path),
+    queryFn: ({ signal }) => fetchAlbumCoverBlobUrl(albumId, path, signal),
+    enabled: albumId > 0 && path.length > 0,
+    staleTime: Infinity,
+    gcTime: 60 * 60 * 1000,
+    retry: 2,
+  });
+}
+
+export function useUploadLibraryAlbumCover() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ albumId, file }: { albumId: number; file: File }) =>
+      api.uploadLibraryAlbumCover(albumId, file, file.type),
+    onSuccess: (_data, vars) => {
+      revokeAlbumCoverBlobs(vars.albumId);
+      void qc.invalidateQueries({ queryKey: ["albumCover", vars.albumId] });
+      void qc.invalidateQueries({
+        queryKey: queryKeys.libraryAlbum(vars.albumId),
+      });
       void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
     },
   });

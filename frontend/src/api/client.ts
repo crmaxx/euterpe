@@ -64,6 +64,11 @@ export type AlbumMetadataApplyRequest =
   components["schemas"]["AlbumMetadataApplyRequest"];
 export type AlbumMetadataApplyResponse =
   components["schemas"]["AlbumMetadataApplyResponse"];
+export type AlbumCoverUploadResponse =
+  components["schemas"]["AlbumCoverUploadResponse"];
+
+/** Max cover upload size (must match server `MAX_ALBUM_COVER_BYTES`). */
+export const MAX_ALBUM_COVER_BYTES = 20 * 1024 * 1024;
 
 const API_BASE = "/api/v1";
 
@@ -204,6 +209,17 @@ export const api = {
 
   libraryAlbum: (id: number) =>
     fetchJson<LibraryAlbumDetailResponse>(`/library/albums/${id}`),
+
+  uploadLibraryAlbumCover: (
+    albumId: number,
+    body: Blob,
+    contentType: string,
+  ) =>
+    fetchJson<AlbumCoverUploadResponse>(`/library/albums/${albumId}/cover`, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body,
+    }),
 
   libraryTrack: (id: number) =>
     fetchJson<LibraryTrackDetailResponse>(`/library/tracks/${id}`),

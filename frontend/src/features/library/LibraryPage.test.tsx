@@ -51,6 +51,17 @@ describe("LibraryPage", () => {
     expect(await screen.findAllByText("No cover")).toHaveLength(2);
   });
 
+  it("opens cover file picker when clicking album art", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /Local Album/i }),
+    );
+    const input = await screen.findByTestId("album-cover-file-input");
+    expect(input).toBeInTheDocument();
+    expect(screen.getByTitle("Replace cover")).toBeInTheDocument();
+  });
+
   it("does not save tags when opening the editor", async () => {
     let patchCount = 0;
     server.use(

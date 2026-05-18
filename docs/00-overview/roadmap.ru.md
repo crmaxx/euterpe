@@ -55,7 +55,7 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - `lofty` tag read/write (`PATCH /api/v1/library/tracks/{id}`)
 - Обложка **после скачивания с Qobuz:** файл **`cover.<ext>`** в каталоге альбома (расширение по MIME ответа) + embed во все треки (`covers.rs`, вызывается из download worker)
 - UI `/library`: rescan, список альбомов/треков, превью обложки (`GET /api/v1/library/albums/{id}/cover`, плейсхолдер **No cover**), редактор **текстовых** тегов трека
-- **Не в scope Phase 5:** загрузка/замена обложки **из приложения** — см. **FP-6** в [future-plans.ru.md](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui); вручную можно положить **`cover.<ext>`** на диск
+- Загрузка/замена обложки из UI — **FP-7** ✅; вручную по-прежнему можно положить **`cover.<ext>`** на диск
 - TDD: tag round-trip fixtures, `api_library`, Vitest
 
 ## Phase 6+ — Qobuz UX и future plans (будущее)
@@ -96,9 +96,9 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - Расширенные поля `album/get` (жанр, диск, лейбл, ISRC, composer) — FP-5d
 - См. [future-plans.ru.md — FP-5](future-plans.ru.md#fp-5--автопроставление-тегов-из-qobuz-при-скачивании)
 
-### FP-7 — Обложка альбома из UI
+### FP-7 — Обложка альбома из UI ✅
 
-- Upload/replace cover — [future-plans.ru.md — FP-6](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui)
+- `PUT /api/v1/library/albums/{id}/cover` + кнопка **Replace cover** в Library — [future-plans.ru.md — FP-6](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui)
 
 ### FP-8 — List API: keyset-пагинация ✅
 

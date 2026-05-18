@@ -77,20 +77,6 @@ EUTERPE_STATIC_DIR=frontend/dist cargo run -p euterpe-server
 | UI | Vite, React, Tailwind, TanStack Query/Table, shadcn/ui |
 | Deploy | Docker (`/data` + `/music` volumes) |
 
-## Future plans (short)
-
-Delivered work is Phases **0–5** ([roadmap](docs/00-overview/roadmap.ru.md)). Next ideas ([`future-plans.ru.md`](docs/00-overview/future-plans.ru.md)):
-
-1. **FP-1** — Qobuz OAuth in-app → encrypted token in DB (env stays fallback)
-2. **FP-2** — Multiple Qobuz accounts + active switcher for sync/favorites/downloads
-3. **FP-3** — Download queue: purge finished jobs + delete single history rows
-4. **FP-4** — Favorites table sort (title / artist / in library)
-5. **FP-5** — Metadata lookup from external catalogs (MusicBrainz, Discogs, …) → apply via `lofty`
-6. **FP-6** — Auto-write tags from Qobuz `album/get` right after each track download
-7. **FP-7** — Replace/upload album art from Library UI → `cover.<ext>` (MIME) + DB + re-embed in tracks
-
-Details: [docs/00-overview/future-plans.ru.md](docs/00-overview/future-plans.ru.md) (Russian; full context per FP).
-
 ## Qobuz authentication (2026)
 
 Link Qobuz **in the web UI** (Settings → Connect Qobuz). The server stores an encrypted UAT in SQLite (`qobuz_accounts`); **`EUTERPE_MASTER_KEY`** is required. **`EUTERPE_QOBUZ_USER_ID` / `EUTERPE_QOBUZ_AUTH_TOKEN` env vars are no longer used** (breaking change for older Docker setups).

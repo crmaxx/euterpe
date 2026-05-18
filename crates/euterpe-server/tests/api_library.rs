@@ -265,3 +265,178 @@ async fn library_album_cover_get_returns_file_bytes() {
         .unwrap();
     assert_eq!(no_path.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn library_album_cover_put_writes_file_and_updates_db() {
+    let state = app::test_support::test_state().await;
+    let lib = state.config.library_path.clone();
+    std::fs::create_dir_all(lib.join("PutArtist/PutAlbum")).unwrap();
+
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "PutArtist", None)
+            .await
+            .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "PutAlbum",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("PutArtist/PutAlbum"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let png = b"\x89PNG\r\n\x1a\n";
+    let app = app::app(state.clone());
+    let put = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/library/albums/{album_id}/cover"))
+                .header("content-type", "image/png")
+                .body(Body::from(png.to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put.status(), StatusCode::OK);
+    let json: serde_json::Value =
+        serde_json::from_slice(&http_body_util::BodyExt::collect(put.into_body()).await.unwrap().to_bytes()).unwrap();
+    assert_eq!(json["cover_path"], "PutArtist/PutAlbum/cover.png");
+
+    assert!(lib.join("PutArtist/PutAlbum/cover.png").is_file());
+    let row = euterpe_server::db::albums::get_by_id(&state.db, album_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.cover_path.as_deref(), Some("PutArtist/PutAlbum/cover.png"));
+
+    let get = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/library/albums/{album_id}/cover"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(get.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn library_album_cover_put_rejects_missing_album_path() {
+    let state = app::test_support::test_state().await;
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "NoPath", None)
+            .await
+            .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Ghost",
+            year: None,
+            qobuz_album_id: None,
+            path: None,
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/library/albums/{album_id}/cover"))
+                .header("content-type", "image/jpeg")
+                .body(Body::from(vec![0xff, 0xd8, 0xff]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn library_album_cover_put_rejects_unsupported_content_type() {
+    let state = app::test_support::test_state().await;
+    let lib = state.config.library_path.clone();
+    std::fs::create_dir_all(lib.join("TxtArtist/TxtAlbum")).unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "TxtArtist", None)
+            .await
+            .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "TxtAlbum",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("TxtArtist/TxtAlbum"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/library/albums/{album_id}/cover"))
+                .header("content-type", "text/plain")
+                .body(Body::from(b"hello".to_vec()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn library_album_cover_put_rejects_oversized_body() {
+    let state = app::test_support::test_state().await;
+    let lib = state.config.library_path.clone();
+    std::fs::create_dir_all(lib.join("BigArtist/BigAlbum")).unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "BigArtist", None)
+            .await
+            .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "BigAlbum",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("BigArtist/BigAlbum"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let oversized = vec![0u8; euterpe_server::library::covers::MAX_ALBUM_COVER_BYTES + 1];
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/api/v1/library/albums/{album_id}/cover"))
+                .header("content-type", "image/jpeg")
+                .body(Body::from(oversized))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}

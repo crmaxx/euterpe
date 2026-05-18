@@ -1,6 +1,11 @@
+use std::borrow::Cow;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use euterpe_qobuz::Image;
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
+use image::{DynamicImage, GenericImageView, ImageReader};
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::MimeType;
@@ -8,11 +13,27 @@ use lofty::read_from_path;
 use reqwest::Client;
 use reqwest::header::CONTENT_TYPE;
 
-use crate::db::albums;
+use crate::db::{albums, tracks};
 use crate::error::ApiError;
 use crate::library::paths::track_path;
 use crate::library::tags;
 use euterpe_qobuz::{AlbumDetail, Quality};
+
+/// Maximum uploaded album cover size (20 MiB).
+pub const MAX_ALBUM_COVER_BYTES: usize = 20 * 1024 * 1024;
+
+/// Max embedded cover file size (matches qobuz-dl-go `embedMaxSize`).
+pub const EMBED_MAX_COVER_BYTES: usize = 2 * 1024 * 1024;
+/// Max width/height for embedded cover (matches qobuz-dl-go `embedMaxDim`).
+pub const EMBED_MAX_COVER_DIMENSION: u32 = 1600;
+const EMBED_MIN_JPEG_QUALITY: u8 = 60;
+const EMBED_JPEG_QUALITIES: [u8; 5] = [95, 85, 75, 65, EMBED_MIN_JPEG_QUALITY];
+
+#[derive(Debug, Clone)]
+pub struct WriteAlbumCoverResult {
+    pub cover_path: String,
+    pub tracks_embedded: u32,
+}
 
 /// Strip `; charset=...` and trim from `Content-Type`.
 fn primary_mime_from_header(raw: &str) -> String {
@@ -48,8 +69,36 @@ pub fn detect_cover_mime_type(content_type: Option<&str>, bytes: &[u8]) -> MimeT
     if bytes.len() >= 6 && (&bytes[0..6] == b"GIF87a" || &bytes[0..6] == b"GIF89a") {
         return MimeType::Gif;
     }
+    if bytes.len() >= 2 && bytes[0] == b'B' && bytes[1] == b'M' {
+        return MimeType::Bmp;
+    }
 
     MimeType::Jpeg
+}
+
+fn validate_upload_content_type_header(content_type: Option<&str>) -> Result<(), ApiError> {
+    let Some(raw) = content_type.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let primary = primary_mime_from_header(raw);
+    let ok = matches!(
+        primary.as_str(),
+        "image/jpeg" | "image/jpg" | "image/png" | "image/webp" | "image/bmp"
+    );
+    if ok {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request("unsupported cover image type"))
+    }
+}
+
+/// MIME types accepted for `PUT …/albums/{id}/cover` (no GIF).
+pub fn is_allowed_upload_cover_mime(mime: &MimeType) -> bool {
+    match mime {
+        MimeType::Jpeg | MimeType::Png | MimeType::Bmp => true,
+        MimeType::Unknown(s) if s.eq_ignore_ascii_case("image/webp") => true,
+        _ => false,
+    }
 }
 
 fn cover_file_extension(mime: &MimeType) -> &'static str {
@@ -135,7 +184,7 @@ pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Opt
         "cover.jpeg",
         "cover.png",
         "cover.webp",
-        "cover.gif",
+        "cover.bmp",
         "folder.jpg",
     ];
     for name in PREFERRED {
@@ -215,8 +264,66 @@ pub fn image_content_type(path: &Path) -> &'static str {
         Some("png") => "image/png",
         Some("jpg") | Some("jpeg") => "image/jpeg",
         Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
         _ => "application/octet-stream",
     }
+}
+
+/// Write `cover.<ext>` under the album directory, update DB, embed in all album tracks.
+pub async fn write_album_cover_from_bytes(
+    pool: &sqlx::SqlitePool,
+    library_root: &Path,
+    album_id: i64,
+    album_rel: &str,
+    bytes: &[u8],
+    content_type: Option<&str>,
+) -> Result<WriteAlbumCoverResult, ApiError> {
+    if bytes.is_empty() {
+        return Err(ApiError::bad_request("cover image is empty"));
+    }
+    if bytes.len() > MAX_ALBUM_COVER_BYTES {
+        return Err(ApiError::payload_too_large(format!(
+            "cover image exceeds {} bytes",
+            MAX_ALBUM_COVER_BYTES
+        )));
+    }
+    validate_upload_content_type_header(content_type)?;
+    let mime = detect_cover_mime_type(content_type, bytes);
+    if !is_allowed_upload_cover_mime(&mime) {
+        return Err(ApiError::bad_request("unsupported cover image type"));
+    }
+    let album_rel = album_rel.trim().replace('\\', "/");
+    if album_rel.is_empty() || album_rel.split('/').any(|c| c == ".." || c.is_empty()) {
+        return Err(ApiError::bad_request("invalid album path"));
+    }
+    let album_dir = library_root.join(&album_rel);
+    if !album_dir.is_dir() {
+        return Err(ApiError::bad_request("album directory not found on disk"));
+    }
+
+    remove_previous_album_cover_files(&album_dir).await?;
+    let ext = cover_file_extension(&mime);
+    let rel_cover = format!("{album_rel}/cover.{ext}");
+    let cover_file = album_dir.join(format!("cover.{ext}"));
+    tokio::fs::write(&cover_file, bytes)
+        .await
+        .map_err(|e| ApiError::Message(e.to_string()))?;
+    albums::set_cover_path(pool, album_id, &rel_cover).await?;
+
+    let mut tracks_embedded = 0u32;
+    let track_rows = tracks::list_by_album(pool, album_id).await?;
+    for t in track_rows {
+        let fp = library_root.join(&t.path);
+        if fp.is_file() {
+            embed_cover_in_track(&fp, bytes, &mime)?;
+            tracks_embedded += 1;
+        }
+    }
+
+    Ok(WriteAlbumCoverResult {
+        cover_path: rel_cover,
+        tracks_embedded,
+    })
 }
 
 pub fn cover_url(image: &Image) -> Option<&str> {
@@ -265,6 +372,61 @@ pub async fn download_album_cover(
     Ok((cover_path, mime))
 }
 
+/// Optimize cover bytes for ID3/Vorbis picture embedding (resize if >2 MiB and large;
+/// re-encode as JPEG with decreasing quality). Mirrors qobuz-dl-go `optimizeCoverForEmbed`.
+pub fn optimize_cover_for_embed(data: &[u8]) -> Cow<'_, [u8]> {
+    if data.len() <= EMBED_MAX_COVER_BYTES {
+        return Cow::Borrowed(data);
+    }
+
+    let Ok(img) = ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|_| ())
+        .and_then(|r| r.decode().map_err(|_| ()))
+    else {
+        return Cow::Borrowed(data);
+    };
+
+    let mut img = img;
+    if img.width() > EMBED_MAX_COVER_DIMENSION || img.height() > EMBED_MAX_COVER_DIMENSION {
+        img = resize_cover_image(img, EMBED_MAX_COVER_DIMENSION);
+    }
+
+    let mut last = None;
+    for quality in EMBED_JPEG_QUALITIES {
+        if let Some(bytes) = encode_cover_jpeg(&img, quality) {
+            if bytes.len() <= EMBED_MAX_COVER_BYTES {
+                return Cow::Owned(bytes);
+            }
+            last = Some(bytes);
+        } else {
+            return Cow::Borrowed(data);
+        }
+    }
+
+    Cow::Owned(last.unwrap_or_else(|| data.to_vec()))
+}
+
+fn resize_cover_image(img: DynamicImage, max_dim: u32) -> DynamicImage {
+    let (width, height) = img.dimensions();
+    let (new_width, new_height) = if width > height {
+        (max_dim, height * max_dim / width)
+    } else {
+        (width * max_dim / height, max_dim)
+    };
+    img.resize_exact(new_width, new_height, FilterType::CatmullRom)
+}
+
+fn encode_cover_jpeg(img: &DynamicImage, quality: u8) -> Option<Vec<u8>> {
+    let rgb = img.to_rgb8();
+    let (w, h) = rgb.dimensions();
+    let mut buf = Vec::new();
+    let mut enc = JpegEncoder::new_with_quality(&mut buf, quality);
+    enc.encode(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8)
+        .ok()?;
+    Some(buf)
+}
+
 pub fn embed_cover_in_track(
     track_file: &Path,
     cover_bytes: &[u8],
@@ -273,6 +435,11 @@ pub fn embed_cover_in_track(
     if !tags::is_audio_file(track_file) {
         return Ok(());
     }
+    let embed_bytes = optimize_cover_for_embed(cover_bytes);
+    let embed_mime = match &embed_bytes {
+        Cow::Borrowed(_) => mime.clone(),
+        Cow::Owned(_) => MimeType::Jpeg,
+    };
     let mut tagged = read_from_path(track_file)
         .map_err(|e| ApiError::Message(format!("read {}: {e}", track_file.display())))?;
     let tag_type = tagged.primary_tag_type();
@@ -282,9 +449,9 @@ pub fn embed_cover_in_track(
         .unwrap_or_else(|| lofty::tag::Tag::new(tag_type));
     let picture = lofty::picture::Picture::new_unchecked(
         lofty::picture::PictureType::CoverFront,
-        Some(mime.clone()),
+        Some(embed_mime),
         None,
-        cover_bytes.to_vec(),
+        embed_bytes.into_owned(),
     );
     tag.set_picture(0, picture);
     tagged.insert_tag(tag);
@@ -340,6 +507,45 @@ pub async fn apply_album_cover_after_download(
 }
 
 #[cfg(test)]
+mod embed_tests {
+    use super::*;
+    use image::{ImageBuffer, Rgb};
+
+    #[test]
+    fn optimize_leaves_small_png_unchanged() {
+        let img = ImageBuffer::from_fn(32, 32, |x, y| Rgb([x as u8, y as u8, 128]));
+        let mut buf = Vec::new();
+        img.write_to(
+            &mut Cursor::new(&mut buf),
+            image::ImageFormat::Png,
+        )
+        .unwrap();
+        assert!(buf.len() <= EMBED_MAX_COVER_BYTES);
+        let out = optimize_cover_for_embed(&buf);
+        assert!(matches!(out, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn optimize_shrinks_oversized_jpeg() {
+        // High-frequency noise compresses poorly; keeps JPEG >2 MiB at q95.
+        let img = ImageBuffer::from_fn(3200, 3200, |x, y| {
+            Rgb([((x * 17 + y * 31) % 256) as u8, ((x + y * 7) % 256) as u8, ((x ^ y) % 256) as u8])
+        });
+        let dynamic = DynamicImage::ImageRgb8(img);
+        let rgb = dynamic.to_rgb8();
+        let (w, h) = rgb.dimensions();
+        let mut buf = Vec::new();
+        JpegEncoder::new_with_quality(&mut buf, 95)
+            .encode(rgb.as_raw(), w, h, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        assert!(buf.len() > EMBED_MAX_COVER_BYTES);
+        let out = optimize_cover_for_embed(&buf);
+        assert!(matches!(out, Cow::Owned(_)));
+        assert!(out.len() <= EMBED_MAX_COVER_BYTES);
+    }
+}
+
+#[cfg(test)]
 mod mime_tests {
     use super::*;
 
@@ -357,6 +563,23 @@ mod mime_tests {
         let mime = detect_cover_mime_type(None, &b);
         assert!(matches!(mime, MimeType::Png));
         assert_eq!(cover_file_extension(&mime), "png");
+    }
+
+    #[test]
+    fn detect_bmp_from_magic() {
+        let mut b = b"BM".to_vec();
+        b.extend_from_slice(&[0u8; 20]);
+        let mime = detect_cover_mime_type(None, &b);
+        assert!(matches!(mime, MimeType::Bmp));
+        assert!(is_allowed_upload_cover_mime(&mime));
+    }
+
+    #[test]
+    fn gif_detected_but_not_allowed_for_upload() {
+        let b = b"GIF89a";
+        let mime = detect_cover_mime_type(None, b);
+        assert!(matches!(mime, MimeType::Gif));
+        assert!(!is_allowed_upload_cover_mime(&mime));
     }
 
     #[test]
@@ -391,6 +614,47 @@ mod path_tests {
     fn resolve_rejects_double_dot() {
         let dir = tempfile::TempDir::new().unwrap();
         assert!(resolve_library_relative_file(dir.path(), "a/../b.jpg").is_err());
+    }
+
+    #[tokio::test]
+    async fn write_album_cover_from_bytes_updates_db_and_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        let album_path = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album_path).unwrap();
+        let artist_id = crate::db::artists::upsert_by_name(&pool, "Artist", None)
+            .await
+            .unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("Artist/Album"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let png = b"\x89PNG\r\n\x1a\n".to_vec();
+        let result = write_album_cover_from_bytes(
+            &pool,
+            dir.path(),
+            album_id,
+            "Artist/Album",
+            &png,
+            Some("image/png"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.cover_path, "Artist/Album/cover.png");
+        assert!(album_path.join("cover.png").is_file());
+        let row = albums::get_by_id(&pool, album_id).await.unwrap().unwrap();
+        assert_eq!(row.cover_path.as_deref(), Some("Artist/Album/cover.png"));
     }
 
     #[test]

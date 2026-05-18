@@ -12,7 +12,10 @@ use axum::{Json, Router};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
+
+use crate::library::covers::MAX_ALBUM_COVER_BYTES;
 use tracing::Level;
 
 use crate::api::{
@@ -82,8 +85,9 @@ pub fn app(state: AppState) -> Router {
         )
         .route(
             "/api/v1/library/albums/{id}/cover",
-            get(library::get_library_album_cover),
+            get(library::get_library_album_cover).put(library::put_library_album_cover),
         )
+        .layer(RequestBodyLimitLayer::new(MAX_ALBUM_COVER_BYTES))
         .route(
             "/api/v1/library/tracks/{id}",
             get(library::get_library_track).patch(library::patch_library_track_tags),

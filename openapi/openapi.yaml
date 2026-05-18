@@ -654,8 +654,67 @@ paths:
               schema:
                 type: string
                 format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
         "404":
           $ref: "#/components/responses/NotFound"
+    put:
+      operationId: putLibraryAlbumCover
+      tags: [Library]
+      summary: Upload or replace album cover image
+      description: |
+        Writes `cover.<ext>` under the album directory (from `albums.path`), updates
+        `albums.cover_path`, and embeds the image in all audio files of the album.
+        Maximum body size 20 MiB. Supported types JPEG, PNG, WebP, BMP.
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/webp:
+            schema:
+              type: string
+              format: binary
+          image/bmp:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Cover saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumCoverUploadResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: Cover image exceeds size limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/library/tracks/{id}:
     get:
@@ -1494,6 +1553,19 @@ components:
           type: string
         duration_sec:
           type: ["integer", "null"]
+
+    AlbumCoverUploadResponse:
+      type: object
+      required: [cover_path, tracks_embedded]
+      additionalProperties: false
+      properties:
+        cover_path:
+          type: string
+          description: Library-relative path to the cover file
+        tracks_embedded:
+          type: integer
+          minimum: 0
+          description: Number of track files that received embedded cover art
 
     LibraryTrackTagsPatchRequest:
       type: object

@@ -7,7 +7,7 @@ use crate::config::AppConfig;
 use crate::db::{albums, artists, tracks};
 use crate::error::ApiError;
 use crate::integrations::types::{AlbumLookupContext, AlbumLookupTrack, AlbumMetadataRelease};
-use crate::library::covers::{self, detect_cover_mime_type};
+use crate::library::covers;
 use crate::library::paths::library_path_hints;
 use crate::library::tags::{self, apply_patch, TrackTagsPatch};
 
@@ -255,7 +255,7 @@ async fn apply_cover(
     http: &Client,
     pool: &SqlitePool,
     config: &AppConfig,
-    album_dir: &Path,
+    _album_dir: &Path,
     album_rel: &str,
     album_id: i64,
     url: &str,
@@ -276,38 +276,15 @@ async fn apply_cover(
         .bytes()
         .await
         .map_err(|e| ApiError::Message(e.to_string()))?;
-    let mime = detect_cover_mime_type(content_type.as_deref(), &bytes);
-    let ext = match mime {
-        lofty::picture::MimeType::Png => "png",
-        lofty::picture::MimeType::Gif => "gif",
-        _ => "jpg",
-    };
-    let mut entries = tokio::fs::read_dir(&album_dir)
-        .await
-        .map_err(|e| ApiError::Message(e.to_string()))?;
-    while let Some(entry) = entries
-        .next_entry()
-        .await
-        .map_err(|e| ApiError::Message(e.to_string()))?
-    {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == "folder.jpg" || (name.starts_with("cover.") && name.len() > "cover.".len()) {
-            let _ = tokio::fs::remove_file(entry.path()).await;
-        }
-    }
-    let rel_cover = format!("{album_rel}/cover.{ext}");
-    let cover_path = album_dir.join(format!("cover.{ext}"));
-    tokio::fs::write(&cover_path, &bytes)
-        .await
-        .map_err(|e| ApiError::Message(e.to_string()))?;
-    albums::set_cover_path(pool, album_id, &rel_cover).await?;
-    let track_rows = tracks::list_by_album(pool, album_id).await?;
-    for t in track_rows {
-        let fp = config.library_path.join(&t.path);
-        if fp.is_file() {
-            let _ = covers::embed_cover_in_track(&fp, &bytes, &mime);
-        }
-    }
+    covers::write_album_cover_from_bytes(
+        pool,
+        &config.library_path,
+        album_id,
+        album_rel,
+        &bytes,
+        content_type.as_deref(),
+    )
+    .await?;
     Ok(())
 }
 
