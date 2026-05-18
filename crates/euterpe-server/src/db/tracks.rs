@@ -32,6 +32,16 @@ pub struct TrackUpsert<'a> {
     pub file_hash: Option<&'a str>,
 }
 
+/// Fields updated by `update_metadata` (library tag PATCH → DB row).
+pub struct TrackMetadataUpdate<'a> {
+    pub title: &'a str,
+    pub track_number: Option<i32>,
+    pub year: Option<i32>,
+    pub disc_number: Option<i32>,
+    pub genre: Option<&'a str>,
+    pub file_mtime: Option<&'a str>,
+}
+
 pub async fn upsert(pool: &SqlitePool, track: TrackUpsert<'_>) -> Result<i64, ApiError> {
     let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM tracks WHERE path = ?")
         .bind(track.path)
@@ -123,12 +133,7 @@ pub async fn list_by_album(pool: &SqlitePool, album_id: i64) -> Result<Vec<Track
 pub async fn update_metadata(
     pool: &SqlitePool,
     id: i64,
-    title: &str,
-    track_number: Option<i32>,
-    year: Option<i32>,
-    disc_number: Option<i32>,
-    genre: Option<&str>,
-    file_mtime: Option<&str>,
+    meta: TrackMetadataUpdate<'_>,
 ) -> Result<(), ApiError> {
     let n = sqlx::query(
         r#"
@@ -138,12 +143,12 @@ pub async fn update_metadata(
         WHERE id = ?
         "#,
     )
-    .bind(title)
-    .bind(track_number)
-    .bind(year)
-    .bind(disc_number)
-    .bind(genre)
-    .bind(file_mtime)
+    .bind(meta.title)
+    .bind(meta.track_number)
+    .bind(meta.year)
+    .bind(meta.disc_number)
+    .bind(meta.genre)
+    .bind(meta.file_mtime)
     .bind(id)
     .execute(pool)
     .await?
