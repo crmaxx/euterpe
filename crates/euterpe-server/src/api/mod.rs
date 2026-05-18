@@ -1,6 +1,7 @@
 mod downloads;
 mod health;
 mod qobuz;
+mod server;
 
 pub use downloads::{
     CreateDownloadRequest, CreateDownloadResponse, DownloadJob, DownloadJobListResponse,
@@ -9,5 +10,7 @@ pub use downloads::{
 pub use health::{ErrorBody, ErrorResponse, HealthResponse};
 pub use qobuz::{
     QobuzFavoriteItem, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest,
-    QobuzSyncResponse, QobuzTestLoginRequest, QobuzTestLoginResponse,
+    QobuzSyncLatestResponse, QobuzSyncResponse, QobuzSyncRunSummary, QobuzTestLoginRequest,
+    QobuzTestLoginResponse,
 };
+pub use server::ServerInfoResponse;

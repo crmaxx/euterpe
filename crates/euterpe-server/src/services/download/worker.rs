@@ -567,6 +567,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
+            static_dir: std::path::PathBuf::new(),
         });
 
         let album_for_assert = album.clone();
@@ -676,6 +677,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
+            static_dir: std::path::PathBuf::new(),
         });
 
         let deps = WorkerDeps {
@@ -766,6 +768,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
+            static_dir: std::path::PathBuf::new(),
         });
 
         let deps = WorkerDeps {
@@ -850,6 +853,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             dev_verbose: false,
+            static_dir: std::path::PathBuf::new(),
         });
 
         let deps = WorkerDeps {

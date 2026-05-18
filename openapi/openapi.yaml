@@ -39,6 +39,36 @@ paths:
               schema:
                 type: object
 
+  /api/v1/server/info:
+    get:
+      operationId: getServerInfo
+      tags: [Server]
+      summary: Server configuration snapshot (no secrets)
+      security: []
+      responses:
+        "200":
+          description: Server info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfoResponse"
+
+  /api/v1/qobuz/sync/latest:
+    get:
+      operationId: getQobuzSyncLatest
+      tags: [Qobuz]
+      summary: Most recent favorites sync run
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Latest sync run or null if none
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzSyncLatestResponse"
+
   /api/v1/qobuz/test-login:
     post:
       operationId: qobuzTestLogin
@@ -394,6 +424,61 @@ components:
         removed:
           type: integer
           minimum: 0
+
+    ServerInfoResponse:
+      type: object
+      required:
+        - version
+        - library_path
+        - credentials_configured
+        - admin_auth_required
+      additionalProperties: false
+      properties:
+        version:
+          type: string
+        library_path:
+          type: string
+        credentials_configured:
+          type: boolean
+        admin_auth_required:
+          type: boolean
+
+    QobuzSyncRunSummary:
+      type: object
+      required: [id, status, started_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [running, success, failed]
+        started_at:
+          type: string
+        finished_at:
+          type: ["string", "null"]
+        albums_total:
+          type: integer
+          minimum: 0
+        albums_added:
+          type: integer
+          minimum: 0
+        albums_removed:
+          type: integer
+          minimum: 0
+        error_message:
+          type: ["string", "null"]
+
+    QobuzSyncLatestResponse:
+      type: object
+      required: [run]
+      additionalProperties: false
+      properties:
+        run:
+          oneOf:
+            - $ref: "#/components/schemas/QobuzSyncRunSummary"
+            - type: "null"
 
     QobuzFavoriteItem:
       type: object

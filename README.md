@@ -13,6 +13,49 @@ Named after the muse of music and lyric poetry, daughter of Mnemosyne.
 
 All implementation follows **strict Test-Driven Development (TDD)** — see [ADR 0004](docs/adr/0004-test-driven-development.md).
 
+### One-time setup
+
+```bash
+make prepare   # macOS: brew install overmind (if missing)
+cp .env.example .env   # optional: Qobuz credentials and paths
+```
+
+### Backend + frontend (recommended)
+
+Uses [Overmind](https://github.com/DarthSim/overmind) and the root [`Procfile`](Procfile):
+
+```bash
+make dev
+# API:  http://127.0.0.1:8080
+# UI:   http://127.0.0.1:5173  (Vite proxies /api → backend)
+
+make dev-stop          # or Ctrl+C in the overmind terminal
+overmind connect backend
+overmind connect frontend
+```
+
+### Backend only
+
+```bash
+make backend
+# or: cargo run -p euterpe-server
+```
+
+### Frontend only
+
+```bash
+make frontend
+# install → generate:api → dev (http://127.0.0.1:5173)
+```
+
+With a production build, the server serves the SPA from `frontend/dist` (or `EUTERPE_STATIC_DIR`):
+
+```bash
+cd frontend && npm run build
+EUTERPE_STATIC_DIR=frontend/dist cargo run -p euterpe-server
+# http://127.0.0.1:8080
+```
+
 ## Stack
 
 | Layer | Technology |
@@ -24,11 +67,11 @@ All implementation follows **strict Test-Driven Development (TDD)** — see [ADR
 
 ## Roadmap (short)
 
-1. **Phase 0** — Documentation (current)
+1. **Phase 0** — Documentation
 2. **Phase 1** — `euterpe-qobuz` library (TDD)
 3. **Phase 2** — Axum + SQLite + favorites sync API
 4. **Phase 3** — Download jobs + SSE
-5. **Phase 4** — React UI
+5. **Phase 4** — React UI ✅
 6. **Phase 5** — Tags, covers, library rescan
 
 Details: [docs/00-overview/roadmap.ru.md](docs/00-overview/roadmap.ru.md)

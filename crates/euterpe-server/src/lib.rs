@@ -13,6 +13,7 @@ pub mod openapi;
 pub mod routes;
 pub mod services;
 pub mod state;
+mod static_files;
 
 pub use app::{app, serve, test_support};
 pub use config::AppConfig;

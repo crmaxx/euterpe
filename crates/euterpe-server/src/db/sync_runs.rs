@@ -1,6 +1,48 @@
 use sqlx::SqlitePool;
 
+use crate::api::QobuzSyncRunSummary;
 use crate::error::ApiError;
+
+#[derive(Debug, sqlx::FromRow)]
+struct SyncRunRow {
+    id: i64,
+    status: String,
+    started_at: String,
+    finished_at: Option<String>,
+    albums_total: Option<i64>,
+    albums_added: Option<i64>,
+    albums_removed: Option<i64>,
+    error_message: Option<String>,
+}
+
+impl From<SyncRunRow> for QobuzSyncRunSummary {
+    fn from(row: SyncRunRow) -> Self {
+        Self {
+            id: row.id,
+            status: row.status,
+            started_at: row.started_at,
+            finished_at: row.finished_at,
+            albums_total: row.albums_total,
+            albums_added: row.albums_added,
+            albums_removed: row.albums_removed,
+            error_message: row.error_message,
+        }
+    }
+}
+
+pub async fn latest(pool: &SqlitePool) -> Result<Option<QobuzSyncRunSummary>, ApiError> {
+    let row: Option<SyncRunRow> = sqlx::query_as(
+        r#"
+        SELECT id, status, started_at, finished_at, albums_total, albums_added, albums_removed, error_message
+        FROM qobuz_sync_runs
+        ORDER BY id DESC
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(Into::into))
+}
 
 pub async fn start(pool: &SqlitePool) -> Result<i64, ApiError> {
     let result = sqlx::query(
