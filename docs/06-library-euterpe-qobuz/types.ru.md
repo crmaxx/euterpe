@@ -21,10 +21,14 @@ pub struct UserProfile {
 pub struct AlbumSummary {
     pub id: u64,
     pub title: String,
-    pub artists: Vec<ArtistRef>,
+    pub artist: Option<ArtistRef>,
+    pub artists: Option<Vec<ArtistRef>>,
     pub image: Option<Image>,
     pub release_date_original: Option<String>,
-    pub hires: bool,
+    pub hires: Option<bool>,
+    pub genre: Option<GenreRef>,
+    pub label: Option<LabelRef>,
+    // album_ref, slug, qobuz_id, list_id — см. исходники
 }
 ```
 
@@ -49,6 +53,10 @@ pub struct TrackSummary {
     pub duration: Option<u32>,
     pub performer: Option<ArtistRef>,
     pub hires_streamable: Option<bool>,
+    pub media_number: Option<u32>,  // disc
+    pub genre: Option<GenreRef>,
+    pub isrc: Option<String>,
+    pub composer: Option<ArtistRef>,
 }
 ```
 

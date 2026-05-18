@@ -1,0 +1,30 @@
+{
+  "id": 5001,
+  "title": "Rich Album",
+  "artist": { "id": 10, "name": "Album Artist" },
+  "genre": { "id": 112, "name": "Classical" },
+  "label": { "id": 200, "name": "Test Label" },
+  "release_date_original": "2019-06-01",
+  "tracks": {
+    "items": [
+      {
+        "id": 9001,
+        "title": "Movement I",
+        "track_number": 1,
+        "media_number": 1,
+        "duration": 240,
+        "genre": { "name": "Orchestral" },
+        "isrc": "XX-XXX-19-00001",
+        "composer": { "id": 11, "name": "Composer Name" },
+        "performer": { "id": 12, "name": "Soloist" }
+      },
+      {
+        "id": 9002,
+        "title": "Movement II",
+        "track_number": 2,
+        "media_number": 2,
+        "duration": 180
+      }
+    ]
+  }
+}

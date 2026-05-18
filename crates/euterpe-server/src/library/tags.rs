@@ -20,6 +20,9 @@ pub struct TrackTags {
     pub duration_sec: Option<u32>,
     pub qobuz_track_id: Option<u64>,
     pub qobuz_album_id: Option<u64>,
+    pub label: Option<String>,
+    pub isrc: Option<String>,
+    pub composer: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -95,6 +98,9 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
 
     let duration_sec = tagged.properties().duration().as_secs().try_into().ok();
     let (qobuz_track_id, qobuz_album_id) = parse_qobuz_ids(tag);
+    let label = tag_string(tag, &ItemKey::Label);
+    let isrc = tag_string(tag, &ItemKey::Isrc);
+    let composer = tag_string(tag, &ItemKey::Composer);
 
     Ok(TrackTags {
         title,
@@ -107,7 +113,16 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
         duration_sec,
         qobuz_track_id,
         qobuz_album_id,
+        label,
+        isrc,
+        composer,
     })
+}
+
+fn tag_string(tag: Option<&Tag>, key: &ItemKey) -> Option<String> {
+    tag.and_then(|t| t.get_string(key))
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn parse_qobuz_ids(tag: Option<&Tag>) -> (Option<u64>, Option<u64>) {
@@ -117,11 +132,14 @@ fn parse_qobuz_ids(tag: Option<&Tag>) -> (Option<u64>, Option<u64>) {
         return (None, None);
     };
     for key in [ItemKey::Comment, ItemKey::Description] {
-        if let Some(comment) = tag.get_string(&key) {
-            if let Some(id) = comment.strip_prefix("QOBUZ_TRACK_ID:") {
+        let Some(comment) = tag.get_string(&key) else {
+            continue;
+        };
+        for token in comment.split_whitespace() {
+            if let Some(id) = token.strip_prefix("QOBUZ_TRACK_ID:") {
                 track_id = id.trim().parse().ok();
             }
-            if let Some(id) = comment.strip_prefix("QOBUZ_ALBUM_ID:") {
+            if let Some(id) = token.strip_prefix("QOBUZ_ALBUM_ID:") {
                 album_id = id.trim().parse().ok();
             }
         }
@@ -141,6 +159,9 @@ pub fn apply_patch(tags: &TrackTags, patch: &TrackTagsPatch) -> TrackTags {
         duration_sec: tags.duration_sec,
         qobuz_track_id: tags.qobuz_track_id,
         qobuz_album_id: tags.qobuz_album_id,
+        label: tags.label.clone(),
+        isrc: tags.isrc.clone(),
+        composer: tags.composer.clone(),
     }
 }
 
@@ -176,8 +197,33 @@ pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
         }
         None => {}
     }
+    let mut qobuz_comment = String::new();
     if let Some(tid) = tags.qobuz_track_id {
-        tag.insert_text(ItemKey::Comment, format!("QOBUZ_TRACK_ID:{tid}"));
+        qobuz_comment.push_str(&format!("QOBUZ_TRACK_ID:{tid}"));
+    }
+    if let Some(aid) = tags.qobuz_album_id {
+        if !qobuz_comment.is_empty() {
+            qobuz_comment.push(' ');
+        }
+        qobuz_comment.push_str(&format!("QOBUZ_ALBUM_ID:{aid}"));
+    }
+    if !qobuz_comment.is_empty() {
+        tag.insert_text(ItemKey::Comment, qobuz_comment);
+    }
+    if let Some(label) = &tags.label {
+        if !label.is_empty() {
+            tag.insert_text(ItemKey::Label, label.clone());
+        }
+    }
+    if let Some(isrc) = &tags.isrc {
+        if !isrc.is_empty() {
+            tag.insert_text(ItemKey::Isrc, isrc.clone());
+        }
+    }
+    if let Some(composer) = &tags.composer {
+        if !composer.is_empty() {
+            tag.insert_text(ItemKey::Composer, composer.clone());
+        }
     }
 
     tagged.insert_tag(tag);
@@ -185,6 +231,13 @@ pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
         .save_to_path(path, WriteOptions::default())
         .map_err(|e| ApiError::Message(format!("write tags {}: {e}", path.display())))?;
     Ok(())
+}
+
+pub async fn write_qobuz_tags_async(path: &Path, tags: TrackTags) -> Result<(), ApiError> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || write_tags(&path, &tags))
+        .await
+        .map_err(|e| ApiError::Message(format!("spawn_blocking write tags: {e}")))?
 }
 
 #[cfg(test)]
@@ -221,7 +274,10 @@ mod tests {
             genre: Some("Rock".into()),
             duration_sec: None,
             qobuz_track_id: Some(999),
-            qobuz_album_id: None,
+            qobuz_album_id: Some(4242),
+            label: Some("Indie Records".into()),
+            isrc: Some("USRC17607839".into()),
+            composer: Some("Test Composer".into()),
         };
         write_test_wav(&path, &original);
         let read = read_tags(&path).unwrap();
@@ -232,6 +288,16 @@ mod tests {
         assert_eq!(read.year, Some(2024));
         assert_eq!(read.disc_number, Some(2));
         assert_eq!(read.genre.as_deref(), Some("Rock"));
+        assert_eq!(read.label.as_deref(), Some("Indie Records"));
+        assert_eq!(read.isrc.as_deref(), Some("USRC17607839"));
+        assert_eq!(read.composer.as_deref(), Some("Test Composer"));
+
+        let flac_path = dir.path().join("tagged.flac");
+        std::fs::write(&flac_path, include_bytes!("../../tests/fixtures/silent.flac")).unwrap();
+        write_tags(&flac_path, &original).unwrap();
+        let flac_read = read_tags(&flac_path).unwrap();
+        assert_eq!(flac_read.qobuz_track_id, Some(999));
+        assert_eq!(flac_read.qobuz_album_id, Some(4242));
     }
 
     #[test]
@@ -247,6 +313,9 @@ mod tests {
             duration_sec: None,
             qobuz_track_id: None,
             qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
         };
         let patched = apply_patch(
             &tags,

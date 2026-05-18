@@ -197,6 +197,8 @@ mod tests {
             album_ref: None,
             slug: None,
             list_id: None,
+            genre: None,
+            label: None,
         }
     }
 
@@ -224,6 +226,8 @@ mod tests {
             album_ref: Some("zg7pv28g4mldg".into()),
             slug: Some("lutosawski-concertos-for-cello".into()),
             list_id: Some(3149020953969),
+            genre: None,
+            label: None,
         };
         let mock: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(MockQobuz::new(vec![album]))
