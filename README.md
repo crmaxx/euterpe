@@ -18,9 +18,11 @@ All implementation follows **strict Test-Driven Development (TDD)** — see [ADR
 ### One-time setup
 
 ```bash
-make prepare   # macOS: brew install overmind (if missing)
+make prepare   # overmind (macOS), npm ci (husky + frontend), git pre-commit hook
 cp .env.example .env   # optional: Qobuz credentials and paths
 ```
+
+On commit, if `frontend/` or `openapi/` changed, the hook runs `generate:api` and `eslint` (same as CI).
 
 ### Tests
 

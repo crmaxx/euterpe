@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { Toaster } from "@/components/toaster";
-import { ToastStateProvider } from "@/hooks/use-toast";
+import { ToastStateProvider } from "@/hooks/toast-provider";
 import { SettingsPage } from "./SettingsPage";
 
 function renderSettings() {

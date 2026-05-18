@@ -9,7 +9,7 @@ import { AppLayout } from "@/features/layout/AppLayout";
 import { LibraryPage } from "@/features/library/LibraryPage";
 import { QueuePage } from "@/features/queue/QueuePage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
-import { ToastStateProvider } from "@/hooks/use-toast";
+import { ToastStateProvider } from "@/hooks/toast-provider";
 import { getAdminToken } from "@/lib/auth";
 
 const queryClient = new QueryClient({

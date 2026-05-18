@@ -6,7 +6,7 @@ FRONTEND_DIR := frontend
 
 help:
 	@echo "Targets:"
-	@echo "  make prepare              Install dev tools (Overmind via Homebrew on macOS)"
+	@echo "  make prepare              Dev tools: overmind, npm ci, husky pre-commit hook"
 	@echo "  make backend              Run API server (cargo run -p euterpe-server)"
 	@echo "  make frontend-install     cd frontend && npm ci"
 	@echo "  make frontend-generate    cd frontend && npm run generate:api"
@@ -20,6 +20,8 @@ help:
 
 prepare:
 	@command -v overmind >/dev/null 2>&1 || brew install overmind
+	npm ci
+	cd $(FRONTEND_DIR) && npm ci
 
 backend:
 	cargo run -p euterpe-server
