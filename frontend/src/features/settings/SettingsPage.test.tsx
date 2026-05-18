@@ -44,6 +44,8 @@ describe("SettingsPage", () => {
       );
     });
 
+    expect(window.location.href).toContain("qobuz.com/signin/oauth");
+
     fetchSpy.mockRestore();
   });
 
