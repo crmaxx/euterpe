@@ -39,8 +39,9 @@ pub fn spawn_worker(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         while let Some(job_id) = job_rx.recv().await {
-            if let Err(e) = run_job(job_id, &deps).await {
-                tracing::error!(job_id, "download job failed: {e}");
+            match run_job(job_id, &deps).await {
+                Ok(()) => {}
+                Err(e) => tracing::error!(job_id, "download job failed: {e}"),
             }
         }
     })
@@ -256,7 +257,8 @@ async fn run_album_job(
 
     for track in &tracks {
         if download_jobs::is_cancelled(&deps.pool, job_id).await? {
-            return Err(ApiError::Message("job cancelled".into()));
+            tracing::info!(job_id, "download job stopped (cancelled)");
+            return Ok(());
         }
 
         let _permit = semaphore.acquire().await.map_err(|e| ApiError::Message(e.to_string()))?;
@@ -780,5 +782,93 @@ mod tests {
         run_job(job_id, &deps).await.unwrap();
 
         assert_eq!(std::fs::read(&existing).unwrap(), body);
+    }
+
+    #[tokio::test]
+    async fn cancelled_job_stays_cancelled_not_failed() {
+        let dir = tempdir().unwrap();
+        let body = b"downloaded";
+        let app = stream_mock_router(body);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let album = AlbumDetail {
+            summary: AlbumSummary {
+                id: 99,
+                qobuz_id: None,
+                title: "Album".into(),
+                artist: Some(ArtistRef {
+                    id: 1,
+                    name: "Band".into(),
+                }),
+                artists: None,
+                image: None,
+                release_date_original: None,
+                hires: None,
+                album_ref: None,
+                slug: None,
+                list_id: None,
+            },
+            tracks: Some(euterpe_qobuz::AlbumTracks {
+                items: vec![TrackSummary {
+                    id: 1,
+                    title: "One".into(),
+                    track_number: Some(1),
+                    duration: None,
+                    performer: None,
+                    hires_streamable: None,
+                }],
+            }),
+            description: None,
+        };
+
+        let pool = db::connect("sqlite::memory:").await.unwrap();
+        db::migrate(&pool).await.unwrap();
+        let job_id = download_jobs::insert_queued(
+            &pool,
+            DownloadJobType::Album,
+            99,
+            6,
+            Some(&crate::services::download::DownloadJobPayload {
+                album_api_id: Some("99".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        download_jobs::claim_running(&pool, job_id).await.unwrap();
+        download_jobs::cancel(&pool, job_id).await.unwrap();
+
+        let (events, _) = broadcast::channel(8);
+        let config = Arc::new(AppConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            database_url: "sqlite::memory:".into(),
+            admin_password: None,
+            master_key: None,
+            qobuz_user_id: None,
+            qobuz_auth_token: None,
+            library_path: dir.path().to_path_buf(),
+            download_concurrency: 2,
+            dev_verbose: false,
+        });
+
+        let deps = WorkerDeps {
+            pool: pool.clone(),
+            qobuz: Arc::new(Mutex::new(MockDownloadQobuz {
+                album,
+                stream_url: format!("http://{addr}/stream"),
+            })),
+            config,
+            events,
+            http: Client::new(),
+        };
+
+        run_album_job(job_id, 99, Quality::FlacCd, &deps)
+            .await
+            .unwrap();
+
+        let job = download_jobs::get(&pool, job_id).await.unwrap().unwrap();
+        assert_eq!(job.status, crate::api::DownloadJobStatus::Cancelled);
+        assert!(job.error_message.is_none());
     }
 }
