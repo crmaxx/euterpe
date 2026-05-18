@@ -4,6 +4,7 @@ use crate::error::ApiError;
 
 pub const KEY_QOBUZ_USER_ID: &str = "qobuz.user_id";
 pub const KEY_QOBUZ_UAT_ENC: &str = "qobuz.uat_enc";
+pub const KEY_QOBUZ_ACTIVE_ACCOUNT_ID: &str = "qobuz.active_account_id";
 
 pub async fn get(pool: &SqlitePool, key: &str) -> Result<Option<String>, ApiError> {
     let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
@@ -27,5 +28,13 @@ pub async fn set(pool: &SqlitePool, key: &str, value: &str) -> Result<(), ApiErr
     .bind(value)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+pub async fn delete(pool: &SqlitePool, key: &str) -> Result<(), ApiError> {
+    sqlx::query("DELETE FROM settings WHERE key = ?")
+        .bind(key)
+        .execute(pool)
+        .await?;
     Ok(())
 }

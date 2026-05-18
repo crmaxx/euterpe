@@ -2,6 +2,7 @@ use euterpe_server::{serve, AppConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    euterpe_server::config::load_dotenv();
     let config = AppConfig::from_env()?;
 
     let default_filter = if config.dev_verbose {

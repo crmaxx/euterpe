@@ -19,9 +19,9 @@ services:
       EUTERPE_LIBRARY_PATH: /music
       EUTERPE_DOWNLOAD_CONCURRENCY: 3
       # Set in .env file (never commit):
-      # EUTERPE_QOBUZ_USER_ID: ${EUTERPE_QOBUZ_USER_ID}
-      # EUTERPE_QOBUZ_AUTH_TOKEN: ${EUTERPE_QOBUZ_AUTH_TOKEN}
-      # Legacy (deprecated): EUTERPE_QOBUZ_EMAIL / EUTERPE_QOBUZ_PASSWORD
+      EUTERPE_MASTER_KEY: ${EUTERPE_MASTER_KEY}
+      # Public URL for OAuth redirect (must match how you open the UI)
+      EUTERPE_PUBLIC_BASE_URL: ${EUTERPE_PUBLIC_BASE_URL:-http://127.0.0.1:8080}
       # EUTERPE_ADMIN_PASSWORD: ${EUTERPE_ADMIN_PASSWORD}
     volumes:
       - euterpe-data:/data

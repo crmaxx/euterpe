@@ -3,7 +3,8 @@ use sqlx::SqlitePool;
 
 use crate::config::AppConfig;
 use crate::crypto::MasterKey;
-use crate::db::settings::{self, KEY_QOBUZ_UAT_ENC, KEY_QOBUZ_USER_ID};
+use crate::db::qobuz_accounts;
+use crate::db::settings::{self, KEY_QOBUZ_ACTIVE_ACCOUNT_ID};
 use crate::error::ApiError;
 
 #[derive(Debug, Clone)]
@@ -12,52 +13,46 @@ pub struct QobuzCredentials {
     pub auth_token: String,
 }
 
-pub async fn load_from_env_or_db(
+/// Load credentials for the active Qobuz account (`qobuz.active_account_id` → `qobuz_accounts`).
+pub async fn load_active(
     config: &AppConfig,
     pool: &SqlitePool,
 ) -> Result<Option<QobuzCredentials>, ApiError> {
-    if let (Some(user_id), Some(token)) = (config.qobuz_user_id, &config.qobuz_auth_token) {
-        return Ok(Some(QobuzCredentials {
-            user_id,
-            auth_token: token.clone(),
-        }));
-    }
+    let Some(account_id_str) = settings::get(pool, KEY_QOBUZ_ACTIVE_ACCOUNT_ID).await? else {
+        return Ok(None);
+    };
+    let account_id = account_id_str
+        .parse::<i64>()
+        .map_err(|e| ApiError::Config(format!("invalid qobuz.active_account_id: {e}")))?;
 
-    let user_id_str = settings::get(pool, KEY_QOBUZ_USER_ID).await?;
-    let uat_enc = settings::get(pool, KEY_QOBUZ_UAT_ENC).await?;
-    let (Some(user_id_str), Some(uat_enc)) = (user_id_str, uat_enc) else {
+    let Some(row) = qobuz_accounts::get_by_id(pool, account_id).await? else {
         return Ok(None);
     };
 
     let master = config
         .master_key
         .as_ref()
-        .ok_or_else(|| ApiError::Message("Qobuz credentials in DB require EUTERPE_MASTER_KEY".into()))?;
+        .ok_or_else(|| ApiError::Message("EUTERPE_MASTER_KEY is required for Qobuz accounts".into()))?;
 
-    let user_id = user_id_str
-        .parse::<u64>()
-        .map_err(|e| ApiError::Config(format!("invalid stored qobuz.user_id: {e}")))?;
-    let auth_token = master.decrypt(&uat_enc)?;
+    let auth_token = master.decrypt(&row.uat_encrypted)?;
 
     Ok(Some(QobuzCredentials {
-        user_id,
+        user_id: row.qobuz_user_id as u64,
         auth_token,
     }))
 }
 
-pub async fn persist(
-    pool: &SqlitePool,
-    master: &MasterKey,
+pub async fn build_client(
     creds: &QobuzCredentials,
-) -> Result<(), ApiError> {
-    let enc = master.encrypt(&creds.auth_token)?;
-    settings::set(pool, KEY_QOBUZ_USER_ID, &creds.user_id.to_string()).await?;
-    settings::set(pool, KEY_QOBUZ_UAT_ENC, &enc).await?;
-    Ok(())
-}
-
-pub async fn build_client(creds: &QobuzCredentials) -> Result<QobuzClient, ApiError> {
-    let config = QobuzConfig::session_token(creds.user_id, creds.auth_token.clone());
+    app_config: &AppConfig,
+) -> Result<QobuzClient, ApiError> {
+    let mut config = QobuzConfig::session_token(creds.user_id, creds.auth_token.clone());
+    if let Some(play) = &app_config.qobuz_play_base {
+        config.play_base = play.clone();
+    }
+    if let Some(api) = &app_config.qobuz_api_base {
+        config.api_base = api.clone();
+    }
     Ok(QobuzClient::connect(config).await?)
 }
 
@@ -67,10 +62,45 @@ pub async fn connect_ephemeral(user_id: u64, auth_token: &str) -> Result<QobuzCl
 }
 
 pub fn membership_label(client: &QobuzClient) -> String {
-    // Session verify does not return profile; use generic label until user/login refresh.
     if client.is_authenticated() {
         "Qobuz".to_string()
     } else {
         "Unknown".to_string()
     }
+}
+
+pub async fn persist_oauth_account(
+    pool: &SqlitePool,
+    master: &MasterKey,
+    login: &euterpe_qobuz::OAuthLoginResult,
+) -> Result<i64, ApiError> {
+    let enc = master.encrypt(&login.user_auth_token)?;
+    let now = chrono::Utc::now();
+    let account_id = qobuz_accounts::upsert_after_oauth(
+        pool,
+        login.user_id as i64,
+        &enc,
+        login.display_name.as_deref(),
+        login.membership_label.as_deref(),
+        now,
+        None,
+    )
+    .await?;
+
+    settings::set(pool, KEY_QOBUZ_ACTIVE_ACCOUNT_ID, &account_id.to_string()).await?;
+
+    Ok(account_id)
+}
+
+/// Remove the active Qobuz account and clear the active-account setting.
+pub async fn disconnect_active(pool: &SqlitePool) -> Result<(), ApiError> {
+    let Some(account_id_str) = settings::get(pool, KEY_QOBUZ_ACTIVE_ACCOUNT_ID).await? else {
+        return Ok(());
+    };
+    let account_id = account_id_str
+        .parse::<i64>()
+        .map_err(|e| ApiError::Config(format!("invalid qobuz.active_account_id: {e}")))?;
+    let _ = qobuz_accounts::delete_by_id(pool, account_id).await?;
+    settings::delete(pool, KEY_QOBUZ_ACTIVE_ACCOUNT_ID).await?;
+    Ok(())
 }

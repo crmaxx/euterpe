@@ -10,9 +10,10 @@ pub use downloads::{
 };
 pub use health::{ErrorBody, ErrorResponse, HealthResponse};
 pub use qobuz::{
+    QobuzAccountListItem, QobuzAccountsListResponse, QobuzConnectionStatusResponse,
     QobuzFavoriteItem, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest,
-    QobuzSyncLatestResponse, QobuzSyncResponse, QobuzSyncRunSummary, QobuzTestLoginRequest,
-    QobuzTestLoginResponse,
+    QobuzOAuthStartResponse, QobuzSyncLatestResponse, QobuzSyncResponse, QobuzSyncRunSummary,
+    QobuzTestLoginRequest, QobuzTestLoginResponse,
 };
 pub use library::{
     LibraryAlbumDetailResponse, LibraryAlbumItem, LibraryAlbumListResponse,

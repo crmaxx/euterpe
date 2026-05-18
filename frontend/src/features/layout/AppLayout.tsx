@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { useScanLatest, useServerInfo, useSyncLatest } from "@/api/hooks";
+import { useQobuzConnection, useScanLatest, useServerInfo, useSyncLatest } from "@/api/hooks";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -11,6 +11,7 @@ const nav = [
 
 export function AppLayout() {
   const { data: info } = useServerInfo();
+  const { data: qobuz } = useQobuzConnection();
   const { data: sync } = useSyncLatest();
   const { data: libraryScan } = useScanLatest();
 
@@ -67,12 +68,16 @@ export function AppLayout() {
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-xs",
-              info?.credentials_configured
+              qobuz?.connected
                 ? "bg-emerald-950 text-emerald-300"
                 : "bg-amber-950 text-amber-300",
             )}
           >
-            {info?.credentials_configured ? "Qobuz connected" : "Qobuz not configured"}
+            {qobuz?.connected
+              ? qobuz.display_name
+                ? `Qobuz: ${qobuz.display_name}`
+                : "Qobuz connected"
+              : "Qobuz not signed in"}
           </span>
         </header>
         <main className="flex-1 p-6">

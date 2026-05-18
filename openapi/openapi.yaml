@@ -70,11 +70,113 @@ paths:
               schema:
                 $ref: "#/components/schemas/QobuzSyncLatestResponse"
 
+  /api/v1/qobuz/oauth/start:
+    get:
+      operationId: qobuzOAuthStart
+      tags: [Qobuz]
+      summary: Start Qobuz OAuth (browser redirect URL)
+      description: |
+        Returns the Qobuz sign-in URL and a CSRF `state` stored server-side.
+        Credentials are only stored via OAuth callback into `qobuz_accounts` (not env).
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Authorize URL and state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzOAuthStartResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/qobuz/oauth/callback:
+    get:
+      operationId: qobuzOAuthCallback
+      tags: [Qobuz]
+      summary: OAuth callback (Qobuz redirects here)
+      description: Exchanges `code` for UAT, upserts `qobuz_accounts`, sets active account, reloads client. Redirects to SPA settings.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: false
+          description: Authorization code (Qobuz may send `code_autorisation` instead)
+          schema:
+            type: string
+        - name: code_autorisation
+          in: query
+          required: false
+          description: Authorization code as returned by Qobuz sign-in redirect
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          description: CSRF state (embedded in redirect_url from oauth/start; optional if only one pending flow)
+          schema:
+            type: string
+      responses:
+        "307":
+          description: Redirect to settings with success query param
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/qobuz/connection:
+    get:
+      operationId: getQobuzConnection
+      tags: [Qobuz]
+      summary: Qobuz connection status (no secrets)
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzConnectionStatusResponse"
+
+  /api/v1/qobuz/logout:
+    post:
+      operationId: qobuzLogout
+      tags: [Qobuz]
+      summary: Disconnect active Qobuz account
+      description: Deletes the active account row, clears `qobuz.active_account_id`, reloads API client.
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "204":
+          description: Disconnected
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/qobuz/accounts:
+    get:
+      operationId: listQobuzAccounts
+      tags: [Qobuz]
+      summary: List linked Qobuz accounts (no UAT)
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Accounts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzAccountsListResponse"
+
   /api/v1/qobuz/test-login:
     post:
       operationId: qobuzTestLogin
       tags: [Qobuz]
-      summary: Verify Qobuz session token
+      summary: Verify Qobuz session token (debug only; does not persist)
       security:
         - AdminBearer: []
         - {}
@@ -607,10 +709,70 @@ components:
         auth_token:
           type: string
           minLength: 1
-        persist:
+
+    QobuzOAuthStartResponse:
+      type: object
+      required: [authorize_url, state]
+      additionalProperties: false
+      properties:
+        authorize_url:
+          type: string
+          format: uri
+        state:
+          type: string
+          minLength: 8
+
+    QobuzConnectionStatusResponse:
+      type: object
+      required: [connected, master_key_configured]
+      additionalProperties: false
+      properties:
+        connected:
           type: boolean
-          default: false
-          description: Save encrypted credentials to settings (requires EUTERPE_MASTER_KEY)
+        active_account_id:
+          type: integer
+          format: int64
+        qobuz_user_id:
+          type: integer
+          format: int64
+        display_name:
+          type: string
+        membership_label:
+          type: string
+        master_key_configured:
+          type: boolean
+
+    QobuzAccountListItem:
+      type: object
+      required: [id, qobuz_user_id, uat_obtained_at, is_active]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        label:
+          type: string
+        qobuz_user_id:
+          type: integer
+          format: int64
+        display_name:
+          type: string
+        membership_label:
+          type: string
+        uat_obtained_at:
+          type: string
+        is_active:
+          type: boolean
+
+    QobuzAccountsListResponse:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/QobuzAccountListItem"
 
     QobuzTestLoginResponse:
       type: object

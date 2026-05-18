@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type CreateDownloadRequest, type QobuzTestLoginRequest } from "./client";
+import { api, type CreateDownloadRequest } from "./client";
+import { ApiClientError } from "./errors";
 
 export const queryKeys = {
   serverInfo: ["serverInfo"] as const,
+  qobuzConnection: ["qobuzConnection"] as const,
   syncLatest: ["syncLatest"] as const,
   scanLatest: ["scanLatest"] as const,
   favorites: (page: number, limit: number) =>
@@ -33,7 +35,11 @@ export function useScanLatest() {
   return useQuery({
     queryKey: queryKeys.scanLatest,
     queryFn: api.libraryScanLatest,
-    refetchInterval: 5_000,
+    refetchInterval: (query) =>
+      query.state.error instanceof ApiClientError &&
+      query.state.error.status === 401
+        ? false
+        : 5_000,
   });
 }
 
@@ -118,6 +124,35 @@ export function useQobuzSync() {
 export function useTestLogin() {
   return useMutation({
     mutationFn: (body: QobuzTestLoginRequest) => api.testLogin(body),
+  });
+}
+
+export function useQobuzConnection() {
+  return useQuery({
+    queryKey: queryKeys.qobuzConnection,
+    queryFn: api.qobuzConnection,
+  });
+}
+
+export function useQobuzOAuthStart() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.qobuzOAuthStart,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.qobuzConnection });
+      void qc.invalidateQueries({ queryKey: queryKeys.serverInfo });
+    },
+  });
+}
+
+export function useQobuzLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.qobuzLogout,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.qobuzConnection });
+      void qc.invalidateQueries({ queryKey: queryKeys.serverInfo });
+    },
   });
 }
 

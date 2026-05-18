@@ -1,4 +1,4 @@
-import { getAdminToken } from "@/lib/auth";
+import { getAdminToken, notifyAdminUnauthorized } from "@/lib/auth";
 import { ApiClientError, type ErrorResponse } from "./errors";
 import type { components } from "./schema";
 
@@ -13,6 +13,10 @@ export type QobuzTestLoginRequest =
   components["schemas"]["QobuzTestLoginRequest"];
 export type QobuzTestLoginResponse =
   components["schemas"]["QobuzTestLoginResponse"];
+export type QobuzOAuthStartResponse =
+  components["schemas"]["QobuzOAuthStartResponse"];
+export type QobuzConnectionStatusResponse =
+  components["schemas"]["QobuzConnectionStatusResponse"];
 export type DownloadJobListResponse =
   components["schemas"]["DownloadJobListResponse"];
 export type DownloadJob = components["schemas"]["DownloadJob"];
@@ -59,12 +63,14 @@ export async function fetchJson<T>(
   const json = text ? (JSON.parse(text) as unknown) : null;
 
   if (!response.ok) {
-    throw new ApiClientError(
-      response.status,
+    const errBody =
       (json as ErrorResponse) ?? {
         error: { code: "UNKNOWN", message: response.statusText },
-      },
-    );
+      };
+    if (response.status === 401 && errBody.error.code === "UNAUTHORIZED") {
+      notifyAdminUnauthorized();
+    }
+    throw new ApiClientError(response.status, errBody);
   }
 
   return json as T;
@@ -88,6 +94,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  qobuzOAuthStart: () =>
+    fetchJson<QobuzOAuthStartResponse>("/qobuz/oauth/start"),
+
+  qobuzConnection: () =>
+    fetchJson<QobuzConnectionStatusResponse>("/qobuz/connection"),
+
+  qobuzLogout: () =>
+    fetchJson<void>("/qobuz/logout", { method: "POST" }),
 
   removeFavorites: (albumIds: number[]) =>
     fetchJson<void>("/qobuz/favorites", {

@@ -38,6 +38,22 @@ export const handlers = [
     }),
   ),
 
+  http.get("/api/v1/qobuz/connection", () =>
+    HttpResponse.json({
+      connected: false,
+      master_key_configured: true,
+    }),
+  ),
+
+  http.post("/api/v1/qobuz/logout", () => new HttpResponse(null, { status: 204 })),
+
+  http.get("/api/v1/qobuz/oauth/start", () =>
+    HttpResponse.json({
+      authorize_url: "https://www.qobuz.com/signin/oauth?ext_app_id=1&redirect_url=http://localhost/callback",
+      state: "test-state",
+    }),
+  ),
+
   http.post("/api/v1/qobuz/test-login", async ({ request }) => {
     const body = (await request.json()) as { auth_token?: string };
     if (body.auth_token === "bad") {

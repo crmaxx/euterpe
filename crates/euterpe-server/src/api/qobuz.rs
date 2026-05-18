@@ -4,8 +4,6 @@ use serde::{Deserialize, Serialize};
 pub struct QobuzTestLoginRequest {
     pub user_id: u64,
     pub auth_token: String,
-    #[serde(default)]
-    pub persist: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,4 +64,43 @@ pub struct QobuzFavoritesListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QobuzFavoritesMutateRequest {
     pub album_ids: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzOAuthStartResponse {
+    pub authorize_url: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzConnectionStatusResponse {
+    pub connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_account_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qobuz_user_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub membership_label: Option<String>,
+    pub master_key_configured: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzAccountListItem {
+    pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub qobuz_user_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub membership_label: Option<String>,
+    pub uat_obtained_at: String,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzAccountsListResponse {
+    pub items: Vec<QobuzAccountListItem>,
 }

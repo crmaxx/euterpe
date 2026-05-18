@@ -4,6 +4,8 @@
 
 Интеграция основана на **неофициальном** reverse-engineering публичного веб/API поведения Qobuz (как [qobuz-dl](https://github.com/vitiko98/qobuz-dl), [streamrip](https://github.com/nathom/streamrip), [qobuz-sync](https://github.com/trevorstarick/qobuz-sync)). Это не партнёрский SDK.
 
+Для сверки реализации держите **локальные клоны** в `docs/references/` (см. [oauth-and-tokens.ru.md](oauth-and-tokens.ru.md), [reference-implementation.ru.md](reference-implementation.ru.md)).
+
 - Требуется активная подписка Qobuz (free tier не даёт stream/download).
 - Соблюдайте [Qobuz API Terms of Use](https://static.qobuz.com/apps/api/QobuzAPI-TermsofUse.pdf).
 - Euterpe не аффилирован с Qobuz.

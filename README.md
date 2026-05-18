@@ -19,7 +19,7 @@ All implementation follows **strict Test-Driven Development (TDD)** — see [ADR
 
 ```bash
 make prepare   # overmind (macOS), npm ci (husky + frontend), git pre-commit hook
-cp .env.example .env   # optional: Qobuz credentials and paths
+cp .env.example .env   # optional; loaded automatically at server start (cwd)
 ```
 
 On commit, if `frontend/` or `openapi/` changed, the hook runs `generate:api` and `eslint` (same as CI).
@@ -93,7 +93,9 @@ Details: [docs/00-overview/future-plans.ru.md](docs/00-overview/future-plans.ru.
 
 ## Qobuz authentication (2026)
 
-Automated **email/password API login is deprecated** (Qobuz uses OAuth on the website). Set **`EUTERPE_QOBUZ_USER_ID`** and **`EUTERPE_QOBUZ_AUTH_TOKEN`** from [play.qobuz.com](https://play.qobuz.com) — see [docs/05-qobuz/oauth-and-tokens.ru.md](docs/05-qobuz/oauth-and-tokens.ru.md).
+Link Qobuz **in the web UI** (Settings → Connect Qobuz). The server stores an encrypted UAT in SQLite (`qobuz_accounts`); **`EUTERPE_MASTER_KEY`** is required. **`EUTERPE_QOBUZ_USER_ID` / `EUTERPE_QOBUZ_AUTH_TOKEN` env vars are no longer used** (breaking change for older Docker setups).
+
+See [docs/05-qobuz/oauth-and-tokens.ru.md](docs/05-qobuz/oauth-and-tokens.ru.md).
 
 ## Docker (preview)
 
@@ -101,7 +103,7 @@ Example compose (no secrets):
 
 ```bash
 cp docs/04-deployment/compose.example.yml compose.yml
-# set EUTERPE_QOBUZ_USER_ID and EUTERPE_QOBUZ_AUTH_TOKEN in .env
+# set EUTERPE_MASTER_KEY, EUTERPE_PUBLIC_BASE_URL; link Qobuz via UI after start
 docker compose up -d
 ```
 
