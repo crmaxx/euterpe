@@ -271,13 +271,9 @@ export function useQobuzConnection() {
 }
 
 export function useQobuzOAuthStart() {
-  const qc = useQueryClient();
   return useMutation({
     mutationFn: api.qobuzOAuthStart,
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: queryKeys.qobuzConnection });
-      void qc.invalidateQueries({ queryKey: queryKeys.serverInfo });
-    },
+    // Connection refreshes on return (?qobuz=connected) after redirect to Qobuz.
   });
 }
 
