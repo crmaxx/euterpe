@@ -32,6 +32,9 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "cors", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+lofty = "0.22"
+walkdir = "2"
+sha2 = "0.10"
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["macros"] }
@@ -40,4 +43,5 @@ jsonschema = "0.29"
 pretty_assertions = "1"
 serde_yaml = "0.9"
 tempfile = "3"
+hound = "3"
 tower = "0.5"

@@ -32,10 +32,15 @@
 
 **Tests:** progress bar at 50% when event received.
 
-## Library (`/library`) — placeholder Phase 1 docs
+## Library (`/library`) — Phase 5
 
-- Message: «Full library browser — Phase 5»
-- Link to favorites
+- Rescan library → `POST /api/v1/library/scan` (background)
+- Album list + track list; превью обложки по `GET /api/v1/library/albums/{id}/cover` (плейсхолдер **No cover**, если нет пути или файла)
+- Редактирование **текстовых** тегов трека → `PATCH /api/v1/library/tracks/{id}`
+- Header shows last scan status
+- **Замена обложки из UI** — [FP-7](future-plans.ru.md#fp-7-album-cover-ui); после Qobuz-download сервер кладёт **`cover.<ext>`** (тип по MIME) и встраивает в файлы
+
+**Tests:** album list renders; rescan button calls API.
 
 ## Layout
 

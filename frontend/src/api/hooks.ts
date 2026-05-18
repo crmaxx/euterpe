@@ -4,9 +4,14 @@ import { api, type CreateDownloadRequest, type QobuzTestLoginRequest } from "./c
 export const queryKeys = {
   serverInfo: ["serverInfo"] as const,
   syncLatest: ["syncLatest"] as const,
+  scanLatest: ["scanLatest"] as const,
   favorites: (page: number, limit: number) =>
     ["favorites", page, limit] as const,
   downloads: ["downloads"] as const,
+  libraryAlbums: (page: number, limit: number, search: string) =>
+    ["libraryAlbums", page, limit, search] as const,
+  libraryAlbum: (id: number) => ["libraryAlbum", id] as const,
+  libraryTrack: (id: number) => ["libraryTrack", id] as const,
 };
 
 export function useServerInfo() {
@@ -21,6 +26,66 @@ export function useSyncLatest() {
     queryKey: queryKeys.syncLatest,
     queryFn: api.syncLatest,
     refetchInterval: 30_000,
+  });
+}
+
+export function useScanLatest() {
+  return useQuery({
+    queryKey: queryKeys.scanLatest,
+    queryFn: api.libraryScanLatest,
+    refetchInterval: 5_000,
+  });
+}
+
+export function useLibraryAlbums(page = 0, limit = 50, search = "") {
+  return useQuery({
+    queryKey: queryKeys.libraryAlbums(page, limit, search),
+    queryFn: () => api.libraryAlbums(page, limit, search),
+  });
+}
+
+export function useLibraryAlbum(id: number | null) {
+  return useQuery({
+    queryKey: queryKeys.libraryAlbum(id ?? 0),
+    queryFn: () => api.libraryAlbum(id!),
+    enabled: id != null,
+  });
+}
+
+export function useLibraryTrack(id: number | null) {
+  return useQuery({
+    queryKey: queryKeys.libraryTrack(id ?? 0),
+    queryFn: () => api.libraryTrack(id!),
+    enabled: id != null,
+  });
+}
+
+export function useStartLibraryScan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.startLibraryScan,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.scanLatest });
+      void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+    },
+  });
+}
+
+export function usePatchTrackTags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: number;
+      body: Parameters<typeof api.patchTrackTags>[1];
+    }) => api.patchTrackTags(id, body),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.libraryTrack(vars.id) });
+      void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+      void qc.invalidateQueries({ queryKey: ["libraryAlbum"] });
+    },
   });
 }
 

@@ -26,7 +26,7 @@ use crate::db::{self, favorites, sync_runs};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
-use crate::routes::{downloads, events};
+use crate::routes::{downloads, events, library};
 use crate::services::download::{spawn_worker, WorkerDeps};
 use crate::services::qobuz_sync;
 use crate::state::AppState;
@@ -46,6 +46,25 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/downloads/{id}",
             get(downloads::get_download).delete(downloads::cancel_download),
+        )
+        .route("/api/v1/library/scan", post(library::start_library_scan))
+        .route(
+            "/api/v1/library/scan/latest",
+            get(library::library_scan_latest),
+        )
+        .route("/api/v1/library/scan/{id}", get(library::get_library_scan))
+        .route("/api/v1/library/albums", get(library::list_library_albums))
+        .route(
+            "/api/v1/library/albums/{id}",
+            get(library::get_library_album),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/cover",
+            get(library::get_library_album_cover),
+        )
+        .route(
+            "/api/v1/library/tracks/{id}",
+            get(library::get_library_track).patch(library::patch_library_track_tags),
         )
         .route("/api/v1/events", get(events::subscribe_events))
         .layer(axum::middleware::from_fn_with_state(
@@ -101,6 +120,7 @@ pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + 
 
     let (job_tx, job_rx) = mpsc::channel(32);
     let (events, _) = broadcast::channel(64);
+    let (scan_events, _) = broadcast::channel(64);
 
     let bind = config.bind;
     let config = Arc::new(config);
@@ -109,6 +129,7 @@ pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + 
         pool.clone(),
         job_tx,
         events.clone(),
+        scan_events,
     )
     .await?;
 
@@ -297,10 +318,17 @@ pub mod test_support {
 
         let (job_tx, job_rx) = mpsc::channel(32);
         let (events, _) = broadcast::channel(16);
+        let (scan_events, _) = broadcast::channel(16);
 
-        let state = AppState::new(config.clone(), pool.clone(), job_tx, events.clone())
-            .await
-            .unwrap();
+        let state = AppState::new(
+            config.clone(),
+            pool.clone(),
+            job_tx,
+            events.clone(),
+            scan_events,
+        )
+        .await
+        .unwrap();
 
         spawn_worker(
             job_rx,

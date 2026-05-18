@@ -15,7 +15,7 @@ All implementation work follows **strict TDD** (Test-Driven Development). See [A
 | [README.ru.md](README.ru.md) | Main documentation index (RU) |
 | [Vision](00-overview/vision.ru.md) | Product vision and goals |
 | [Roadmap](00-overview/roadmap.ru.md) | Phased delivery plan |
-| [Future plans](00-overview/future-plans.ru.md) | In-app OAuth, multi Qobuz account switch |
+| [Future plans](00-overview/future-plans.ru.md) | OAuth, multi-account, queue cleanup, FP-5…FP-7 (tags + album art UI) |
 | [Architecture](01-architecture/system-context.ru.md) | System context and containers |
 | [Qobuz API](05-qobuz/README.ru.md) | Reverse-engineered API reference |
 | [euterpe-qobuz crate](06-library-euterpe-qobuz/README.ru.md) | Rust client library specification |

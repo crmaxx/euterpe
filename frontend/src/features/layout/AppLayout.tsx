@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { useServerInfo, useSyncLatest } from "@/api/hooks";
+import { useScanLatest, useServerInfo, useSyncLatest } from "@/api/hooks";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -12,6 +12,7 @@ const nav = [
 export function AppLayout() {
   const { data: info } = useServerInfo();
   const { data: sync } = useSyncLatest();
+  const { data: libraryScan } = useScanLatest();
 
   const syncLabel = (() => {
     const run = sync?.run;
@@ -51,7 +52,18 @@ export function AppLayout() {
       </aside>
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border px-6 py-3 text-sm">
-          <span className="text-muted-foreground">{syncLabel}</span>
+          <span className="text-muted-foreground">
+            {syncLabel}
+            {libraryScan?.run && (
+              <>
+                {" · "}
+                Library scan: {libraryScan.run.status}
+                {libraryScan.run.status === "running"
+                  ? ` (${libraryScan.run.files_indexed}/${libraryScan.run.files_seen})`
+                  : ""}
+              </>
+            )}
+          </span>
           <span
             className={cn(
               "rounded-full px-2 py-0.5 text-xs",

@@ -1,7 +1,11 @@
+pub mod albums;
+pub mod artists;
 pub mod download_jobs;
 pub mod favorites;
+pub mod library_scan_runs;
 pub mod settings;
 pub mod sync_runs;
+pub mod tracks;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -105,5 +109,9 @@ mod tests {
         assert!(names.contains(&"qobuz_favorites".to_string()));
         assert!(names.contains(&"qobuz_sync_runs".to_string()));
         assert!(names.contains(&"download_jobs".to_string()));
+        assert!(names.contains(&"artists".to_string()));
+        assert!(names.contains(&"albums".to_string()));
+        assert!(names.contains(&"tracks".to_string()));
+        assert!(names.contains(&"library_scan_runs".to_string()));
     }
 }

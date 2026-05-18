@@ -4,7 +4,7 @@ use euterpe_qobuz::QobuzApi;
 use sqlx::SqlitePool;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
-use crate::api::JobProgressEvent;
+use crate::api::{JobProgressEvent, ScanProgressEvent};
 use crate::config::AppConfig;
 use crate::credentials::{self, QobuzCredentials};
 use crate::crypto::MasterKey;
@@ -17,6 +17,7 @@ pub struct AppState {
     pub qobuz: Arc<Mutex<dyn QobuzApi>>,
     pub job_tx: mpsc::Sender<i64>,
     pub events: broadcast::Sender<JobProgressEvent>,
+    pub scan_events: broadcast::Sender<ScanProgressEvent>,
 }
 
 impl AppState {
@@ -25,6 +26,7 @@ impl AppState {
         db: SqlitePool,
         job_tx: mpsc::Sender<i64>,
         events: broadcast::Sender<JobProgressEvent>,
+        scan_events: broadcast::Sender<ScanProgressEvent>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
         let qobuz: Arc<Mutex<dyn QobuzApi>> = if let Some(creds) =
@@ -42,6 +44,7 @@ impl AppState {
             qobuz,
             job_tx,
             events,
+            scan_events,
         })
     }
 

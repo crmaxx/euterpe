@@ -76,4 +76,93 @@ export const handlers = [
   http.delete("/api/v1/qobuz/favorites", () => new HttpResponse(null, { status: 204 })),
 
   http.delete("/api/v1/downloads/:id", () => new HttpResponse(null, { status: 204 })),
+
+  http.get("/api/v1/library/scan/latest", () =>
+    HttpResponse.json({
+      run: {
+        id: 1,
+        status: "success",
+        files_seen: 10,
+        files_indexed: 10,
+        started_at: "2026-01-01T00:00:00Z",
+        finished_at: "2026-01-01T00:01:00Z",
+      },
+    }),
+  ),
+
+  http.post("/api/v1/library/scan", () =>
+    HttpResponse.json({ scan_id: 1 }, { status: 202 }),
+  ),
+
+  http.get("/api/v1/library/albums", () =>
+    HttpResponse.json({
+      items: [
+        {
+          id: 1,
+          title: "Local Album",
+          artist_name: "Test Artist",
+          year: 2020,
+          track_count: 2,
+          cover_path: null,
+        },
+      ],
+      total: 1,
+    }),
+  ),
+
+  http.get("/api/v1/library/albums/:id/cover", () =>
+    new HttpResponse(null, { status: 404 }),
+  ),
+
+  http.get("/api/v1/library/albums/:id", ({ params }) =>
+    HttpResponse.json({
+      id: Number(params.id),
+      title: "Local Album",
+      artist_name: "Test Artist",
+      year: 2020,
+      cover_path: null,
+      tracks: [
+        {
+          id: 1,
+          title: "Track One",
+          track_number: 1,
+          year: 2020,
+          disc_number: 1,
+          genre: "Pop",
+          path: "a/t1.flac",
+        },
+      ],
+    }),
+  ),
+
+  http.get("/api/v1/library/tracks/:id", ({ params }) =>
+    HttpResponse.json({
+      id: Number(params.id),
+      album_id: 1,
+      title: "Track One",
+      artist_name: "Test Artist",
+      album_title: "Local Album",
+      track_number: 1,
+      year: 2020,
+      disc_number: 1,
+      genre: "Pop",
+      path: "a/t1.flac",
+    }),
+  ),
+
+  http.patch("/api/v1/library/tracks/:id", async ({ params, request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      id: Number(params.id),
+      album_id: 1,
+      title: (body.title as string | undefined) ?? "Track",
+      artist_name: "Test Artist",
+      album_title: "Local Album",
+      track_number: (body.track_number as number | undefined) ?? 1,
+      year: (body.year as number | undefined) ?? 2020,
+      disc_number: (body.disc_number as number | undefined) ?? 1,
+      genre: (body.genre as string | undefined) ?? "Pop",
+      path: "a/t1.flac",
+    });
+  }),
 ];

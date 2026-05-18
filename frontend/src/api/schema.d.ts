@@ -161,6 +161,130 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start background library filesystem scan */
+        post: operations["startLibraryScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/scan/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest library scan run */
+        get: operations["getLibraryScanLatest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/scan/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library scan run by id */
+        get: operations["getLibraryScan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List indexed local albums */
+        get: operations["listLibraryAlbums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Album detail with tracks */
+        get: operations["getLibraryAlbum"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Album cover image file from library disk
+         * @description Serves the file at `albums.cover_path` under the configured library root.
+         *     Returns 404 if the album has no `cover_path` or the file is missing.
+         */
+        get: operations["getLibraryAlbumCover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/tracks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Track detail */
+        get: operations["getLibraryTrack"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update audio file tags (writes to disk) */
+        patch: operations["patchLibraryTrackTags"];
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -168,7 +292,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Server-sent events stream (job progress) */
+        /** Server-sent events stream (job and scan progress) */
         get: operations["subscribeEvents"];
         put?: never;
         post?: never;
@@ -298,6 +422,87 @@ export interface components {
             /** Format: int64 */
             id: number;
             progress_pct: number;
+        };
+        LibraryScanStartResponse: {
+            /** Format: int64 */
+            scan_id: number;
+        };
+        LibraryScanRunSummary: {
+            /** Format: int64 */
+            id: number;
+            /** @enum {string} */
+            status: "running" | "success" | "failed" | "cancelled";
+            files_seen: number;
+            files_indexed: number;
+            started_at: string;
+            finished_at?: string | null;
+            error_message?: string | null;
+        };
+        LibraryScanLatestResponse: {
+            run: components["schemas"]["LibraryScanRunSummary"] | null;
+        };
+        ScanProgressEvent: {
+            /** Format: int64 */
+            scan_id: number;
+            files_seen: number;
+            files_indexed: number;
+        };
+        LibraryAlbumItem: {
+            /** Format: int64 */
+            id: number;
+            title: string;
+            artist_name: string;
+            year?: number | null;
+            track_count: number;
+            cover_path?: string | null;
+        };
+        LibraryAlbumListResponse: {
+            items: components["schemas"]["LibraryAlbumItem"][];
+            total: number;
+        };
+        LibraryTrackItem: {
+            /** Format: int64 */
+            id: number;
+            title: string;
+            track_number?: number | null;
+            year?: number | null;
+            disc_number?: number | null;
+            genre?: string | null;
+            path: string;
+            duration_sec?: number | null;
+        };
+        LibraryAlbumDetailResponse: {
+            /** Format: int64 */
+            id: number;
+            title: string;
+            artist_name: string;
+            year?: number | null;
+            cover_path?: string | null;
+            tracks: components["schemas"]["LibraryTrackItem"][];
+        };
+        LibraryTrackDetailResponse: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            album_id: number;
+            title: string;
+            artist_name: string;
+            album_title: string;
+            track_number?: number | null;
+            year?: number | null;
+            disc_number?: number | null;
+            genre?: string | null;
+            path: string;
+            duration_sec?: number | null;
+        };
+        LibraryTrackTagsPatchRequest: {
+            title?: string;
+            artist_name?: string;
+            album_title?: string;
+            track_number?: number;
+            year?: number;
+            disc_number?: number;
+            genre?: string;
         };
     };
     responses: {
@@ -656,6 +861,192 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    startLibraryScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryScanStartResponse"];
+                };
+            };
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getLibraryScanLatest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest scan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryScanLatestResponse"];
+                };
+            };
+        };
+    };
+    getLibraryScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryScanRunSummary"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listLibraryAlbums: {
+        parameters: {
+            query?: {
+                page?: number;
+                limit?: number;
+                search?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAlbumListResponse"];
+                };
+            };
+        };
+    };
+    getLibraryAlbum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAlbumDetailResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getLibraryAlbumCover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cover image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                    "image/png": string;
+                    "image/webp": string;
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getLibraryTrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryTrackDetailResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchLibraryTrackTags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryTrackTagsPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated track */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryTrackDetailResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     subscribeEvents: {

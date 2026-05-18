@@ -9,6 +9,12 @@ export const QUALITY_OPTIONS = [
 
 export type QualityId = (typeof QUALITY_OPTIONS)[number]["value"];
 
+/** Qobuz `format_id` → human label for queue / UI. */
+export function formatQualityLabel(quality: number): string {
+  const opt = QUALITY_OPTIONS.find((o) => o.value === quality);
+  return opt?.label ?? `quality ${quality}`;
+}
+
 export function getDefaultQuality(): QualityId {
   const raw = localStorage.getItem(STORAGE_KEY);
   const n = raw ? Number(raw) : 6;

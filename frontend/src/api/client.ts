@@ -21,6 +21,19 @@ export type CreateDownloadRequest =
 export type CreateDownloadResponse =
   components["schemas"]["CreateDownloadResponse"];
 export type JobProgressEvent = components["schemas"]["JobProgressEvent"];
+export type ScanProgressEvent = components["schemas"]["ScanProgressEvent"];
+export type LibraryScanLatestResponse =
+  components["schemas"]["LibraryScanLatestResponse"];
+export type LibraryScanStartResponse =
+  components["schemas"]["LibraryScanStartResponse"];
+export type LibraryAlbumListResponse =
+  components["schemas"]["LibraryAlbumListResponse"];
+export type LibraryAlbumDetailResponse =
+  components["schemas"]["LibraryAlbumDetailResponse"];
+export type LibraryTrackDetailResponse =
+  components["schemas"]["LibraryTrackDetailResponse"];
+export type LibraryTrackTagsPatchRequest =
+  components["schemas"]["LibraryTrackTagsPatchRequest"];
 
 const API_BASE = "/api/v1";
 
@@ -95,14 +108,56 @@ export const api = {
 
   cancelDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}`, { method: "DELETE" }),
+
+  libraryScanLatest: () =>
+    fetchJson<LibraryScanLatestResponse>("/library/scan/latest"),
+
+  startLibraryScan: () =>
+    fetchJson<LibraryScanStartResponse>("/library/scan", { method: "POST" }),
+
+  libraryAlbums: (page = 0, limit = 50, search?: string) => {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    });
+    if (search?.trim()) params.set("search", search.trim());
+    return fetchJson<LibraryAlbumListResponse>(`/library/albums?${params}`);
+  },
+
+  libraryAlbum: (id: number) =>
+    fetchJson<LibraryAlbumDetailResponse>(`/library/albums/${id}`),
+
+  libraryTrack: (id: number) =>
+    fetchJson<LibraryTrackDetailResponse>(`/library/tracks/${id}`),
+
+  patchTrackTags: (id: number, body: LibraryTrackTagsPatchRequest) =>
+    fetchJson<LibraryTrackDetailResponse>(`/library/tracks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 };
 
+export function subscribeServerEvents(handlers: {
+  onJobProgress?: (event: JobProgressEvent) => void;
+  onScanProgress?: (event: ScanProgressEvent) => void;
+}): EventSource {
+  const source = new EventSource("/api/v1/events");
+  if (handlers.onJobProgress) {
+    source.addEventListener("job_progress", (ev) => {
+      handlers.onJobProgress?.(JSON.parse(ev.data) as JobProgressEvent);
+    });
+  }
+  if (handlers.onScanProgress) {
+    source.addEventListener("scan_progress", (ev) => {
+      handlers.onScanProgress?.(JSON.parse(ev.data) as ScanProgressEvent);
+    });
+  }
+  return source;
+}
+
+/** @deprecated use subscribeServerEvents */
 export function subscribeJobProgress(
   onEvent: (event: JobProgressEvent) => void,
 ): EventSource {
-  const source = new EventSource("/api/v1/events");
-  source.addEventListener("job_progress", (ev) => {
-    onEvent(JSON.parse(ev.data) as JobProgressEvent);
-  });
-  return source;
+  return subscribeServerEvents({ onJobProgress: onEvent });
 }

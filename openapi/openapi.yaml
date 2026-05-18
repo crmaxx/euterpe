@@ -290,11 +290,225 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /api/v1/library/scan:
+    post:
+      operationId: startLibraryScan
+      tags: [Library]
+      summary: Start background library filesystem scan
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "202":
+          description: Scan accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryScanStartResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/library/scan/latest:
+    get:
+      operationId: getLibraryScanLatest
+      tags: [Library]
+      summary: Latest library scan run
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Latest scan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryScanLatestResponse"
+
+  /api/v1/library/scan/{id}:
+    get:
+      operationId: getLibraryScan
+      tags: [Library]
+      summary: Library scan run by id
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Scan run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryScanRunSummary"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/library/albums:
+    get:
+      operationId: listLibraryAlbums
+      tags: [Library]
+      summary: List indexed local albums
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Album list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryAlbumListResponse"
+
+  /api/v1/library/albums/{id}:
+    get:
+      operationId: getLibraryAlbum
+      tags: [Library]
+      summary: Album detail with tracks
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Album detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryAlbumDetailResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/library/albums/{id}/cover:
+    get:
+      operationId: getLibraryAlbumCover
+      tags: [Library]
+      summary: Album cover image file from library disk
+      description: |
+        Serves the file at `albums.cover_path` under the configured library root.
+        Returns 404 if the album has no `cover_path` or the file is missing.
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Cover image bytes
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/library/tracks/{id}:
+    get:
+      operationId: getLibraryTrack
+      tags: [Library]
+      summary: Track detail
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Track detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryTrackDetailResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchLibraryTrackTags
+      tags: [Library]
+      summary: Update audio file tags (writes to disk)
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LibraryTrackTagsPatchRequest"
+      responses:
+        "200":
+          description: Updated track
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryTrackDetailResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/events:
     get:
       operationId: subscribeEvents
       tags: [Events]
-      summary: Server-sent events stream (job progress)
+      summary: Server-sent events stream (job and scan progress)
       security:
         - AdminBearer: []
         - {}
@@ -624,3 +838,189 @@ components:
           type: number
           minimum: 0
           maximum: 100
+
+    LibraryScanStartResponse:
+      type: object
+      required: [scan_id]
+      additionalProperties: false
+      properties:
+        scan_id:
+          type: integer
+          format: int64
+
+    LibraryScanRunSummary:
+      type: object
+      required: [id, status, files_seen, files_indexed, started_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [running, success, failed, cancelled]
+        files_seen:
+          type: integer
+          minimum: 0
+        files_indexed:
+          type: integer
+          minimum: 0
+        started_at:
+          type: string
+        finished_at:
+          type: ["string", "null"]
+        error_message:
+          type: ["string", "null"]
+
+    LibraryScanLatestResponse:
+      type: object
+      required: [run]
+      additionalProperties: false
+      properties:
+        run:
+          oneOf:
+            - $ref: "#/components/schemas/LibraryScanRunSummary"
+            - type: "null"
+
+    ScanProgressEvent:
+      type: object
+      required: [scan_id, files_seen, files_indexed]
+      additionalProperties: false
+      properties:
+        scan_id:
+          type: integer
+          format: int64
+        files_seen:
+          type: integer
+          minimum: 0
+        files_indexed:
+          type: integer
+          minimum: 0
+
+    LibraryAlbumItem:
+      type: object
+      required: [id, title, artist_name, track_count]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        artist_name:
+          type: string
+        year:
+          type: ["integer", "null"]
+        track_count:
+          type: integer
+          minimum: 0
+        cover_path:
+          type: ["string", "null"]
+
+    LibraryAlbumListResponse:
+      type: object
+      required: [items, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryAlbumItem"
+        total:
+          type: integer
+          minimum: 0
+
+    LibraryTrackItem:
+      type: object
+      required: [id, title, path]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        track_number:
+          type: ["integer", "null"]
+        year:
+          type: ["integer", "null"]
+        disc_number:
+          type: ["integer", "null"]
+        genre:
+          type: ["string", "null"]
+        path:
+          type: string
+        duration_sec:
+          type: ["integer", "null"]
+
+    LibraryAlbumDetailResponse:
+      type: object
+      required: [id, title, artist_name, tracks]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        artist_name:
+          type: string
+        year:
+          type: ["integer", "null"]
+        cover_path:
+          type: ["string", "null"]
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/LibraryTrackItem"
+
+    LibraryTrackDetailResponse:
+      type: object
+      required: [id, album_id, title, artist_name, album_title, path]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        album_id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        artist_name:
+          type: string
+        album_title:
+          type: string
+        track_number:
+          type: ["integer", "null"]
+        year:
+          type: ["integer", "null"]
+        disc_number:
+          type: ["integer", "null"]
+        genre:
+          type: ["string", "null"]
+        path:
+          type: string
+        duration_sec:
+          type: ["integer", "null"]
+
+    LibraryTrackTagsPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        artist_name:
+          type: string
+        album_title:
+          type: string
+        track_number:
+          type: integer
+          minimum: 1
+        year:
+          type: integer
+        disc_number:
+          type: integer
+          minimum: 1
+        genre:
+          type: string
