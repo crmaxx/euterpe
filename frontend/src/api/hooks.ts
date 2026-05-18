@@ -121,12 +121,6 @@ export function useQobuzSync() {
   });
 }
 
-export function useTestLogin() {
-  return useMutation({
-    mutationFn: (body: QobuzTestLoginRequest) => api.testLogin(body),
-  });
-}
-
 export function useQobuzConnection() {
   return useQuery({
     queryKey: queryKeys.qobuzConnection,

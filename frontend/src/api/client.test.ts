@@ -11,7 +11,7 @@ describe("api client", () => {
 
   it("throws ApiClientError on 401", async () => {
     await expect(
-      api.testLogin({ user_id: 1, auth_token: "bad", persist: false }),
+      api.testLogin({ user_id: 1, auth_token: "bad" }),
     ).rejects.toMatchObject({
       code: "QOBUZ_AUTH_FAILED",
     } satisfies Partial<ApiClientError>);
