@@ -4,8 +4,8 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::api::{
-    CreateDownloadRequest, CreateDownloadResponse, DownloadJobListResponse, DownloadJobStatus,
-    DownloadJobType,
+    CreateDownloadRequest, CreateDownloadResponse, DownloadJobListResponse,
+    DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
 };
 use crate::db::download_jobs;
 use crate::error::ApiError;
@@ -15,6 +15,18 @@ use crate::state::AppState;
 #[derive(Debug, Deserialize)]
 pub struct ListDownloadsQuery {
     pub status: Option<DownloadJobStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteDownloadQuery {
+    /// When `1` or `true`, delete the job row (terminal jobs only).
+    pub purge: Option<String>,
+}
+
+fn purge_requested(q: &DeleteDownloadQuery) -> bool {
+    q.purge
+        .as_deref()
+        .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"))
 }
 
 pub async fn create_download(
@@ -102,13 +114,33 @@ pub async fn get_download(
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))
 }
 
-pub async fn cancel_download(
+pub async fn purge_finished_downloads(
+    State(state): State<AppState>,
+) -> Result<Json<DownloadPurgeResponse>, ApiError> {
+    let deleted = download_jobs::purge_finished(&state.db).await? as i64;
+    Ok(Json(DownloadPurgeResponse { deleted }))
+}
+
+pub async fn delete_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
+    Query(q): Query<DeleteDownloadQuery>,
 ) -> Result<StatusCode, ApiError> {
     let job = download_jobs::get(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))?;
+
+    if purge_requested(&q) {
+        if !download_jobs::is_terminal_status(job.status) {
+            return Err(ApiError::Message(
+                "cannot purge queued or running job; cancel it first".into(),
+            ));
+        }
+        if !download_jobs::delete_by_id(&state.db, id).await? {
+            return Err(ApiError::Message(format!("job {id} not found")));
+        }
+        return Ok(StatusCode::NO_CONTENT);
+    }
 
     if matches!(
         job.status,

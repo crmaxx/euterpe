@@ -6,7 +6,7 @@
 
 - **Phase 2 (interim):** вставка `user_id` + token → сохранение в БД
 - **FP-1 (будущее):** кнопка «Подключить Qobuz» → OAuth в приложении, токен в `qobuz_accounts` без DevTools
-- **FP-2 (будущее):** dropdown «Аккаунт Qobuz» — выбор активного пользователя; «Добавить аккаунт»
+- **FP-10 (будущее):** dropdown «Аккаунт Qobuz» — выбор активного пользователя; «Добавить аккаунт»
 - Инструкция fallback: [oauth-and-tokens.ru.md](../05-qobuz/oauth-and-tokens.ru.md)
 - Test connection → `POST /api/v1/qobuz/test-login`
 - Default quality: select 5/6/7/27
@@ -20,7 +20,7 @@
 - Toolbar: Sync now, Add by URL/search (Phase 2)
 - Row: Download, Remove from Qobuz favorites, Add to favorites
 - Bulk select + bulk download queue
-- **FP-4 (будущее):** сортировка по Title, Artist, In library (клик по заголовку)
+- **FP-3 (будущее):** сортировка по Title, Artist, In library (клик по заголовку)
 
 **Tests:** table renders mock data; sync mutation invalidates query.
 
@@ -28,7 +28,7 @@
 
 - Jobs: type, title, status, progress bar, cancel
 - Live updates via SSE or polling
-- **FP-3 (будущее):** «Очистить историю» (все terminal jobs, не queued/running); удаление одной строки из очереди
+- **FP-2 ✅:** «Очистить историю» (все terminal jobs, не queued/running); удаление одной строки из очереди
 
 **Tests:** progress bar at 50% when event received.
 
@@ -38,7 +38,7 @@
 - Album list + track list; превью обложки по `GET /api/v1/library/albums/{id}/cover` (плейсхолдер **No cover**, если нет пути или файла)
 - Редактирование **текстовых** тегов трека → `PATCH /api/v1/library/tracks/{id}`
 - Header shows last scan status
-- **Замена обложки из UI** — [FP-7](future-plans.ru.md#fp-7-album-cover-ui); после Qobuz-download сервер кладёт **`cover.<ext>`** (тип по MIME) и встраивает в файлы
+- **Замена обложки из UI** — [FP-6](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui); после Qobuz-download сервер кладёт **`cover.<ext>`** (тип по MIME) и встраивает в файлы
 
 **Tests:** album list renders; rescan button calls API.
 

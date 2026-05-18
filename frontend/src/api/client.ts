@@ -124,6 +124,12 @@ export const api = {
   cancelDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}`, { method: "DELETE" }),
 
+  purgeFinishedDownloads: () =>
+    fetchJson<{ deleted: number }>("/downloads/purge", { method: "POST" }),
+
+  purgeDownload: (id: number) =>
+    fetchJson<void>(`/downloads/${id}?purge=1`, { method: "DELETE" }),
+
   libraryScanLatest: () =>
     fetchJson<LibraryScanLatestResponse>("/library/scan/latest"),
 

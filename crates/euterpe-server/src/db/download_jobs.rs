@@ -212,6 +212,35 @@ pub async fn finish_failed(pool: &SqlitePool, id: i64, error: &str) -> Result<()
     Ok(())
 }
 
+pub fn is_terminal_status(status: DownloadJobStatus) -> bool {
+    matches!(
+        status,
+        DownloadJobStatus::Completed | DownloadJobStatus::Failed | DownloadJobStatus::Cancelled
+    )
+}
+
+/// Remove all jobs that are not `queued` or `running`.
+pub async fn purge_finished(pool: &SqlitePool) -> Result<u64, ApiError> {
+    let result = sqlx::query(
+        r#"
+        DELETE FROM download_jobs
+        WHERE status IN ('completed', 'failed', 'cancelled')
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Permanently delete a job row. Caller must enforce terminal-only for active jobs.
+pub async fn delete_by_id(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
+    let result = sqlx::query("DELETE FROM download_jobs WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn cancel(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
     let result = sqlx::query(
         r#"
@@ -252,6 +281,50 @@ mod tests {
             .unwrap();
         assert!(claim_running(&pool, id).await.unwrap());
         assert!(!claim_running(&pool, id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn purge_finished_removes_terminal_jobs_only() {
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+
+        let queued = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
+            .await
+            .unwrap();
+        let running = insert_queued(&pool, DownloadJobType::Album, 2, 6, None)
+            .await
+            .unwrap();
+        claim_running(&pool, running).await.unwrap();
+        let done = insert_queued(&pool, DownloadJobType::Album, 3, 6, None)
+            .await
+            .unwrap();
+        claim_running(&pool, done).await.unwrap();
+        finish_success(&pool, done).await.unwrap();
+        let failed = insert_queued(&pool, DownloadJobType::Album, 4, 6, None)
+            .await
+            .unwrap();
+        finish_failed(&pool, failed, "err").await.unwrap();
+
+        let n = purge_finished(&pool).await.unwrap();
+        assert_eq!(n, 2);
+
+        assert!(get(&pool, queued).await.unwrap().is_some());
+        assert!(get(&pool, running).await.unwrap().is_some());
+        assert!(get(&pool, done).await.unwrap().is_none());
+        assert!(get(&pool, failed).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_by_id_removes_row() {
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        let id = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
+            .await
+            .unwrap();
+        claim_running(&pool, id).await.unwrap();
+        finish_success(&pool, id).await.unwrap();
+        assert!(delete_by_id(&pool, id).await.unwrap());
+        assert!(get(&pool, id).await.unwrap().is_none());
     }
 
     #[tokio::test]

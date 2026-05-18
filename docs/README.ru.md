@@ -20,7 +20,7 @@
 - [vision.ru.md](00-overview/vision.ru.md) — видение и цели
 - [glossary.ru.md](00-overview/glossary.ru.md) — термины
 - [roadmap.ru.md](00-overview/roadmap.ru.md) — дорожная карта
-- [future-plans.ru.md](00-overview/future-plans.ru.md) — OAuth в приложении, multi-account Qobuz, очередь, FP-5…FP-7 (теги и обложка из UI)
+- [future-plans.ru.md](00-overview/future-plans.ru.md) — OAuth в приложении, multi-account Qobuz, очередь, FP-4…FP-6 (теги и обложка из UI)
 - [development-process.ru.md](00-overview/development-process.ru.md) — TDD и quality gates
 
 ### 01 — Архитектура

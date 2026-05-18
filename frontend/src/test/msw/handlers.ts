@@ -81,6 +81,16 @@ export const handlers = [
           created_at: "2026-01-01",
           updated_at: "2026-01-01",
         },
+        {
+          id: 2,
+          status: "completed",
+          job_type: "album",
+          qobuz_id: 100,
+          quality: 6,
+          progress_pct: 100,
+          created_at: "2026-01-01",
+          updated_at: "2026-01-01",
+        },
       ],
     }),
   ),
@@ -91,7 +101,17 @@ export const handlers = [
 
   http.delete("/api/v1/qobuz/favorites", () => new HttpResponse(null, { status: 204 })),
 
-  http.delete("/api/v1/downloads/:id", () => new HttpResponse(null, { status: 204 })),
+  http.post("/api/v1/downloads/purge", () =>
+    HttpResponse.json({ deleted: 1 }),
+  ),
+
+  http.delete("/api/v1/downloads/:id", ({ request }) => {
+    const url = new URL(request.url);
+    if (url.searchParams.get("purge") === "1") {
+      return new HttpResponse(null, { status: 204 });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
 
   http.get("/api/v1/library/scan/latest", () =>
     HttpResponse.json({

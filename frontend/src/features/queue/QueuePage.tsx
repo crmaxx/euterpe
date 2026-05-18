@@ -5,16 +5,24 @@ import {
   useCancelDownload,
   useDownloads,
   useFavorites,
+  usePurgeDownload,
+  usePurgeFinishedDownloads,
 } from "@/api/hooks";
 import { subscribeJobProgress, type DownloadJob } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { formatQualityLabel } from "@/lib/quality";
 
+function isTerminalStatus(status: DownloadJob["status"]) {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
 export function QueuePage() {
   const { data, isLoading } = useDownloads();
   const { data: favorites } = useFavorites(0, 500);
   const cancel = useCancelDownload();
+  const purgeFinished = usePurgeFinishedDownloads();
+  const purgeOne = usePurgeDownload();
   const qc = useQueryClient();
   const [progress, setProgress] = useState<Record<number, number>>({});
 
@@ -35,10 +43,34 @@ export function QueuePage() {
   }, [qc]);
 
   const jobs = data?.items ?? [];
+  const hasTerminalJobs = jobs.some((j) => isTerminalStatus(j.status));
+
+  const handleClearHistory = () => {
+    if (
+      !window.confirm(
+        "Remove all completed, failed, and cancelled jobs from the list? Active downloads will be kept.",
+      )
+    ) {
+      return;
+    }
+    void purgeFinished.mutateAsync();
+  };
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-semibold">Download queue</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-2xl font-semibold">Download queue</h2>
+        {hasTerminalJobs ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={purgeFinished.isPending}
+            onClick={handleClearHistory}
+          >
+            Clear history
+          </Button>
+        ) : null}
+      </div>
       {isLoading ? (
         <p className="text-muted-foreground">Loading…</p>
       ) : jobs.length === 0 ? (
@@ -52,7 +84,9 @@ export function QueuePage() {
               title={titleByQobuzId.get(job.qobuz_id) ?? `Album #${job.qobuz_id}`}
               liveProgress={progress[job.id]}
               onCancel={() => void cancel.mutateAsync(job.id)}
+              onDelete={() => void purgeOne.mutateAsync(job.id)}
               cancelPending={cancel.isPending}
+              deletePending={purgeOne.isPending}
             />
           ))}
         </div>
@@ -66,16 +100,21 @@ function JobRow({
   title,
   liveProgress,
   onCancel,
+  onDelete,
   cancelPending,
+  deletePending,
 }: {
   job: DownloadJob;
   title: string;
   liveProgress?: number;
   onCancel: () => void;
+  onDelete: () => void;
   cancelPending: boolean;
+  deletePending: boolean;
 }) {
   const pct = liveProgress ?? job.progress_pct;
   const canCancel = job.status === "queued" || job.status === "running";
+  const canDelete = isTerminalStatus(job.status);
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
@@ -86,16 +125,28 @@ function JobRow({
             #{job.id} · {job.job_type} · {formatQualityLabel(job.quality)} · {job.status}
           </p>
         </div>
-        {canCancel ? (
-          <Button
-            size="sm"
-            variant="destructive"
-            disabled={cancelPending}
-            onClick={onCancel}
-          >
-            Cancel
-          </Button>
-        ) : null}
+        <div className="flex gap-2">
+          {canCancel ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={cancelPending}
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={deletePending}
+              onClick={onDelete}
+            >
+              Delete
+            </Button>
+          ) : null}
+        </div>
       </div>
       <Progress value={pct} aria-label={`Progress ${pct}%`} />
       <p className="mt-1 text-xs text-muted-foreground">{pct.toFixed(0)}%</p>

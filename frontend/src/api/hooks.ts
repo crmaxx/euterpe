@@ -179,3 +179,23 @@ export function useCancelDownload() {
     },
   });
 }
+
+export function usePurgeFinishedDownloads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.purgeFinishedDownloads(),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.downloads });
+    },
+  });
+}
+
+export function usePurgeDownload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.purgeDownload(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.downloads });
+    },
+  });
+}

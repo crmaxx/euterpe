@@ -238,6 +238,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/downloads/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete all finished download jobs (completed, failed, cancelled) */
+        post: operations["purgeFinishedDownloads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/downloads/{id}": {
         parameters: {
             query?: never;
@@ -249,7 +266,11 @@ export interface paths {
         get: operations["getDownload"];
         put?: never;
         post?: never;
-        /** Cancel a queued or running download job */
+        /**
+         * Cancel a queued/running job, or permanently delete a finished job
+         * @description Without `purge`: cancel a `queued` or `running` job (sets status to `cancelled`).
+         *     With `purge=1`: permanently remove the row; only allowed for `completed`, `failed`, or `cancelled`.
+         */
         delete: operations["cancelDownload"];
         options?: never;
         head?: never;
@@ -536,6 +557,10 @@ export interface components {
         };
         DownloadJobListResponse: {
             items: components["schemas"]["DownloadJob"][];
+        };
+        DownloadPurgeResponse: {
+            /** Format: int64 */
+            deleted: number;
         };
         JobProgressEvent: {
             /** Format: int64 */
@@ -1044,6 +1069,26 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    purgeFinishedDownloads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Purge result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadPurgeResponse"];
+                };
+            };
+        };
+    };
     getDownload: {
         parameters: {
             query?: never;
@@ -1069,7 +1114,10 @@ export interface operations {
     };
     cancelDownload: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description When set, delete the job row instead of cancelling. */
+                purge?: "1" | "true";
+            };
             header?: never;
             path: {
                 id: number;
@@ -1078,7 +1126,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Cancelled */
+            /** @description Cancelled or purged */
             204: {
                 headers: {
                     [name: string]: unknown;

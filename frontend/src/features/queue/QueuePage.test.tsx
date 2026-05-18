@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { JobProgressEvent } from "@/api/client";
 import { ToastStateProvider } from "@/hooks/toast-provider";
@@ -50,6 +51,43 @@ describe("QueuePage", () => {
       expect(screen.getByLabelText("Progress 50%")).toBeInTheDocument();
     });
 
+    vi.unstubAllGlobals();
+  });
+
+  it("shows Clear history when terminal jobs exist", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    vi.stubGlobal("confirm", vi.fn(() => true));
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastStateProvider>
+          <QueuePage />
+        </ToastStateProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole("button", { name: /clear history/i });
+    vi.unstubAllGlobals();
+  });
+
+  it("purges finished jobs on Clear history confirm", async () => {
+    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    const user = userEvent.setup();
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastStateProvider>
+          <QueuePage />
+        </ToastStateProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /clear history/i }));
+    expect(confirm).toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 });

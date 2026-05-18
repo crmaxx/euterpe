@@ -344,6 +344,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/DownloadJobListResponse"
 
+  /api/v1/downloads/purge:
+    post:
+      operationId: purgeFinishedDownloads
+      tags: [Downloads]
+      summary: Delete all finished download jobs (completed, failed, cancelled)
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Purge result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadPurgeResponse"
+
   /api/v1/downloads/{id}:
     get:
       operationId: getDownload
@@ -372,7 +388,10 @@ paths:
     delete:
       operationId: cancelDownload
       tags: [Downloads]
-      summary: Cancel a queued or running download job
+      summary: Cancel a queued/running job, or permanently delete a finished job
+      description: |
+        Without `purge`: cancel a `queued` or `running` job (sets status to `cancelled`).
+        With `purge=1`: permanently remove the row; only allowed for `completed`, `failed`, or `cancelled`.
       security:
         - AdminBearer: []
         - {}
@@ -384,9 +403,16 @@ paths:
             type: integer
             format: int64
             minimum: 1
+        - name: purge
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["1", "true"]
+          description: When set, delete the job row instead of cancelling.
       responses:
         "204":
-          description: Cancelled
+          description: Cancelled or purged
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -987,6 +1013,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DownloadJob"
+
+    DownloadPurgeResponse:
+      type: object
+      required: [deleted]
+      additionalProperties: false
+      properties:
+        deleted:
+          type: integer
+          format: int64
+          minimum: 0
 
     JobProgressEvent:
       type: object

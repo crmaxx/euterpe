@@ -40,9 +40,9 @@ Euterpe — локальное веб-приложение для **управл
 
 - **OAuth в приложении** — получение Qobuz-токена из UI, сохранение в БД (без DevTools)
 - **Несколько аккаунтов Qobuz** — выбор активного пользователя для sync и загрузок
-- **Автозаполнение тегов** — запросы к каталогам (MusicBrainz, Discogs, GnuDB, TrackType.org и др.); см. [FP-5](future-plans.ru.md#fp-5-metadata-lookup)
-- **Теги из Qobuz при скачивании** — перенос метаданных `album/get` в файлы сразу после download; см. [FP-6](future-plans.ru.md#fp-6-qobuz-download-tags)
-- **Обложка альбома из UI** — загрузка/замена через приложение (`cover.<ext>` по MIME, re-embed); см. [FP-7](future-plans.ru.md#fp-7-album-cover-ui)
+- **Автозаполнение тегов** — запросы к каталогам (MusicBrainz, Discogs, GnuDB, TrackType.org и др.); см. [FP-4](future-plans.ru.md#fp-4--автозаполнение-тегов-из-внешних-каталогов)
+- **Теги из Qobuz при скачивании** — перенос метаданных `album/get` в файлы сразу после download; см. [FP-5](future-plans.ru.md#fp-5--автопроставление-тегов-из-qobuz-при-скачивании)
+- **Обложка альбома из UI** — загрузка/замена через приложение (`cover.<ext>` по MIME, re-embed); см. [FP-6](future-plans.ru.md#fp-6--обложка-альбома-загрузка-и-замена-из-ui)
 
 ## Нефункциональные требования
 
