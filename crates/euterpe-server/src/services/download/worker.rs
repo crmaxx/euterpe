@@ -629,10 +629,16 @@ mod tests {
 
         let lib_album_id = crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
             .await
+            .unwrap()
+            .expect("album row for favorites in_library JOIN (qobuz_album_id=job.qobuz_id)");
+
+        let indexed = crate::db::tracks::list_by_album(&pool, lib_album_id)
+            .await
             .unwrap();
-        assert!(
-            lib_album_id.is_some(),
-            "album row for favorites in_library JOIN (qobuz_album_id=job.qobuz_id)"
+        assert_eq!(
+            indexed.len(),
+            album_for_assert.tracks.as_ref().unwrap().items.len(),
+            "tracks indexed without library/scan"
         );
     }
 
@@ -836,6 +842,19 @@ mod tests {
         assert_eq!(std::fs::read(&existing).unwrap(), body);
         let track2 = track_path(dir.path(), &album, &album.tracks.as_ref().unwrap().items[1], 6);
         assert_eq!(std::fs::read(&track2).unwrap(), body);
+
+        let lib_album_id = crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
+            .await
+            .unwrap()
+            .expect("album indexed after skip-download job");
+        let indexed = crate::db::tracks::list_by_album(&pool, lib_album_id)
+            .await
+            .unwrap();
+        assert_eq!(indexed.len(), 2);
+        assert!(
+            indexed.iter().any(|t| t.qobuz_track_id == Some(1)),
+            "skipped download still indexes track from API + on-disk path"
+        );
     }
 
     #[tokio::test]

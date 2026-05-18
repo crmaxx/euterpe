@@ -194,14 +194,13 @@
 
 Rescan остаётся **инструментом восстановления**, а не обязательным шагом после каждой загрузки.
 
-### Сделано сейчас (частично)
+### Сделано
 
-- **FP-7a (done):** после всех треков — `register_album_from_qobuz_download`: только строка **`albums`** + `path`, `qobuz_album_id` = `download_jobs.qobuz_id`.
-- Обложка: `apply_album_cover_after_download` → `cover.<ext>` + привязка к альбому.
+- **FP-7a (done):** после всех треков — `register_album_from_qobuz_download`: **`albums`** + `path`, `qobuz_album_id` = `download_jobs.qobuz_id`.
+- **FP-7b–7c (done):** тот же вызов upsert **всех `tracks`** из `AlbumDetail` (API-поля + `track_path`, `file_mtime` без SHA256); unit + worker-тесты без `library/scan`.
+- Обложка: `apply_album_cover_after_download` → `cover.<ext>` + привязка к альбому (после register).
 
-**Не сделано:** строки в **`tracks`** → страница Library пуста по трекам до первого scan.
-
-### Целевая реализация (`register_download.rs`)
+### Реализация (`register_download.rs`)
 
 Один вызов в конце `run_album_job` (после цикла download, до/после cover — зафиксировать порядок с FP-5):
 
@@ -244,8 +243,8 @@ register_library_from_qobuz_download(pool, library_root, favorite_catalog_id, al
 | ID    | Scope                                                                                         |
 | ----- | --------------------------------------------------------------------------------------------- |
 | FP-7a | (done) upsert `albums` после download                                                         |
-| FP-7b | Upsert **всех `tracks`** альбома из `AlbumDetail` + paths; тест worker/mock без `library/scan` |
-| FP-7c | Интеграция: после download альбом виден в `GET …/library/albums` и треки в `…/albums/{id}`   |
+| FP-7b | (done) upsert **всех `tracks`** из `AlbumDetail` + paths; unit-тесты без `library/scan`       |
+| FP-7c | (done) worker integration: `tracks::list_by_album` после job без scan                         |
 | FP-7d | Согласовать порядок с FP-5 (теги в файл + индекс); skip-by-size всё равно индексирует       |
 | FP-7e | (optional) Scan одного каталога альбома для repair / файлов вне worker                      |
 | FP-7f | UI: убрать/смягчить подсказку «запустите сканирование» для свежих download                  |
