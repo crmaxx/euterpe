@@ -418,6 +418,93 @@ export interface paths {
         patch: operations["patchLibraryTrackTags"];
         trace?: never;
     };
+    "/api/v1/library/albums/{id}/metadata/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search external catalog for album metadata candidates */
+        post: operations["albumMetadataLookup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{id}/metadata/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply selected metadata candidate to album files and index */
+        post: operations["albumMetadataApply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List configured integrations */
+        get: operations["listIntegrations"];
+        put?: never;
+        /** Add integration from catalog */
+        post: operations["createIntegration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Available integration providers */
+        get: operations["integrationsCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove integration */
+        delete: operations["deleteIntegration"];
+        options?: never;
+        head?: never;
+        /** Update integration */
+        patch: operations["patchIntegration"];
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -676,6 +763,104 @@ export interface components {
             year?: number;
             disc_number?: number;
             genre?: string;
+        };
+        MetadataCandidate: {
+            id: string;
+            title: string;
+            artist_name: string;
+            year?: number | null;
+            /** Format: float */
+            score: number;
+            track_count?: number | null;
+            source_label: string;
+        };
+        AlbumMetadataLookupRequest: {
+            /** Format: int64 */
+            integration_id: number;
+            /**
+             * @description Catalog page (Discogs supports pagination; other providers use page 1 only).
+             * @default 1
+             */
+            page: number;
+        };
+        AlbumMetadataLookupResponse: {
+            candidates: components["schemas"]["MetadataCandidate"][];
+            page: number;
+            /** @description True when more catalog pages are available (Discogs). */
+            has_more: boolean;
+        };
+        AlbumMetadataApplyRequest: {
+            /** Format: int64 */
+            integration_id: number;
+            candidate_id: string;
+        };
+        AlbumMetadataApplyResponse: {
+            tracks_updated: number;
+            cover_applied: boolean;
+            warnings: string[];
+        };
+        IntegrationConfigFieldSchema: {
+            key: string;
+            label: string;
+            field_type: string;
+            required: boolean;
+            secret: boolean;
+            placeholder?: string | null;
+        };
+        IntegrationCatalogEntry: {
+            provider: string;
+            integration_type: string;
+            label: string;
+            description: string;
+            requires_master_key: boolean;
+            config_schema: components["schemas"]["IntegrationConfigFieldSchema"][];
+        };
+        IntegrationListItem: {
+            /** Format: int64 */
+            id: number;
+            integration_type: string;
+            provider: string;
+            display_name: string;
+            enabled: boolean;
+            config: {
+                [key: string]: unknown;
+            };
+            has_secrets: boolean;
+            sort_order: number;
+            created_at: string;
+            updated_at: string;
+        };
+        IntegrationsListResponse: {
+            items: components["schemas"]["IntegrationListItem"][];
+        };
+        IntegrationsCatalogResponse: {
+            items: components["schemas"]["IntegrationCatalogEntry"][];
+        };
+        IntegrationCreateRequest: {
+            provider: string;
+            /** @enum {string} */
+            type: "tag_source";
+            display_name?: string;
+            enabled?: boolean;
+            config: {
+                [key: string]: unknown;
+            };
+            secrets?: {
+                [key: string]: unknown;
+            };
+        };
+        IntegrationPatchRequest: {
+            display_name?: string;
+            enabled?: boolean;
+            config?: {
+                [key: string]: unknown;
+            };
+            secrets?: {
+                [key: string]: unknown;
+            };
+        };
+        IntegrationResponse: {
+            item: components["schemas"]["IntegrationListItem"];
         };
     };
     responses: {
@@ -1385,6 +1570,179 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LibraryTrackDetailResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    albumMetadataLookup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlbumMetadataLookupRequest"];
+            };
+        };
+        responses: {
+            /** @description Candidate list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumMetadataLookupResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+        };
+    };
+    albumMetadataApply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlbumMetadataApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Apply result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumMetadataApplyResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+            502: components["responses"]["BadGateway"];
+        };
+    };
+    listIntegrations: {
+        parameters: {
+            query?: {
+                type?: "tag_source";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Integration list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationsListResponse"];
+                };
+            };
+        };
+    };
+    createIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntegrationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    integrationsCatalog: {
+        parameters: {
+            query?: {
+                type?: "tag_source";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Catalog entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationsCatalogResponse"];
+                };
+            };
+        };
+    };
+    deleteIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchIntegration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntegrationPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationResponse"];
                 };
             };
             404: components["responses"]["NotFound"];

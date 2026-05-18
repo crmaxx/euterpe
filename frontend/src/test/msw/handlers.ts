@@ -201,6 +201,116 @@ export const handlers = [
     }),
   ),
 
+  http.get("/api/v1/integrations/catalog", () =>
+    HttpResponse.json({
+      items: [
+        {
+          provider: "musicbrainz",
+          integration_type: "tag_source",
+          label: "MusicBrainz",
+          description: "MusicBrainz",
+          requires_master_key: false,
+          config_schema: [
+            {
+              key: "contact",
+              label: "Contact email",
+              field_type: "string",
+              required: true,
+              secret: false,
+              placeholder: "you@example.com",
+            },
+          ],
+        },
+      ],
+    }),
+  ),
+
+  http.get("/api/v1/integrations", () =>
+    HttpResponse.json({
+      items: [
+        {
+          id: 1,
+          integration_type: "tag_source",
+          provider: "musicbrainz",
+          display_name: "MusicBrainz",
+          enabled: true,
+          config: { contact: "test@example.com" },
+          has_secrets: false,
+          sort_order: 0,
+          created_at: "2026-01-01",
+          updated_at: "2026-01-01",
+        },
+      ],
+    }),
+  ),
+
+  http.post("/api/v1/integrations", async ({ request }) => {
+    const body = (await request.json()) as { provider?: string };
+    return HttpResponse.json(
+      {
+        item: {
+          id: 2,
+          integration_type: "tag_source",
+          provider: body.provider ?? "musicbrainz",
+          display_name: "New",
+          enabled: true,
+          config: {},
+          has_secrets: false,
+          sort_order: 1,
+          created_at: "2026-01-01",
+          updated_at: "2026-01-01",
+        },
+      },
+      { status: 201 },
+    );
+  }),
+
+  http.patch("/api/v1/integrations/:id", async ({ params, request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      item: {
+        id: Number(params.id),
+        integration_type: "tag_source",
+        provider: "musicbrainz",
+        display_name: "MusicBrainz",
+        enabled: (body.enabled as boolean | undefined) ?? true,
+        config: { contact: "test@example.com" },
+        has_secrets: false,
+        sort_order: 0,
+        created_at: "2026-01-01",
+        updated_at: "2026-01-01",
+      },
+    });
+  }),
+
+  http.delete("/api/v1/integrations/:id", () => new HttpResponse(null, { status: 204 })),
+
+  http.post("/api/v1/library/albums/:id/metadata/lookup", () =>
+    HttpResponse.json({
+      candidates: [
+        {
+          id: "cand-1",
+          title: "Local Album",
+          artist_name: "Test Artist",
+          year: 2020,
+          score: 0.95,
+          track_count: 1,
+          source_label: "MusicBrainz",
+        },
+      ],
+      page: 1,
+      has_more: false,
+    }),
+  ),
+
+  http.post("/api/v1/library/albums/:id/metadata/apply", () =>
+    HttpResponse.json({
+      tracks_updated: 1,
+      cover_applied: false,
+      warnings: [],
+    }),
+  ),
+
   http.patch("/api/v1/library/tracks/:id", async ({ params, request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     return HttpResponse.json({

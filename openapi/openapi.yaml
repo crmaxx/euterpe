@@ -713,6 +713,194 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/library/albums/{id}/metadata/lookup:
+    post:
+      operationId: albumMetadataLookup
+      tags: [Library]
+      summary: Search external catalog for album metadata candidates
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlbumMetadataLookupRequest"
+      responses:
+        "200":
+          description: Candidate list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumMetadataLookupResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /api/v1/library/albums/{id}/metadata/apply:
+    post:
+      operationId: albumMetadataApply
+      tags: [Library]
+      summary: Apply selected metadata candidate to album files and index
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlbumMetadataApplyRequest"
+      responses:
+        "200":
+          description: Apply result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlbumMetadataApplyResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /api/v1/integrations:
+    get:
+      operationId: listIntegrations
+      tags: [Integrations]
+      summary: List configured integrations
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [tag_source]
+      responses:
+        "200":
+          description: Integration list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsListResponse"
+    post:
+      operationId: createIntegration
+      tags: [Integrations]
+      summary: Add integration from catalog
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationCreateRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/integrations/catalog:
+    get:
+      operationId: integrationsCatalog
+      tags: [Integrations]
+      summary: Available integration providers
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [tag_source]
+      responses:
+        "200":
+          description: Catalog entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationsCatalogResponse"
+
+  /api/v1/integrations/{id}:
+    patch:
+      operationId: patchIntegration
+      tags: [Integrations]
+      summary: Update integration
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntegrationPatchRequest"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntegrationResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteIntegration
+      tags: [Integrations]
+      summary: Remove integration
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/events:
     get:
       operationId: subscribeEvents
@@ -1327,3 +1515,210 @@ components:
           minimum: 1
         genre:
           type: string
+
+    MetadataCandidate:
+      type: object
+      required: [id, title, artist_name, score, source_label]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        artist_name:
+          type: string
+        year:
+          type: ["integer", "null"]
+        score:
+          type: number
+          format: float
+        track_count:
+          type: ["integer", "null"]
+        source_label:
+          type: string
+
+    AlbumMetadataLookupRequest:
+      type: object
+      required: [integration_id]
+      additionalProperties: false
+      properties:
+        integration_id:
+          type: integer
+          format: int64
+        page:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Catalog page (Discogs supports pagination; other providers use page 1 only).
+
+    AlbumMetadataLookupResponse:
+      type: object
+      required: [candidates, page, has_more]
+      additionalProperties: false
+      properties:
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/MetadataCandidate"
+        page:
+          type: integer
+          minimum: 1
+        has_more:
+          type: boolean
+          description: True when more catalog pages are available (Discogs).
+
+    AlbumMetadataApplyRequest:
+      type: object
+      required: [integration_id, candidate_id]
+      additionalProperties: false
+      properties:
+        integration_id:
+          type: integer
+          format: int64
+        candidate_id:
+          type: string
+
+    AlbumMetadataApplyResponse:
+      type: object
+      required: [tracks_updated, cover_applied, warnings]
+      additionalProperties: false
+      properties:
+        tracks_updated:
+          type: integer
+          minimum: 0
+        cover_applied:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+
+    IntegrationConfigFieldSchema:
+      type: object
+      required: [key, label, field_type, required, secret]
+      additionalProperties: false
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        field_type:
+          type: string
+        required:
+          type: boolean
+        secret:
+          type: boolean
+        placeholder:
+          type: ["string", "null"]
+
+    IntegrationCatalogEntry:
+      type: object
+      required: [provider, integration_type, label, description, requires_master_key, config_schema]
+      additionalProperties: false
+      properties:
+        provider:
+          type: string
+        integration_type:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        requires_master_key:
+          type: boolean
+        config_schema:
+          type: array
+          items:
+            $ref: "#/components/schemas/IntegrationConfigFieldSchema"
+
+    IntegrationListItem:
+      type: object
+      required: [id, integration_type, provider, display_name, enabled, config, has_secrets, sort_order, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        integration_type:
+          type: string
+        provider:
+          type: string
+        display_name:
+          type: string
+        enabled:
+          type: boolean
+        config:
+          type: object
+          additionalProperties: true
+        has_secrets:
+          type: boolean
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    IntegrationsListResponse:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IntegrationListItem"
+
+    IntegrationsCatalogResponse:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IntegrationCatalogEntry"
+
+    IntegrationCreateRequest:
+      type: object
+      required: [provider, type, config]
+      additionalProperties: false
+      properties:
+        provider:
+          type: string
+        type:
+          type: string
+          enum: [tag_source]
+        display_name:
+          type: string
+        enabled:
+          type: boolean
+        config:
+          type: object
+          additionalProperties: true
+        secrets:
+          type: object
+          additionalProperties: true
+
+    IntegrationPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+        enabled:
+          type: boolean
+        config:
+          type: object
+          additionalProperties: true
+        secrets:
+          type: object
+          additionalProperties: true
+
+    IntegrationResponse:
+      type: object
+      required: [item]
+      additionalProperties: false
+      properties:
+        item:
+          $ref: "#/components/schemas/IntegrationListItem"

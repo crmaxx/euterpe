@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod credentials;
 pub mod db;
 pub mod error;
+pub mod integrations;
 pub mod library;
 pub mod middleware;
 pub mod openapi;

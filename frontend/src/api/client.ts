@@ -43,6 +43,27 @@ export type LibraryTrackDetailResponse =
   components["schemas"]["LibraryTrackDetailResponse"];
 export type LibraryTrackTagsPatchRequest =
   components["schemas"]["LibraryTrackTagsPatchRequest"];
+export type IntegrationListItem = components["schemas"]["IntegrationListItem"];
+export type IntegrationsListResponse =
+  components["schemas"]["IntegrationsListResponse"];
+export type IntegrationsCatalogResponse =
+  components["schemas"]["IntegrationsCatalogResponse"];
+export type IntegrationCatalogEntry =
+  components["schemas"]["IntegrationCatalogEntry"];
+export type IntegrationCreateRequest =
+  components["schemas"]["IntegrationCreateRequest"];
+export type IntegrationPatchRequest =
+  components["schemas"]["IntegrationPatchRequest"];
+export type IntegrationResponse = components["schemas"]["IntegrationResponse"];
+export type MetadataCandidate = components["schemas"]["MetadataCandidate"];
+export type AlbumMetadataLookupRequest =
+  components["schemas"]["AlbumMetadataLookupRequest"];
+export type AlbumMetadataLookupResponse =
+  components["schemas"]["AlbumMetadataLookupResponse"];
+export type AlbumMetadataApplyRequest =
+  components["schemas"]["AlbumMetadataApplyRequest"];
+export type AlbumMetadataApplyResponse =
+  components["schemas"]["AlbumMetadataApplyResponse"];
 
 const API_BASE = "/api/v1";
 
@@ -192,6 +213,43 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+
+  listIntegrations: (type?: "tag_source") => {
+    const search = type ? `?type=${type}` : "";
+    return fetchJson<IntegrationsListResponse>(`/integrations${search}`);
+  },
+
+  integrationsCatalog: (type?: "tag_source") => {
+    const search = type ? `?type=${type}` : "";
+    return fetchJson<IntegrationsCatalogResponse>(`/integrations/catalog${search}`);
+  },
+
+  createIntegration: (body: IntegrationCreateRequest) =>
+    fetchJson<IntegrationResponse>("/integrations", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  patchIntegration: (id: number, body: IntegrationPatchRequest) =>
+    fetchJson<IntegrationResponse>(`/integrations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteIntegration: (id: number) =>
+    fetchJson<void>(`/integrations/${id}`, { method: "DELETE" }),
+
+  albumMetadataLookup: (albumId: number, body: AlbumMetadataLookupRequest) =>
+    fetchJson<AlbumMetadataLookupResponse>(
+      `/library/albums/${albumId}/metadata/lookup`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  albumMetadataApply: (albumId: number, body: AlbumMetadataApplyRequest) =>
+    fetchJson<AlbumMetadataApplyResponse>(
+      `/library/albums/${albumId}/metadata/apply`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
 };
 
 export function subscribeServerEvents(handlers: {

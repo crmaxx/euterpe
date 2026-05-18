@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { IntegrationsSection } from "@/features/settings/IntegrationsSection";
 import { useToast } from "@/hooks/use-toast";
 import {
   getDefaultQuality,
@@ -109,7 +110,7 @@ export function SettingsPage() {
   const connected = connection?.connected === true;
 
   return (
-    <div className="mx-auto max-w-lg space-y-8">
+    <div className="mx-auto max-w-3xl space-y-8">
       <div>
         <h2 className="text-2xl font-semibold">Settings</h2>
         <p className="text-sm text-muted-foreground">
@@ -164,6 +165,8 @@ export function SettingsPage() {
           </div>
         )}
       </section>
+
+      <IntegrationsSection />
 
       <section className="space-y-4 rounded-lg border border-border bg-card p-4">
         <h3 className="font-medium">Downloads</h3>

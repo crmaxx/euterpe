@@ -8,6 +8,7 @@ use walkdir::WalkDir;
 use crate::api::ScanProgressEvent;
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
+use crate::library::covers::discover_album_cover_rel;
 use crate::library::fs::file_mtime_sync;
 use crate::library::tags::{self, is_audio_file};
 
@@ -93,6 +94,7 @@ async fn index_file(pool: &SqlitePool, root: &Path, path: &Path) -> Result<(), A
 
     let artist_id = artists::upsert_by_name(pool, &tags.artist, None).await?;
     let year = tags.year.map(|y| y as i32);
+    let cover_path = discover_album_cover_rel(root, &album_path_str);
     let album_id = albums::upsert(
         pool,
         albums::AlbumUpsert {
@@ -101,7 +103,7 @@ async fn index_file(pool: &SqlitePool, root: &Path, path: &Path) -> Result<(), A
             year,
             qobuz_album_id: tags.qobuz_album_id.map(|id| id as i64),
             path: Some(&album_path_str),
-            cover_path: None,
+            cover_path: cover_path.as_deref(),
         },
     )
     .await?;

@@ -34,6 +34,10 @@ impl ApiError {
             ApiError::Message(msg) if msg.contains("cannot cancel") => "JOB_NOT_CANCELLABLE",
             ApiError::Message(msg) if msg.contains("cannot purge") => "JOB_NOT_PURGEABLE",
             ApiError::Message(msg) if msg.contains("INVALID_CURSOR") => "INVALID_CURSOR",
+            ApiError::Message(msg) if msg.contains("PROVIDER_UNAVAILABLE") => {
+                "PROVIDER_UNAVAILABLE"
+            }
+            ApiError::Message(msg) if msg.contains("integration not found") => "NOT_FOUND",
             ApiError::Qobuz(QobuzError::Authentication(_)) => "QOBUZ_AUTH_FAILED",
             ApiError::Qobuz(_) => "QOBUZ_UNAVAILABLE",
             ApiError::Message(_) => "BAD_REQUEST",
@@ -55,6 +59,9 @@ impl ApiError {
             ApiError::Message(msg) if msg.contains("not found") => StatusCode::NOT_FOUND,
             ApiError::Message(msg) if msg.contains("cannot cancel") => StatusCode::CONFLICT,
             ApiError::Message(msg) if msg.contains("cannot purge") => StatusCode::CONFLICT,
+            ApiError::Message(msg) if msg.contains("PROVIDER_UNAVAILABLE") => {
+                StatusCode::BAD_GATEWAY
+            }
             ApiError::Qobuz(QobuzError::Authentication(_)) => StatusCode::UNAUTHORIZED,
             ApiError::Qobuz(_) => StatusCode::BAD_GATEWAY,
             ApiError::Message(_) => StatusCode::BAD_REQUEST,
