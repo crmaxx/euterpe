@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 use super::artist::ArtistRef;
+use super::catalog_meta::GenreRef;
 use super::deser::{deserialize_null_string, deserialize_opt_f64, deserialize_qobuz_id};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -15,6 +16,14 @@ pub struct TrackSummary {
     pub performer: Option<ArtistRef>,
     #[serde(rename = "hires_streamable")]
     pub hires_streamable: Option<bool>,
+    #[serde(rename = "media_number", default)]
+    pub media_number: Option<u32>,
+    #[serde(default)]
+    pub genre: Option<GenreRef>,
+    #[serde(default)]
+    pub isrc: Option<String>,
+    #[serde(default)]
+    pub composer: Option<ArtistRef>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

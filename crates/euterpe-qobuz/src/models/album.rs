@@ -2,6 +2,7 @@ use serde::de::{self, Deserializer};
 use serde::Deserialize;
 
 use super::artist::ArtistRef;
+use super::catalog_meta::{GenreRef, LabelRef};
 use super::deser::{deserialize_null_string, parse_album_ref_value, parse_id_value};
 use super::track::TrackSummary;
 
@@ -33,6 +34,8 @@ pub struct AlbumSummary {
     pub slug: Option<String>,
     /// Raw numeric JSON `id` when it differs from catalog `id` (often UPC in favorites).
     pub list_id: Option<u64>,
+    pub genre: Option<GenreRef>,
+    pub label: Option<LabelRef>,
 }
 
 impl AlbumSummary {
@@ -89,6 +92,10 @@ struct AlbumSummaryRaw {
     #[serde(rename = "release_date_original")]
     release_date_original: Option<String>,
     hires: Option<bool>,
+    #[serde(default)]
+    genre: Option<GenreRef>,
+    #[serde(default)]
+    label: Option<LabelRef>,
 }
 
 impl<'de> Deserialize<'de> for AlbumSummary {
@@ -140,6 +147,8 @@ impl<'de> Deserialize<'de> for AlbumSummary {
             album_ref,
             slug,
             list_id,
+            genre: raw.genre,
+            label: raw.label,
         })
     }
 }
@@ -160,6 +169,20 @@ pub struct AlbumTracks {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deserializes_rich_album_fixture() {
+        let json = include_str!("../../tests/fixtures/album_get_rich.json");
+        let album: AlbumDetail = serde_json::from_str(json).unwrap();
+        assert_eq!(album.summary.genre.as_ref().unwrap().name, "Classical");
+        assert_eq!(album.summary.label.as_ref().unwrap().name, "Test Label");
+        let t0 = &album.tracks.as_ref().unwrap().items[0];
+        assert_eq!(t0.media_number, Some(1));
+        assert_eq!(t0.genre.as_ref().unwrap().name, "Orchestral");
+        assert_eq!(t0.isrc.as_deref(), Some("XX-XXX-19-00001"));
+        assert_eq!(t0.composer.as_ref().unwrap().name, "Composer Name");
+        assert_eq!(album.tracks.as_ref().unwrap().items[1].media_number, Some(2));
+    }
 
     #[test]
     fn prefers_qobuz_id_over_legacy_id() {

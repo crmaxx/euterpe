@@ -89,9 +89,11 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 
 - MusicBrainz, Discogs, GnuDB, TrackType.org — [future-plans.ru.md — FP-4](future-plans.ru.md#fp-4--автозаполнение-тегов-из-внешних-каталогов)
 
-### FP-6 — Теги из Qobuz при скачивании
+### FP-6 — Теги из Qobuz при скачивании ✅
 
-- `write_tags` после download — [future-plans.ru.md — FP-5](future-plans.ru.md#fp-5--автопроставление-тегов-из-qobuz-при-скачивании)
+- После `rename` в worker: `track_tags_from_qobuz` → `write_tags` (lofty, `spawn_blocking`); порядок **теги → register → cover**
+- Расширенные поля `album/get` (жанр, диск, лейбл, ISRC, composer) — FP-5d
+- См. [future-plans.ru.md — FP-5](future-plans.ru.md#fp-5--автопроставление-тегов-из-qobuz-при-скачивании)
 
 ### FP-7 — Обложка альбома из UI
 

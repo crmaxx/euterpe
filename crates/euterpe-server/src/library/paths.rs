@@ -107,6 +107,8 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                genre: None,
+                label: None,
             },
             tracks: None,
             description: None,
@@ -118,6 +120,10 @@ mod tests {
             duration: None,
             performer: None,
             hires_streamable: None,
+            media_number: None,
+            genre: None,
+            isrc: None,
+            composer: None,
         };
         let path = track_path(Path::new("/music"), &album, &track, 6);
         let s = path.to_string_lossy();

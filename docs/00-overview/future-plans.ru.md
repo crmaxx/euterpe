@@ -245,7 +245,7 @@ register_library_from_qobuz_download(pool, library_root, favorite_catalog_id, al
 | FP-7a | (done) upsert `albums` после download                                                         |
 | FP-7b | (done) upsert **всех `tracks`** из `AlbumDetail` + paths; unit-тесты без `library/scan`       |
 | FP-7c | (done) worker integration: `tracks::list_by_album` после job без scan                         |
-| FP-7d | Согласовать порядок с FP-5 (теги в файл + индекс); skip-by-size всё равно индексирует       |
+| FP-7d | (done) Порядок: теги в файл → SQLite register → cover; skip-by-size индексирует, теги не трогает |
 | FP-7e | (optional) Scan одного каталога альбома для repair / файлов вне worker                      |
 | FP-7f | UI: убрать/смягчить подсказку «запустите сканирование» для свежих download                  |
 
@@ -311,13 +311,11 @@ register_library_from_qobuz_download(pool, library_root, favorite_catalog_id, al
 
 ## FP-5 — Автопроставление тегов из Qobuz при скачивании
 
-### Проблема сейчас
+### Сделано
 
-Worker Phase 3 (`download_track` в `euterpe-server`) после записи файла **не вызывает** текстовые теги: только переименование `.part` → финальный файл. Метаданные из ответа `album/get` (и связанных вызовов) **не переносятся** в ID3/Vorbis-комментарии. Отдельно после альбома выполняется только **обложка** (`cover.<ext>` по MIME + embed через lofty в `covers.rs`) — без title/artist/album и т.д.
+После успешного `rename` в `download_track`: `library/qobuz_tags::track_tags_from_qobuz` → `tags::write_qobuz_tags_async` (`spawn_blocking` + lofty). Порядок в альбоме: **теги на каждый трек → `register_album_from_qobuz_download` → `apply_album_cover_after_download`**. При skip-by-size теги **не** перезаписываются (FP-5e — опционально позже).
 
-### Цель
-
-После успешной загрузки трека **автоматически** записывать в файл максимально полный набор тегов, доступный из уже имеющихся (или расширенных) данных Qobuz, через существующий путь `**library/tags.rs`** (`TrackTags` + `write_tags`, lofty).
+Расширены модели `euterpe-qobuz` (`genre`, `label`, `media_number`, `isrc`, `composer`); индекс SQLite (`disc_number`, `genre`) синхронизирован через `track_db_fields_from_qobuz`.
 
 ### Что уже можно сопоставить «из коробки» (текущие модели `euterpe-qobuz`)
 
@@ -357,10 +355,10 @@ FP-4 — внешние каталоги (MusicBrainz, Discogs, …) для **у
 
 | ID    | Scope                                                                                                      |
 | ----- | ---------------------------------------------------------------------------------------------------------- |
-| FP-5a | Функция сборки `TrackTags` из `AlbumDetail` + `TrackSummary` + unit-тесты (год из даты, artist policy)     |
-| FP-5b | Вызов после успешного `rename` в worker + `spawn_blocking` + интеграционный тест на mock album + temp file |
-| FP-5c | (optional) Запись `QOBUZ_ALBUM_ID` в комментарий + round-trip с `read_tags`                                |
-| FP-5d | Расширение моделей `euterpe-qobuz` по реальному JSON + маппинг жанр/диск/лейбл и др. в lofty               |
+| FP-5a | (done) `qobuz_tags::track_tags_from_qobuz` + unit-тесты (artist/genre/year)                                |
+| FP-5b | (done) worker после `rename` + `write_qobuz_tags_async` + тест `worker_downloads_album_tracks` + FLAC      |
+| FP-5c | (done) `QOBUZ_ALBUM_ID` + `QOBUZ_TRACK_ID` в Comment; round-trip на FLAC fixture                         |
+| FP-5d | (done) `GenreRef` / `LabelRef` / track fields + lofty label/isrc/composer                                  |
 | FP-5e | (optional) Настройка / флаг «ретег при skip по размеру»                                                    |
 
 

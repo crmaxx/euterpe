@@ -200,6 +200,9 @@ mod tests {
             duration_sec: None,
             qobuz_track_id: None,
             qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
         };
         tags::write_tags(&track_path, &tags).unwrap();
 

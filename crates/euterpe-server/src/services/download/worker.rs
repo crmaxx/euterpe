@@ -262,7 +262,7 @@ async fn run_album_job(
         }
 
         let _permit = semaphore.acquire().await.map_err(|e| ApiError::Message(e.to_string()))?;
-        download_track(job_id, &album, track, quality, deps).await?;
+        download_track(job_id, album_id, &album, track, quality, deps).await?;
         done += 1;
         let progress = (done as f64 / total as f64) * 100.0;
         download_jobs::update_progress(&deps.pool, job_id, progress).await?;
@@ -324,6 +324,7 @@ async fn http_content_length(http: &Client, url: &str) -> Result<Option<u64>, Ap
 
 async fn download_track(
     job_id: i64,
+    catalog_album_id: u64,
     album: &AlbumDetail,
     track: &TrackSummary,
     quality: Quality,
@@ -385,6 +386,17 @@ async fn download_track(
         ApiError::Message(format!("rename {}: {e}", dest.display()))
     })?;
 
+    let tags = crate::library::qobuz_tags::track_tags_from_qobuz(album, track, catalog_album_id);
+    if let Err(e) = crate::library::tags::write_qobuz_tags_async(&dest, tags).await {
+        tracing::warn!(
+            job_id,
+            track_id = track.id,
+            path = %dest.display(),
+            error = %e,
+            "write qobuz tags after download failed"
+        );
+    }
+
     tracing::info!(job_id, track_id = track.id, path = %dest.display(), "track downloaded");
     Ok(())
 }
@@ -426,7 +438,7 @@ mod tests {
         Router,
     };
     use euterpe_qobuz::{
-        AlbumDetail, AlbumSummary, ArtistRef, Page, PageRequest, QobuzApi,
+        AlbumDetail, AlbumSummary, ArtistRef, GenreRef, LabelRef, Page, PageRequest, QobuzApi,
         QobuzError, Quality, StreamUrl, TrackSummary,
     };
     use tempfile::tempdir;
@@ -524,7 +536,7 @@ mod tests {
     #[tokio::test]
     async fn worker_downloads_album_tracks() {
         let dir = tempdir().unwrap();
-        let body = b"fake-flac-bytes";
+        let body = include_bytes!("../../../tests/fixtures/silent.flac");
         let app = stream_mock_router(body);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -542,11 +554,19 @@ mod tests {
                 }),
                 artists: None,
                 image: None,
-                release_date_original: None,
+                release_date_original: Some("2020-01-15".into()),
                 hires: None,
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                genre: Some(GenreRef {
+                    id: Some(1),
+                    name: "Rock".into(),
+                }),
+                label: Some(LabelRef {
+                    id: Some(2),
+                    name: "Indie".into(),
+                }),
             },
             tracks: Some(euterpe_qobuz::AlbumTracks {
                 items: vec![
@@ -557,6 +577,16 @@ mod tests {
                         duration: None,
                         performer: None,
                         hires_streamable: None,
+                        media_number: Some(1),
+                        genre: Some(GenreRef {
+                            id: None,
+                            name: "Orchestral".into(),
+                        }),
+                        isrc: Some("XX-1".into()),
+                        composer: Some(ArtistRef {
+                            id: 3,
+                            name: "Composer".into(),
+                        }),
                     },
                     TrackSummary {
                         id: 2,
@@ -565,6 +595,10 @@ mod tests {
                         duration: None,
                         performer: None,
                         hires_streamable: None,
+                        media_number: None,
+                        genre: None,
+                        isrc: None,
+                        composer: None,
                     },
                 ],
             }),
@@ -625,7 +659,20 @@ mod tests {
             &album_for_assert.tracks.as_ref().unwrap().items[0],
             6,
         );
-        assert_eq!(std::fs::read(track1).unwrap(), b"fake-flac-bytes");
+        assert!(track1.is_file());
+        let tags = crate::library::tags::read_tags(&track1).unwrap();
+        assert_eq!(tags.title, "One");
+        assert_eq!(tags.artist, "Band");
+        assert_eq!(tags.album, "Album");
+        assert_eq!(tags.track_number, Some(1));
+        assert_eq!(tags.year, Some(2020));
+        assert_eq!(tags.disc_number, Some(1));
+        assert_eq!(tags.genre.as_deref(), Some("Orchestral"));
+        assert_eq!(tags.qobuz_track_id, Some(1));
+        assert_eq!(tags.qobuz_album_id, Some(99));
+        assert_eq!(tags.label.as_deref(), Some("Indie"));
+        assert_eq!(tags.isrc.as_deref(), Some("XX-1"));
+        assert_eq!(tags.composer.as_deref(), Some("Composer"));
 
         let lib_album_id = crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
             .await
@@ -670,6 +717,8 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                genre: None,
+                label: None,
             },
             tracks: Some(euterpe_qobuz::AlbumTracks {
                 items: vec![TrackSummary {
@@ -679,6 +728,10 @@ mod tests {
                     duration: None,
                     performer: None,
                     hires_streamable: None,
+                    media_number: None,
+                    genre: None,
+                    isrc: None,
+                    composer: None,
                 }],
             }),
             description: None,
@@ -766,6 +819,8 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                genre: None,
+                label: None,
             },
             tracks: Some(euterpe_qobuz::AlbumTracks {
                 items: vec![
@@ -776,6 +831,10 @@ mod tests {
                         duration: None,
                         performer: None,
                         hires_streamable: None,
+                        media_number: None,
+                        genre: None,
+                        isrc: None,
+                        composer: None,
                     },
                     TrackSummary {
                         id: 2,
@@ -784,6 +843,10 @@ mod tests {
                         duration: None,
                         performer: None,
                         hires_streamable: None,
+                        media_number: None,
+                        genre: None,
+                        isrc: None,
+                        composer: None,
                     },
                 ],
             }),
@@ -882,6 +945,8 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                genre: None,
+                label: None,
             },
             tracks: Some(euterpe_qobuz::AlbumTracks {
                 items: vec![TrackSummary {
@@ -891,6 +956,10 @@ mod tests {
                     duration: None,
                     performer: None,
                     hires_streamable: None,
+                    media_number: None,
+                    genre: None,
+                    isrc: None,
+                    composer: None,
                 }],
             }),
             description: None,
@@ -973,6 +1042,8 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                genre: None,
+                label: None,
             },
             tracks: Some(euterpe_qobuz::AlbumTracks {
                 items: vec![TrackSummary {
@@ -982,6 +1053,10 @@ mod tests {
                     duration: None,
                     performer: None,
                     hires_streamable: None,
+                    media_number: None,
+                    genre: None,
+                    isrc: None,
+                    composer: None,
                 }],
             }),
             description: None,

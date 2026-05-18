@@ -123,6 +123,8 @@ async fn download_job_completes_via_worker() {
             album_ref: None,
             slug: None,
             list_id: None,
+            genre: None,
+            label: None,
         },
         tracks: Some(AlbumTracks {
             items: vec![TrackSummary {
@@ -132,6 +134,10 @@ async fn download_job_completes_via_worker() {
                 duration: None,
                 performer: None,
                 hires_streamable: None,
+                media_number: None,
+                genre: None,
+                isrc: None,
+                composer: None,
             }],
         }),
         description: None,

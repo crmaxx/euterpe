@@ -9,6 +9,7 @@ use crate::db::{albums, artists, tracks};
 use crate::error::ApiError;
 use crate::library::fs::file_mtime;
 use crate::library::paths::{track_path, year_from_release_date};
+use crate::library::qobuz_tags::track_db_fields_from_qobuz;
 
 fn relative_path(library_root: &Path, absolute: &Path) -> Result<String, ApiError> {
     absolute
@@ -86,6 +87,7 @@ async fn upsert_track_from_api(
     let dest = track_path(library_root, album, track, format_id);
     let path_str = relative_path(library_root, &dest)?;
     let mtime = file_mtime(&dest).await;
+    let (disc_number, genre) = track_db_fields_from_qobuz(album, track);
 
     tracks::upsert(
         pool,
@@ -94,8 +96,8 @@ async fn upsert_track_from_api(
             title: &track.title,
             track_number: track.track_number.map(|n| n as i32),
             year: album_year,
-            disc_number: None,
-            genre: None,
+            disc_number,
+            genre: genre.as_deref(),
             qobuz_track_id: Some(track.id as i64),
             path: &path_str,
             duration_sec: track.duration.map(|d| d as i32),
@@ -133,6 +135,8 @@ mod tests {
                 album_ref: None,
                 slug: None,
                 list_id: None,
+                genre: None,
+                label: None,
             },
             tracks: Some(AlbumTracks {
                 items: vec![
@@ -143,6 +147,10 @@ mod tests {
                         duration: Some(200),
                         performer: None,
                         hires_streamable: None,
+                        media_number: None,
+                        genre: None,
+                        isrc: None,
+                        composer: None,
                     },
                     TrackSummary {
                         id: 1002,
@@ -151,6 +159,10 @@ mod tests {
                         duration: Some(180),
                         performer: None,
                         hires_streamable: None,
+                        media_number: None,
+                        genre: None,
+                        isrc: None,
+                        composer: None,
                     },
                 ],
             }),
