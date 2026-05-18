@@ -8,6 +8,7 @@ use walkdir::WalkDir;
 use crate::api::ScanProgressEvent;
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
+use crate::library::fs::file_mtime_sync;
 use crate::library::tags::{self, is_audio_file};
 
 const PROGRESS_EVERY: usize = 5;
@@ -130,11 +131,7 @@ async fn index_file(pool: &SqlitePool, root: &Path, path: &Path) -> Result<(), A
 }
 
 fn file_metadata(path: &Path) -> Result<(Option<String>, Option<String>), ApiError> {
-    let meta = std::fs::metadata(path).map_err(|e| ApiError::Message(e.to_string()))?;
-    let mtime = meta.modified().ok().map(|t| {
-        let dt: chrono::DateTime<chrono::Utc> = t.into();
-        dt.format("%Y-%m-%d %H:%M:%S").to_string()
-    });
+    let mtime = file_mtime_sync(path);
     let mut hasher = Sha256::new();
     let bytes = std::fs::read(path).map_err(|e| ApiError::Message(e.to_string()))?;
     hasher.update(bytes);

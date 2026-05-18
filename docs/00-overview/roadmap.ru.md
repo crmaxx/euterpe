@@ -80,10 +80,9 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 - Фильтр **в библиотеке / нет** — FP-3d; **поиск** — FP-3e; **обложки** — FP-3f
 - См. [future-plans.ru.md — FP-3](future-plans.ru.md#fp-3--favorites-сортировка-таблицы)
 
-### FP-4 — Индекс сразу после download
+### FP-4 — Индекс сразу после download ✅
 
-- После альбома: upsert `albums` + **все `tracks`** из `album/get` (без обязательного rescan)
-- Сейчас: только `albums` (FP-7a); треки — FP-7b
+- После альбома: upsert `albums` + **все `tracks`** из `album/get` (без обязательного rescan) — FP-7a–7c
 - См. [future-plans.ru.md — FP-7](future-plans.ru.md#fp-7--библиотека-сразу-после-скачивания-без-обязательного-rescan)
 
 ### FP-5 — Автозаполнение тегов (каталоги)
