@@ -1,76 +1,59 @@
-# Library scan (FP-9 / FP-9e)
+# Library scan (FP-9 / FP-9e / FP-9b / FP-9d / FP-7e)
 
 `POST /api/v1/library/scan` запускает фоновый обход `EUTERPE_LIBRARY_PATH` в `services/library_scan.rs`.
 
+Опциональный query **`root`**: относительный путь под корнем библиотеки (например `Artist/Album`) — сканируется только это поддерево (FP-7e). Валидация: без `..`, не absolute, каталог существует и лежит под `library_path` после `canonicalize`.
+
+**Отмена:** `DELETE /api/v1/library/scan/{id}` — для run в статусе `running` переводит в `cancelled` (**204**). Повторная отмена — **409**. Неизвестный id — **404**. Частично проиндексированные файлы в БД остаются (MVP).
+
 ## Двухфазная модель (enumerate → process)
 
-Сначала воркеры **enumerate** быстро обходят поддеревья (`WalkDir`), считают аудиофайлы по расширению и кладут **абсолютные пути** в bounded-очередь `path_queue` (**flume**). Параллельно (streaming) воркеры **process** забирают пути, в `spawn_blocking` читают теги и SHA256, формируют `ScanIndexJob` в `index_queue`. Один **DB writer** пишет в SQLite (WAL).
+**Enumerate (FP-9b):** общая `DirWorkQueue` — `BinaryHeap` по `depth` (глубже = выше приоритет), `visited` по canonical path. Воркер делает `read_dir` **одного уровня**: файлы → `path_queue`, подкаталоги → re-enqueue. Seed: подкаталоги на `EUTERPE_LIBRARY_SCAN_SEED_DEPTH` или один `root` для subtree.
 
-После того как все enumerate-задачи завершились, `files_seen` фиксируется как **`files_total`** (в БД и SSE; до этого момента в API `files_total = 0` — фаза «discovering»).
+**Process:** забирает пути из `path_queue`, `stat` (mtime + size). Если в БД тот же `path`, `file_mtime`, `file_size` — **skip** без тегов/SHA256; счётчики `files_processed` и `files_indexed` растут (FP-9d). Иначе — теги + SHA256 → `index_queue` → DB writer.
+
+Корень библиотеки и пути в очереди **canonicalize** (важно на macOS `/var` vs `/private/var`).
+
+После join enumerate: `files_seen` → **`files_total`**.
 
 ```mermaid
 flowchart LR
-  coord[Coordinator]
-  dirQ[(dir_queue)]
-  subgraph enumPool [Enumerate workers E]
-    E1[Enum 1]
-    EE[Enum E]
-  end
-  pathQ[(path_queue bounded)]
-  subgraph procPool [Process workers P]
-    P1[Process 1]
-    PP[Process P]
-  end
-  indexQ[(index_queue bounded)]
-  dbw[DB_writer x1]
-  db[(SQLite WAL)]
-
-  coord --> dirQ
-  dirQ --> E1
-  dirQ --> EE
-  E1 --> pathQ
-  EE --> pathQ
-  pathQ --> P1
-  pathQ --> PP
-  P1 --> indexQ
-  PP --> indexQ
+  dirQ[(dir_queue heap + visited)]
+  enum[Enumerate read_dir 1 level]
+  pathQ[(path_queue)]
+  proc[Process stat / skip / index]
+  indexQ[(index_queue)]
+  dbw[DB writer]
+  dirQ --> enum
+  enum --> pathQ
+  enum --> dirQ
+  pathQ --> proc
+  proc --> indexQ
   indexQ --> dbw
-  dbw --> db
 ```
 
 ### Счётчики
 
 | Поле | Когда растёт | Смысл |
 |------|----------------|--------|
-| `files_seen` | enumerate | Найдено аудиофайлов (живой счётчик до конца enumerate) |
-| `files_total` | после join enumerate | Равно `files_seen` на момент окончания enumerate; дальше не меняется |
-| `files_processed` | process | Тяжёлая обработка завершена, job отправлен в `index_queue` |
-| `files_indexed` | DB writer | Успешный `persist_index` |
-
-UI: пока `files_total == 0` — «Discovering», indeterminate bar, «Found so far: `files_seen`». После — прогресс `files_indexed / files_total`, ETA по скорости индексации в БД; очередь индекса ≈ `files_processed - files_indexed`.
-
-## Координатор (seed)
-
-- **Координатор** — заполняет `dir_queue` подкаталогами на глубине `EUTERPE_LIBRARY_SCAN_SEED_DEPTH` (default 1). Если подкаталогов нет — одна задача на весь root.
+| `files_seen` | enumerate | Найдено аудиофайлов |
+| `files_total` | после join enumerate | = `files_seen` на конец enumerate |
+| `files_processed` | process (включая skip) | Обработка пути завершена |
+| `files_indexed` | DB writer или skip | Учтено в прогрессе индекса |
 
 ## Env
 
-**Breaking change:** переменная `EUTERPE_LIBRARY_SCAN_WORKERS` **удалена**. Задайте три новых параметра (или используйте defaults).
-
-Ограничение: `EUTERPE_LIBRARY_SCAN_ENUM_WORKERS + EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS <= EUTERPE_LIBRARY_SCAN_WORKER_TOTAL`. Все три значения ≥ 1; при одновременно enum ≥ 1 и process ≥ 1 требуется **`WORKER_TOTAL >= 2`**.
-
 | Переменная | Default | Назначение |
 |------------|---------|------------|
-| `EUTERPE_LIBRARY_SCAN_WORKER_TOTAL` | 10 (clamp 2..32) | Верхняя граница: enum + process не превышают |
-| `EUTERPE_LIBRARY_SCAN_ENUM_WORKERS` | 5 | Пул enumerate-воркеров |
-| `EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS` | 5 | Пул process-воркеров |
-| `EUTERPE_LIBRARY_SCAN_PATH_QUEUE` | 2048 | Ёмкость очереди путей между enumerate и process |
-| `EUTERPE_LIBRARY_SCAN_SEED_DEPTH` | 1 | Глубина seed от корня библиотеки |
-| `EUTERPE_LIBRARY_SCAN_INDEX_QUEUE` | 512 | Ёмкость bounded очереди index jobs |
+| `EUTERPE_LIBRARY_SCAN_WORKER_TOTAL` | 10 | enum + process ≤ total |
+| `EUTERPE_LIBRARY_SCAN_ENUM_WORKERS` | 5 | Пул enumerate |
+| `EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS` | 5 | Пул process |
+| `EUTERPE_LIBRARY_SCAN_PATH_QUEUE` | 2048 | Очередь путей |
+| `EUTERPE_LIBRARY_SCAN_SEED_DEPTH` | 1 | Seed от корня |
+| `EUTERPE_LIBRARY_SCAN_INDEX_QUEUE` | 512 | Очередь index jobs |
 
-### Отладка и UI
+`EUTERPE_DEBUG=true` — подробные логи воркеров на уровне `debug` (как у download worker).
 
-- **Логи воркеров:** `EUTERPE_LIBRARY_SCAN_DEBUG=true` или `EUTERPE_DEV=true` — в консоль сервера (`tracing::info`): старт scan, seed-каталоги, claim поддерева, постановка пути, process, persist.
-- **Прогресс в UI:** SSE `scan_progress` с полями `files_seen`, `files_processed`, `files_indexed`, `files_total` + панель на Library.
+## SQLite
 
-Follow-up: FP-9b (re-enqueue + visited), FP-9d (skip unchanged без полного SHA256).
+Миграция `010_tracks_file_size.sql`: колонка `tracks.file_size` для skip-by-stat.

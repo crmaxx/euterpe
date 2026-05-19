@@ -74,7 +74,9 @@ export function LibraryScanProgress({
 
   const indexQueue = Math.max(0, filesProcessed - filesIndexed);
 
-  if (!running && status !== "success" && status !== "failed") {
+  const cancelled = status === "cancelled";
+
+  if (!running && status !== "success" && status !== "failed" && !cancelled) {
     return null;
   }
 
@@ -95,29 +97,35 @@ export function LibraryScanProgress({
     <div className="space-y-3 rounded-lg border border-border bg-card/50 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
         <span className="font-medium">
-          {running
-            ? discovering
-              ? "Discovering files…"
-              : "Indexing library…"
-            : status === "success"
-              ? "Scan complete"
-              : `Scan ${status}`}
+          {cancelled
+            ? "Scan cancelled"
+            : running
+              ? discovering
+                ? "Discovering files…"
+                : "Indexing library…"
+              : status === "success"
+                ? "Scan complete"
+                : `Scan ${status}`}
         </span>
         {running && elapsedLabel ? (
           <span className="text-muted-foreground tabular-nums">Elapsed {elapsedLabel}</span>
         ) : null}
       </div>
 
-      <Progress
-        value={
-          discovering
-            ? undefined
-            : running
-              ? (percent ?? 0)
-              : (percent ?? 100)
-        }
-        className={discovering || (running && percent == null) ? "animate-pulse" : undefined}
-      />
+      {!cancelled ? (
+        <Progress
+          value={
+            discovering
+              ? undefined
+              : running
+                ? (percent ?? 0)
+                : (percent ?? 100)
+          }
+          className={
+            discovering || (running && percent == null) ? "animate-pulse" : undefined
+          }
+        />
+      ) : null}
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
         <div>

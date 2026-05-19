@@ -5,7 +5,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     euterpe_server::config::load_dotenv();
     let config = AppConfig::from_env()?;
 
-    let default_filter = if config.dev_verbose {
+    let default_filter = if config.debug {
         "euterpe_server=debug,euterpe_qobuz=debug,tower_http=debug"
     } else {
         "euterpe_server=info,tower_http=info"

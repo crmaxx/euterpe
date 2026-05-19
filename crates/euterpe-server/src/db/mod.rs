@@ -118,5 +118,16 @@ mod tests {
         assert!(names.contains(&"qobuz_accounts".to_string()));
         assert!(names.contains(&"qobuz_oauth_states".to_string()));
         assert!(names.contains(&"integrations".to_string()));
+
+        let cols: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM pragma_table_info('tracks') ORDER BY name")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let col_names: Vec<_> = cols.into_iter().map(|(n,)| n).collect();
+        assert!(
+            col_names.contains(&"file_size".to_string()),
+            "tracks.file_size column missing after migrations"
+        );
     }
 }

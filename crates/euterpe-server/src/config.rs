@@ -33,7 +33,7 @@ pub struct LibraryScanConfig {
     pub index_queue_capacity: usize,
     /// Bounded path queue between enumerate and process (default 2048).
     pub path_queue_capacity: usize,
-    /// Verbose scan worker logs (`EUTERPE_LIBRARY_SCAN_DEBUG` or `EUTERPE_DEV`).
+    /// Verbose scan worker logs at `debug` level when `EUTERPE_DEBUG=true` (set on `AppConfig`).
     pub debug: bool,
 }
 
@@ -98,12 +98,6 @@ impl LibraryScanConfig {
             .and_then(|s| s.parse().ok())
             .filter(|&n| n > 0)
             .unwrap_or(2048);
-        let scan_debug = env::var("EUTERPE_LIBRARY_SCAN_DEBUG")
-            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
-            .unwrap_or(false);
-        let dev_verbose = env::var("EUTERPE_DEV")
-            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
-            .unwrap_or(false);
         Ok(Self {
             worker_total,
             enum_workers,
@@ -111,7 +105,7 @@ impl LibraryScanConfig {
             seed_depth,
             index_queue_capacity,
             path_queue_capacity,
-            debug: scan_debug || dev_verbose,
+            debug: false,
         })
     }
 }
@@ -132,8 +126,8 @@ pub struct AppConfig {
     pub library_path: PathBuf,
     pub download_concurrency: usize,
     pub library_scan: LibraryScanConfig,
-    /// Verbose HTTP + Qobuz API debug logs (`EUTERPE_DEV=true`).
-    pub dev_verbose: bool,
+    /// Verbose HTTP, Qobuz API, library scan, and download worker logs (`EUTERPE_DEBUG=true`).
+    pub debug: bool,
     /// Static SPA root (`index.html` + assets). Empty = disabled.
     pub static_dir: PathBuf,
 }
@@ -177,11 +171,12 @@ impl AppConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(3);
 
-        let library_scan = LibraryScanConfig::from_env()?;
-
-        let dev_verbose = env::var("EUTERPE_DEV")
+        let debug = env::var("EUTERPE_DEBUG")
             .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
+
+        let mut library_scan = LibraryScanConfig::from_env()?;
+        library_scan.debug = debug;
 
         let static_dir = PathBuf::from(
             env::var("EUTERPE_STATIC_DIR").unwrap_or_else(|_| "frontend/dist".into()),
@@ -206,7 +201,7 @@ impl AppConfig {
             library_path,
             download_concurrency,
             library_scan,
-            dev_verbose,
+            debug,
             static_dir,
         })
     }

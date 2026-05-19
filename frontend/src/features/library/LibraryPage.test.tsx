@@ -28,7 +28,7 @@ describe("LibraryPage", () => {
     expect(screen.getByText(/Test Artist/)).toBeInTheDocument();
   });
 
-  it("starts library scan on button click", async () => {
+  it("starts index rebuild on button click", async () => {
     let scanStarted = false;
     server.use(
       http.post("/api/v1/library/scan", () => {
@@ -38,17 +38,73 @@ describe("LibraryPage", () => {
     );
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole("button", { name: /rescan library/i }));
+    await user.click(await screen.findByRole("button", { name: /rebuild index/i }));
     await waitFor(() => expect(scanStarted).toBe(true));
   });
 
-  it("shows No cover placeholders when album has no cover_path", async () => {
+  it("shows cancel scan while running", async () => {
+    let cancelled = false;
+    server.use(
+      http.get("/api/v1/library/scan/latest", () =>
+        HttpResponse.json({
+          run: {
+            id: 9,
+            status: "running",
+            files_seen: 2,
+            files_processed: 1,
+            files_indexed: 0,
+            files_total: 0,
+            started_at: "2026-01-01T00:00:00Z",
+            finished_at: null,
+          },
+        }),
+      ),
+      http.delete("/api/v1/library/scan/9", () => {
+        cancelled = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(
+      await screen.findByRole("button", { name: /cancel scan/i }),
+    );
+    await waitFor(() => expect(cancelled).toBe(true));
+  });
+
+  it("repair folder passes root query", async () => {
+    let scanRoot: string | null = null;
+    server.use(
+      http.post("/api/v1/library/scan", ({ request }) => {
+        scanRoot = new URL(request.url).searchParams.get("root");
+        return HttpResponse.json({ scan_id: 3 }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /repair folder/i }),
+    );
+    await waitFor(() =>
+      expect(scanRoot).toBe("Test Artist/Local Album"),
+    );
+  });
+
+  it("shows No cover when cover_path is absent and cover endpoint returns 404", async () => {
+    server.use(
+      http.get("/api/v1/library/albums/:id/cover", () =>
+        new HttpResponse(null, { status: 404 }),
+      ),
+    );
     const user = userEvent.setup();
     renderPage();
     await user.click(
       await screen.findByRole("button", { name: /Local Album/i }),
     );
-    expect(await screen.findAllByText("No cover")).toHaveLength(2);
+    await waitFor(() =>
+      expect(screen.getAllByTestId("album-cover-placeholder")).toHaveLength(2),
+    );
   });
 
   it("opens cover file picker when clicking album art", async () => {

@@ -1,6 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use euterpe_qobuz::{AlbumDetail, TrackSummary};
+
+use crate::error::ApiError;
 
 pub fn sanitize_component(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -122,6 +124,42 @@ pub fn track_path(
     let ext = extension_for_quality(quality);
     let filename = format!("{track_num:02} - {title}.{ext}");
     library_root.join(artist).join(album_dir).join(filename)
+}
+
+/// Resolve `root` query for subtree library scan: relative path under `library_root`, no `..`.
+pub fn resolve_scan_subdirectory(
+    library_root: &Path,
+    root: &str,
+) -> Result<PathBuf, ApiError> {
+    let trimmed = root.trim();
+    if trimmed.is_empty() {
+        return Err(ApiError::Message("root must not be empty".into()));
+    }
+    if trimmed.contains('\\') || Path::new(trimmed).is_absolute() {
+        return Err(ApiError::Message(
+            "root must be a relative path under the library".into(),
+        ));
+    }
+    for component in Path::new(trimmed).components() {
+        if matches!(component, Component::ParentDir) {
+            return Err(ApiError::Message("root must not contain '..'".into()));
+        }
+    }
+
+    let joined = library_root.join(trimmed);
+    let canon_lib = library_root
+        .canonicalize()
+        .map_err(|e| ApiError::Message(format!("library path: {e}")))?;
+    let canon_sub = joined
+        .canonicalize()
+        .map_err(|e| ApiError::Message(format!("scan root not found: {e}")))?;
+    if !canon_sub.starts_with(&canon_lib) {
+        return Err(ApiError::Message("root outside library path".into()));
+    }
+    if !canon_sub.is_dir() {
+        return Err(ApiError::Message("scan root is not a directory".into()));
+    }
+    Ok(canon_sub)
 }
 
 #[cfg(test)]

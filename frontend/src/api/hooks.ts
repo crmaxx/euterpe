@@ -1,5 +1,12 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   api,
   subscribeServerEvents,
@@ -15,8 +22,13 @@ import type { KeysetListResponse } from "./keyset";
 import { flattenKeysetPages, useKeysetList } from "./hooks/keyset";
 import { getDefaultQuality } from "@/lib/quality";
 import {
+  albumCoverCacheKey,
   fetchAlbumCoverBlobUrl,
+  getAlbumCoverBlobUrl,
+  getAlbumCoverCacheEpoch,
+  isActiveAlbumCoverBlobUrl,
   revokeAlbumCoverBlobs,
+  subscribeAlbumCoverCache,
 } from "@/features/library/albumCoverBlobCache";
 
 export type FavoritesListQuery = {
@@ -142,7 +154,7 @@ export function useLibraryTrack(id: number | null) {
 export function useStartLibraryScan() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: api.startLibraryScan,
+    mutationFn: (root?: string) => api.startLibraryScan(root),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: queryKeys.scanLatest });
       void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
@@ -150,19 +162,109 @@ export function useStartLibraryScan() {
   });
 }
 
+export function useCancelLibraryScan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (scanId: number) => api.cancelLibraryScan(scanId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.scanLatest });
+    },
+  });
+}
+
+/** Qobuz album ids with a queued or running download job. */
+export function useActiveAlbumDownloadQobuzIds(): Set<number> {
+  const { data } = useDownloads();
+  return useMemo(() => {
+    const ids = new Set<number>();
+    for (const job of data?.items ?? []) {
+      if (
+        job.job_type === "album" &&
+        (job.status === "queued" || job.status === "running") &&
+        job.qobuz_id != null
+      ) {
+        ids.add(job.qobuz_id);
+      }
+    }
+    return ids;
+  }, [data]);
+}
+
+/** Refresh library/favorites when a new album download completes. */
+export function useInvalidateLibraryOnDownloadComplete() {
+  const qc = useQueryClient();
+  const { data } = useDownloads();
+  const seenCompletedIds = useRef<Set<number> | null>(null);
+
+  useEffect(() => {
+    const completed = (data?.items ?? []).filter(
+      (j) => j.job_type === "album" && j.status === "completed",
+    );
+    const ids = new Set(completed.map((j) => j.id));
+    if (seenCompletedIds.current === null) {
+      seenCompletedIds.current = ids;
+      return;
+    }
+    const hasNew = completed.some((j) => !seenCompletedIds.current!.has(j.id));
+    seenCompletedIds.current = ids;
+    if (hasNew) {
+      void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+      void qc.invalidateQueries({ queryKey: ["favorites"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.scanLatest });
+    }
+  }, [data, qc]);
+}
+
+/** Warm cover blob cache when the album list loads (deduped in fetchAlbumCoverBlobUrl). */
+export function usePrefetchLibraryAlbumCovers(
+  items: LibraryAlbumItem[],
+) {
+  const qc = useQueryClient();
+  const prefetchKey = useMemo(
+    () => items.map((a) => `${a.id}:${a.cover_path ?? ""}`).join("|"),
+    [items],
+  );
+
+  useEffect(() => {
+    for (const a of items) {
+      const path = a.cover_path?.trim() ?? "";
+      void qc.prefetchQuery({
+        queryKey: queryKeys.albumCover(a.id, path),
+        queryFn: () => fetchAlbumCoverBlobUrl(a.id),
+        staleTime: Infinity,
+      });
+    }
+  }, [items, prefetchKey, qc]);
+}
+
 export function useAlbumCoverBlobUrl(
   albumId: number,
   coverPath?: string | null,
 ) {
   const path = coverPath?.trim() ?? "";
-  return useQuery({
+  const cacheKey = albumCoverCacheKey(albumId);
+
+  useSyncExternalStore(subscribeAlbumCoverCache, getAlbumCoverCacheEpoch);
+
+  const query = useQuery({
     queryKey: queryKeys.albumCover(albumId, path),
-    queryFn: ({ signal }) => fetchAlbumCoverBlobUrl(albumId, path, signal),
-    enabled: albumId > 0 && path.length > 0,
+    queryFn: () => fetchAlbumCoverBlobUrl(albumId),
+    enabled: albumId > 0,
     staleTime: Infinity,
     gcTime: 60 * 60 * 1000,
-    retry: 2,
+    retry: (failureCount, error) =>
+      failureCount < 2 &&
+      error instanceof Error &&
+      error.message.includes("unauthorized"),
+    refetchOnWindowFocus: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
   });
+  const synced = getAlbumCoverBlobUrl(cacheKey);
+  const data = isActiveAlbumCoverBlobUrl(albumId, query.data)
+    ? (synced ?? query.data)
+    : synced;
+  return { ...query, data };
 }
 
 export function useUploadLibraryAlbumCover() {
@@ -172,7 +274,11 @@ export function useUploadLibraryAlbumCover() {
       api.uploadLibraryAlbumCover(albumId, file, file.type),
     onSuccess: (_data, vars) => {
       revokeAlbumCoverBlobs(vars.albumId);
-      void qc.invalidateQueries({ queryKey: ["albumCover", vars.albumId] });
+      qc.removeQueries({ queryKey: ["albumCover", vars.albumId] });
+      void qc.invalidateQueries({
+        queryKey: ["albumCover", vars.albumId],
+        refetchType: "all",
+      });
       void qc.invalidateQueries({
         queryKey: queryKeys.libraryAlbum(vars.albumId),
       });
@@ -325,6 +431,7 @@ export function useFavoritesList(params: FavoritesListQuery = {}) {
   const pageQuery = useQuery({
     queryKey: [...queryKeys.favorites(params), filterKey],
     queryFn: () => api.favorites(params),
+    refetchOnWindowFocus: false,
     placeholderData: (previous, previousQuery) => {
       if (!previous || !previousQuery) return undefined;
       const prevFilterKey = previousQuery.queryKey.at(-1);

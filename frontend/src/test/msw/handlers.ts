@@ -9,6 +9,16 @@ export const mockFavorites = {
       artist_name: "Test Artist",
       in_library: false,
     },
+    {
+      album_api_id: "inlibalbum",
+      qobuz_id: 888,
+      title: "In Lib Album",
+      artist_name: "Test Artist",
+      in_library: true,
+      local_album_id: 1,
+      local_cover_path: "Test Artist/Local Album/cover.jpg",
+      cover_url: "https://example.com/cover.jpg",
+    },
   ],
   next_cursor: null,
   has_more: false,
@@ -142,9 +152,19 @@ export const handlers = [
     }),
   ),
 
-  http.post("/api/v1/library/scan", () =>
-    HttpResponse.json({ scan_id: 1 }, { status: 202 }),
-  ),
+  http.post("/api/v1/library/scan", ({ request }) => {
+    const url = new URL(request.url);
+    const root = url.searchParams.get("root");
+    if (root?.includes("..")) {
+      return HttpResponse.json(
+        { error: { code: "BAD_REQUEST", message: "root must not contain '..'" } },
+        { status: 400 },
+      );
+    }
+    return HttpResponse.json({ scan_id: root ? 2 : 1 }, { status: 202 });
+  }),
+
+  http.delete("/api/v1/library/scan/:id", () => new HttpResponse(null, { status: 204 })),
 
   http.get("/api/v1/library/albums", () =>
     HttpResponse.json({
@@ -186,7 +206,7 @@ export const handlers = [
           year: 2020,
           disc_number: 1,
           genre: "Pop",
-          path: "a/t1.flac",
+          path: "Test Artist/Local Album/t1.flac",
         },
       ],
     }),

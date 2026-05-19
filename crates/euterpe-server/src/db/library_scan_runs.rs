@@ -134,6 +134,20 @@ pub async fn finish_failed(pool: &SqlitePool, id: i64, error: &str) -> Result<()
     Ok(())
 }
 
+pub async fn cancel(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE library_scan_runs
+        SET status = 'cancelled', finished_at = datetime('now')
+        WHERE id = ? AND status = 'running'
+        "#,
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn is_cancelled(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT status FROM library_scan_runs WHERE id = ?")

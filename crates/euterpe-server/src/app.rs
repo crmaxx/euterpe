@@ -77,7 +77,10 @@ pub fn app(state: AppState) -> Router {
             "/api/v1/library/scan/latest",
             get(library::library_scan_latest),
         )
-        .route("/api/v1/library/scan/{id}", get(library::get_library_scan))
+        .route(
+            "/api/v1/library/scan/{id}",
+            get(library::get_library_scan).delete(library::cancel_library_scan),
+        )
         .route("/api/v1/library/albums", get(library::list_library_albums))
         .route(
             "/api/v1/library/albums/{id}",
@@ -198,10 +201,10 @@ pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + 
     let router = app(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    if config.dev_verbose {
+    if config.debug {
         tracing::info!(
             bind = %bind,
-            "euterpe dev verbose logging enabled (EUTERPE_DEV); set RUST_LOG to override"
+            "euterpe debug logging enabled (EUTERPE_DEBUG): HTTP, Qobuz API, library scan, download workers; set RUST_LOG to override"
         );
     }
     tracing::info!("listening on {}", bind);
@@ -385,7 +388,7 @@ pub mod test_support {
             library_path,
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
-            dev_verbose: false,
+            debug: false,
             static_dir: std::path::PathBuf::new(),
         };
         let pool = db::connect(&config.database_url).await.unwrap();

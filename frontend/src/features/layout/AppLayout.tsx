@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import {
   useQobuzConnection,
+  useInvalidateLibraryOnDownloadComplete,
   useScanLatest,
   useScanProgressSse,
   useServerInfo,
@@ -22,6 +23,7 @@ export function AppLayout() {
   const { data: sync } = useSyncLatest();
   const { data: libraryScan } = useScanLatest();
   useScanProgressSse();
+  useInvalidateLibraryOnDownloadComplete();
 
   const syncLabel = (() => {
     const run = sync?.run;

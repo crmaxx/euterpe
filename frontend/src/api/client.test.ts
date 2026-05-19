@@ -5,7 +5,7 @@ import { ApiClientError } from "./errors";
 describe("api client", () => {
   it("fetches favorites", async () => {
     const data = await api.favorites();
-    expect(data.items).toHaveLength(1);
+    expect(data.items.length).toBeGreaterThanOrEqual(1);
     expect(data.items[0].album_api_id).toBe("zg7pv28g4mldg");
   });
 

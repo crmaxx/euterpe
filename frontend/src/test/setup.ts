@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
+import { clearAlbumCoverBlobCache } from "@/features/library/albumCoverBlobCache";
 import { server } from "./msw/server";
 
 /** jsdom logs "Not implemented: navigation" when code sets `location.href`. */
@@ -50,6 +51,7 @@ vi.stubGlobal("localStorage", {
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
   server.resetHandlers();
+  clearAlbumCoverBlobCache();
   storage.clear();
   locationHref = "http://localhost/";
   vi.mocked(locationMock.assign).mockClear();

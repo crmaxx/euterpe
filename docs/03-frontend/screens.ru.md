@@ -18,7 +18,7 @@
 
 - Table: title, artist, in library?, actions
 - Toolbar: Sync now, Add by URL/search (Phase 2)
-- Row: Download, Remove from Qobuz favorites, Add to favorites
+- Row: **Download** / **Re-download** (`in_library`); кнопка блокируется на строке до terminal job (`Downloading…` + spinner)
 - Bulk select + bulk download queue
 - **FP-3 (будущее):** сортировка по Title, Artist, In library (клик по заголовку)
 
@@ -34,13 +34,16 @@
 
 ## Library (`/library`) — Phase 5
 
-- Rescan library → `POST /api/v1/library/scan` (background)
+- **Rebuild index** (outline) → `POST /api/v1/library/scan`; **Repair folder** на альбоме → `?root=<album dir>`
+- **Cancel scan** при `running` → `DELETE /api/v1/library/scan/{id}`
 - Album list + track list; превью обложки по `GET /api/v1/library/albums/{id}/cover` (плейсхолдер **No cover**, если нет пути или файла)
 - Редактирование **текстовых** тегов трека → `PATCH /api/v1/library/tracks/{id}`
 - Header shows last scan status
 - **Replace cover** — `PUT /api/v1/library/albums/{id}/cover` (JPEG/PNG/WebP/BMP, до 20 MiB); после Qobuz-download обложка также пишется на диск и встраивается в треки
 
-**Tests:** album list renders; rescan button calls API.
+**Tests:** album list; rebuild index; cancel scan; repair folder query.
+
+**Layout:** после завершения album download — авто-invalidate Library/Favorites (`useInvalidateLibraryOnDownloadComplete`).
 
 ## Layout
 

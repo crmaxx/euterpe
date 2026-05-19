@@ -25,6 +25,7 @@ pub struct TrackRow {
     pub duration_sec: Option<i32>,
     pub file_mtime: Option<String>,
     pub file_hash: Option<String>,
+    pub file_size: Option<i64>,
 }
 
 pub struct TrackUpsert<'a> {
@@ -39,6 +40,21 @@ pub struct TrackUpsert<'a> {
     pub duration_sec: Option<i32>,
     pub file_mtime: Option<&'a str>,
     pub file_hash: Option<&'a str>,
+    pub file_size: Option<i64>,
+}
+
+/// Stored mtime + size for skip-unchanged during library scan.
+pub async fn get_fingerprint_by_path(
+    pool: &SqlitePool,
+    path: &str,
+) -> Result<Option<(Option<String>, Option<i64>)>, ApiError> {
+    let row: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
+        "SELECT file_mtime, file_size FROM tracks WHERE path = ?",
+    )
+    .bind(path)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
 }
 
 /// Fields updated by `update_metadata` (library tag PATCH → DB row).
@@ -63,7 +79,7 @@ pub async fn upsert(pool: &SqlitePool, track: TrackUpsert<'_>) -> Result<i64, Ap
             UPDATE tracks
             SET album_id = ?, title = ?, track_number = ?, year = ?, disc_number = ?, genre = ?,
                 qobuz_track_id = COALESCE(?, qobuz_track_id),
-                duration_sec = ?, file_mtime = ?, file_hash = ?,
+                duration_sec = ?, file_mtime = ?, file_hash = ?, file_size = ?,
                 updated_at = datetime('now')
             WHERE id = ?
             "#,
@@ -78,6 +94,7 @@ pub async fn upsert(pool: &SqlitePool, track: TrackUpsert<'_>) -> Result<i64, Ap
         .bind(track.duration_sec)
         .bind(track.file_mtime)
         .bind(track.file_hash)
+        .bind(track.file_size)
         .bind(id)
         .execute(pool)
         .await?;
@@ -88,9 +105,9 @@ pub async fn upsert(pool: &SqlitePool, track: TrackUpsert<'_>) -> Result<i64, Ap
         r#"
         INSERT INTO tracks (
             album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
-            duration_sec, file_mtime, file_hash
+            duration_sec, file_mtime, file_hash, file_size
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(track.album_id)
@@ -104,6 +121,7 @@ pub async fn upsert(pool: &SqlitePool, track: TrackUpsert<'_>) -> Result<i64, Ap
     .bind(track.duration_sec)
     .bind(track.file_mtime)
     .bind(track.file_hash)
+    .bind(track.file_size)
     .execute(pool)
     .await?;
     Ok(result.last_insert_rowid())
@@ -113,7 +131,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<TrackRow>, A
     let row: Option<TrackRow> = sqlx::query_as(
         r#"
         SELECT id, album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
-               duration_sec, file_mtime, file_hash
+               duration_sec, file_mtime, file_hash, file_size
         FROM tracks WHERE id = ?
         "#,
     )
@@ -127,7 +145,7 @@ pub async fn list_by_album(pool: &SqlitePool, album_id: i64) -> Result<Vec<Track
     let mut rows: Vec<TrackRow> = sqlx::query_as(
         r#"
         SELECT id, album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
-               duration_sec, file_mtime, file_hash
+               duration_sec, file_mtime, file_hash, file_size
         FROM tracks
         WHERE album_id = ?
         "#,
@@ -207,6 +225,7 @@ mod tests {
                 duration_sec: Some(200),
                 file_mtime: None,
                 file_hash: None,
+                file_size: None,
             },
         )
         .await
@@ -225,6 +244,7 @@ mod tests {
                 duration_sec: Some(201),
                 file_mtime: None,
                 file_hash: None,
+                file_size: None,
             },
         )
         .await
@@ -272,6 +292,7 @@ mod tests {
                     duration_sec: None,
                     file_mtime: None,
                     file_hash: None,
+                    file_size: None,
                 },
             )
             .await
