@@ -104,9 +104,9 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 
 - Единый контракт `limit` / `sort` / `order` / `cursor` — [future-plans.ru.md — FP-8](future-plans.ru.md#fp-8--коллекции-в-api-keyset-пагинация-и-сортировка)
 
-### FP-9 — Параллельный library scan
+### FP-9 — Параллельный library scan ✅
 
-- Очередь + пул воркеров (legacy/repair) — [future-plans.ru.md — FP-9](future-plans.ru.md#fp-9--параллельное-сканирование-library-очередь--пул-воркеров)
+- Координатор + двухфазный scan (enumerate → `path_queue` → process) + один DB writer (bounded `index_queue`) — [future-plans.ru.md — FP-9](future-plans.ru.md#fp-9--параллельное-сканирование-library-очередь--пул-воркеров), детали: [library-scan.ru.md](../02-backend/library-scan.ru.md); env: `EUTERPE_LIBRARY_SCAN_*`
 
 ### FP-10 — Multi-account Qobuz ⏸
 

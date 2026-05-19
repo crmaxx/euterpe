@@ -1399,7 +1399,16 @@ components:
 
     LibraryScanRunSummary:
       type: object
-      required: [id, status, files_seen, files_indexed, started_at]
+      required:
+        [
+          id,
+          status,
+          files_seen,
+          files_processed,
+          files_indexed,
+          files_total,
+          started_at,
+        ]
       additionalProperties: false
       properties:
         id:
@@ -1411,7 +1420,13 @@ components:
         files_seen:
           type: integer
           minimum: 0
+        files_processed:
+          type: integer
+          minimum: 0
         files_indexed:
+          type: integer
+          minimum: 0
+        files_total:
           type: integer
           minimum: 0
         started_at:
@@ -1433,7 +1448,8 @@ components:
 
     ScanProgressEvent:
       type: object
-      required: [scan_id, files_seen, files_indexed]
+      required:
+        [scan_id, files_seen, files_processed, files_indexed, files_total]
       additionalProperties: false
       properties:
         scan_id:
@@ -1442,7 +1458,13 @@ components:
         files_seen:
           type: integer
           minimum: 0
+        files_processed:
+          type: integer
+          minimum: 0
         files_indexed:
+          type: integer
+          minimum: 0
+        files_total:
           type: integer
           minimum: 0
 

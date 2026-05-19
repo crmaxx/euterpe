@@ -263,6 +263,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         qobuz_play_base: None,
         library_path,
         download_concurrency: 2,
+        library_scan: euterpe_server::config::LibraryScanConfig::default(),
         dev_verbose: false,
         static_dir: std::path::PathBuf::new(),
     };

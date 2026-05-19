@@ -1,5 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { useQobuzConnection, useScanLatest, useServerInfo, useSyncLatest } from "@/api/hooks";
+import {
+  useQobuzConnection,
+  useScanLatest,
+  useScanProgressSse,
+  useServerInfo,
+  useSyncLatest,
+} from "@/api/hooks";
+import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -14,6 +21,7 @@ export function AppLayout() {
   const { data: qobuz } = useQobuzConnection();
   const { data: sync } = useSyncLatest();
   const { data: libraryScan } = useScanLatest();
+  useScanProgressSse();
 
   const syncLabel = (() => {
     const run = sync?.run;
@@ -59,9 +67,21 @@ export function AppLayout() {
               <>
                 {" · "}
                 Library scan: {libraryScan.run.status}
-                {libraryScan.run.status === "running"
-                  ? ` (${libraryScan.run.files_indexed}/${libraryScan.run.files_seen})`
-                  : ""}
+                {libraryScan.run.status === "running" ? (
+                  <>
+                    {" "}
+                    (
+                    <LibraryScanProgress
+                      compact
+                      status={libraryScan.run.status}
+                      filesSeen={libraryScan.run.files_seen}
+                      filesProcessed={libraryScan.run.files_processed}
+                      filesIndexed={libraryScan.run.files_indexed}
+                      filesTotal={libraryScan.run.files_total}
+                    />
+                    )
+                  </>
+                ) : null}
               </>
             )}
           </span>

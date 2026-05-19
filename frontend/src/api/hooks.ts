@@ -2,9 +2,11 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   api,
+  subscribeServerEvents,
   type CreateDownloadRequest,
   type DownloadJob,
   type LibraryAlbumItem,
+  type LibraryScanLatestResponse,
   type QobuzFavoriteItem,
   type SortOrder,
 } from "./client";
@@ -69,12 +71,48 @@ export function useScanLatest() {
   return useQuery({
     queryKey: queryKeys.scanLatest,
     queryFn: api.libraryScanLatest,
-    refetchInterval: (query) =>
-      query.state.error instanceof ApiClientError &&
-      query.state.error.status === 401
-        ? false
-        : 5_000,
+    refetchInterval: (query) => {
+      if (
+        query.state.error instanceof ApiClientError &&
+        query.state.error.status === 401
+      ) {
+        return false;
+      }
+      const status = query.state.data?.run?.status;
+      return status === "running" ? 2_000 : 30_000;
+    },
   });
+}
+
+/** Live scan counters via SSE (`scan_progress`); patches `scanLatest` cache. */
+export function useScanProgressSse() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    const source = subscribeServerEvents({
+      onScanProgress: (ev) => {
+        qc.setQueryData<LibraryScanLatestResponse>(queryKeys.scanLatest, (old) => {
+          if (old?.run && old.run.id !== ev.scan_id) {
+            return old;
+          }
+          const run = old?.run;
+          return {
+            run: {
+              id: ev.scan_id,
+              status: "running",
+              files_seen: ev.files_seen,
+              files_processed: ev.files_processed,
+              files_indexed: ev.files_indexed,
+              files_total: ev.files_total,
+              started_at: run?.started_at ?? new Date().toISOString(),
+              finished_at: null,
+              error_message: null,
+            },
+          };
+        });
+      },
+    });
+    return () => source.close();
+  }, [qc]);
 }
 
 export function useLibraryAlbumsKeyset(params: LibraryAlbumsListQuery = {}) {

@@ -18,6 +18,104 @@ pub fn load_dotenv() {
     }
 }
 
+/// Parallel library scan: enumerate + process pools, bounded queues (FP-9).
+#[derive(Debug, Clone)]
+pub struct LibraryScanConfig {
+    /// `enum_workers + process_workers` must be `<=` this value (`EUTERPE_LIBRARY_SCAN_WORKER_TOTAL`, default 10, clamped 2..32).
+    pub worker_total: usize,
+    /// Enumerate-only workers (`EUTERPE_LIBRARY_SCAN_ENUM_WORKERS`, default 5).
+    pub enum_workers: usize,
+    /// Process (tags/hash) workers (`EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS`, default 5).
+    pub process_workers: usize,
+    /// Seed `dir_queue` with subdirs at this depth from library root (default 1).
+    pub seed_depth: u32,
+    /// Bounded `index_queue` capacity for backpressure (default 512).
+    pub index_queue_capacity: usize,
+    /// Bounded path queue between enumerate and process (default 2048).
+    pub path_queue_capacity: usize,
+    /// Verbose scan worker logs (`EUTERPE_LIBRARY_SCAN_DEBUG` or `EUTERPE_DEV`).
+    pub debug: bool,
+}
+
+impl Default for LibraryScanConfig {
+    fn default() -> Self {
+        Self {
+            worker_total: 10,
+            enum_workers: 5,
+            process_workers: 5,
+            seed_depth: 1,
+            index_queue_capacity: 512,
+            path_queue_capacity: 2048,
+            debug: false,
+        }
+    }
+}
+
+impl LibraryScanConfig {
+    pub fn from_env() -> Result<Self, ApiError> {
+        let worker_total = env::var("EUTERPE_LIBRARY_SCAN_WORKER_TOTAL")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10)
+            .clamp(2, 32);
+        let enum_workers = env::var("EUTERPE_LIBRARY_SCAN_ENUM_WORKERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5);
+        let process_workers = env::var("EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5);
+
+        if enum_workers < 1 || process_workers < 1 {
+            return Err(ApiError::Config(
+                "EUTERPE_LIBRARY_SCAN_ENUM_WORKERS and EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS must be >= 1"
+                    .into(),
+            ));
+        }
+        if enum_workers > worker_total || process_workers > worker_total {
+            return Err(ApiError::Config(format!(
+                "enum workers ({enum_workers}) and process workers ({process_workers}) must each be <= EUTERPE_LIBRARY_SCAN_WORKER_TOTAL ({worker_total})"
+            )));
+        }
+        if enum_workers + process_workers > worker_total {
+            return Err(ApiError::Config(format!(
+                "EUTERPE_LIBRARY_SCAN_ENUM_WORKERS ({enum_workers}) + EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS ({process_workers}) must be <= EUTERPE_LIBRARY_SCAN_WORKER_TOTAL ({worker_total})"
+            )));
+        }
+
+        let seed_depth = env::var("EUTERPE_LIBRARY_SCAN_SEED_DEPTH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        let index_queue_capacity = env::var("EUTERPE_LIBRARY_SCAN_INDEX_QUEUE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(512);
+        let path_queue_capacity = env::var("EUTERPE_LIBRARY_SCAN_PATH_QUEUE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(2048);
+        let scan_debug = env::var("EUTERPE_LIBRARY_SCAN_DEBUG")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+        let dev_verbose = env::var("EUTERPE_DEV")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+        Ok(Self {
+            worker_total,
+            enum_workers,
+            process_workers,
+            seed_depth,
+            index_queue_capacity,
+            path_queue_capacity,
+            debug: scan_debug || dev_verbose,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub bind: SocketAddr,
@@ -33,6 +131,7 @@ pub struct AppConfig {
     pub qobuz_play_base: Option<String>,
     pub library_path: PathBuf,
     pub download_concurrency: usize,
+    pub library_scan: LibraryScanConfig,
     /// Verbose HTTP + Qobuz API debug logs (`EUTERPE_DEV=true`).
     pub dev_verbose: bool,
     /// Static SPA root (`index.html` + assets). Empty = disabled.
@@ -78,6 +177,8 @@ impl AppConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(3);
 
+        let library_scan = LibraryScanConfig::from_env()?;
+
         let dev_verbose = env::var("EUTERPE_DEV")
             .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
@@ -104,6 +205,7 @@ impl AppConfig {
             qobuz_play_base,
             library_path,
             download_concurrency,
+            library_scan,
             dev_verbose,
             static_dir,
         })
@@ -139,7 +241,22 @@ impl AppConfig {
 mod tests {
     use std::sync::Mutex;
 
+    use super::{ApiError, LibraryScanConfig};
+
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn library_scan_rejects_enum_plus_process_over_total() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("EUTERPE_LIBRARY_SCAN_WORKER_TOTAL", "4");
+        std::env::set_var("EUTERPE_LIBRARY_SCAN_ENUM_WORKERS", "3");
+        std::env::set_var("EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS", "3");
+        let err = LibraryScanConfig::from_env().expect_err("expected config error");
+        assert!(matches!(err, ApiError::Config(_)));
+        std::env::remove_var("EUTERPE_LIBRARY_SCAN_WORKER_TOTAL");
+        std::env::remove_var("EUTERPE_LIBRARY_SCAN_ENUM_WORKERS");
+        std::env::remove_var("EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS");
+    }
 
     #[test]
     fn dotenv_from_path_loads_variables() {

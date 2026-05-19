@@ -25,6 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
 import { cn } from "@/lib/utils";
+import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
 
 function trackToTagForm(d: LibraryTrackDetailResponse): LibraryTrackTagsPatchRequest {
   return {
@@ -301,13 +302,6 @@ export function LibraryPage() {
           <h2 className="text-2xl font-semibold">Library</h2>
           <p className="text-sm text-muted-foreground">
             Local files indexed from the server library path.
-            {scan?.run && (
-              <>
-                {" "}
-                Scan: {scan.run.status} ({scan.run.files_indexed}/
-                {scan.run.files_seen} files)
-              </>
-            )}
           </p>
         </div>
         <Button
@@ -318,6 +312,17 @@ export function LibraryPage() {
           {scanRunning ? "Scanning…" : "Rescan library"}
         </Button>
       </div>
+
+      {scanRunning && scan?.run ? (
+        <LibraryScanProgress
+          status={scan.run.status}
+          filesSeen={scan.run.files_seen}
+          filesProcessed={scan.run.files_processed}
+          filesIndexed={scan.run.files_indexed}
+          filesTotal={scan.run.files_total}
+          startedAt={scan.run.started_at}
+        />
+      ) : null}
 
       <div className="max-w-sm">
         <Label htmlFor="library-search">Search</Label>

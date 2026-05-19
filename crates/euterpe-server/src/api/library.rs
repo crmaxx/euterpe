@@ -9,8 +9,13 @@ pub struct LibraryScanStartResponse {
 pub struct LibraryScanRunSummary {
     pub id: i64,
     pub status: String,
+    /// Audio files discovered during enumerate (live while total unknown).
     pub files_seen: i64,
+    /// Paths for which index job was queued (tags + hash done).
+    pub files_processed: i64,
     pub files_indexed: i64,
+    /// Set when enumerate finished; 0 while still discovering.
+    pub files_total: i64,
     pub started_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
@@ -27,7 +32,9 @@ pub struct LibraryScanLatestResponse {
 pub struct ScanProgressEvent {
     pub scan_id: i64,
     pub files_seen: i64,
+    pub files_processed: i64,
     pub files_indexed: i64,
+    pub files_total: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
