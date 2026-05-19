@@ -384,6 +384,7 @@ pub mod test_support {
             qobuz_play_base: None,
             library_path,
             download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
             dev_verbose: false,
             static_dir: std::path::PathBuf::new(),
         };

@@ -698,7 +698,9 @@ export interface components {
             /** @enum {string} */
             status: "running" | "success" | "failed" | "cancelled";
             files_seen: number;
+            files_processed: number;
             files_indexed: number;
+            files_total: number;
             started_at: string;
             finished_at?: string | null;
             error_message?: string | null;
@@ -710,7 +712,9 @@ export interface components {
             /** Format: int64 */
             scan_id: number;
             files_seen: number;
+            files_processed: number;
             files_indexed: number;
+            files_total: number;
         };
         LibraryAlbumItem: {
             /** Format: int64 */

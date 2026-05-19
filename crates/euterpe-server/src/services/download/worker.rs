@@ -659,6 +659,7 @@ mod tests {
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
             dev_verbose: false,
             static_dir: std::path::PathBuf::new(),
         });
@@ -792,6 +793,7 @@ mod tests {
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
             dev_verbose: false,
             static_dir: std::path::PathBuf::new(),
         });
@@ -915,6 +917,7 @@ mod tests {
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
             dev_verbose: false,
             static_dir: std::path::PathBuf::new(),
         });
@@ -1028,6 +1031,7 @@ mod tests {
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
             dev_verbose: false,
             static_dir: std::path::PathBuf::new(),
         });
@@ -1122,6 +1126,7 @@ mod tests {
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
             dev_verbose: false,
             static_dir: std::path::PathBuf::new(),
         });

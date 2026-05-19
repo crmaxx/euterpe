@@ -450,9 +450,11 @@ FP-4 — внешние каталоги (MusicBrainz, Discogs, …) для **у
 
 ## FP-9 — Параллельное сканирование Library (очередь + пул воркеров)
 
-### Проблема сейчас
+**Статус:** FP-9a + FP-9c **done** — координатор, пул walk-воркеров, один DB writer, bounded `index_queue`, env `EUTERPE_LIBRARY_SCAN_*`. См. [library-scan.ru.md](../02-backend/library-scan.ru.md).
 
-`POST /api/v1/library/scan` обходит всю библиотеку **одним** `WalkDir` в одной async-задаче (`services/library_scan.rs`). На больших каталогах (десятки тысяч файлов, полный SHA256 каждого файла) первый и повторный scan занимают много времени и не используют диск/CPU параллельно.
+### Проблема (до FP-9a)
+
+`POST /api/v1/library/scan` обходил всю библиотеку **одним** `WalkDir` в одной async-задаче. На больших каталогах (десятки тысяч файлов, полный SHA256 каждого файла) scan занимал много времени и не использовал диск/CPU параллельно.
 
 ### Цель
 
@@ -468,7 +470,7 @@ FP-4 — внешние каталоги (MusicBrainz, Discogs, …) для **у
 | **Очередь** | Общая для всех воркеров: `path` + `depth` + `priority`. Воркеры **забирают** задачу (async channel / mutex + heap). **Не** порождать отдельную OS-thread на каждую папку — держать ровно `N` долгоживущих воркеров. |
 | **Воркер** (пул из `N`, default 10) | Берёт каталог из очереди → обходит **только его поддерево**. Для каждого аудиофайла — тот же `index_file`, что сейчас. При входе во **вложенную** директорию может **положить её в очередь** вместо немедленного рекурсивного обхода (см. приоритет). |
 | **Приоритет** | Чем **глубже** поддерево относительно корня задачи исполнителя — тем **выше** приоритет (LIFO внутри ветки: сначала альбомы/вложенные папки, потом соседи). Реализация: `priority = base + depth` или отдельная **стековая** очередь на воркера + общая очередь для корневых «исполнителей». |
-| **Лимит** | `EUTERPE_LIBRARY_SCAN_WORKERS` (env), default **10**. Один активный scan run, как сейчас (`SCAN_ALREADY_RUNNING`). |
+| **Лимит** | `EUTERPE_LIBRARY_SCAN_WORKER_TOTAL` и отдельно enum/process (см. [library-scan.ru.md](../02-backend/library-scan.ru.md)); правило `E+P≤T`. Один активный scan run, как сейчас (`SCAN_ALREADY_RUNNING`). |
 
 ```mermaid
 flowchart LR
@@ -494,7 +496,7 @@ flowchart LR
 2. **«Исполнитель» = первый уровень** — соответствует layout загрузок Euterpe (`library/Artist/Album/track.flac`). Если у пользователя другая схема (`Genre/Artist/…` или плоский корень), координатор должен уметь **fallback**: одна задача «весь root» или настраиваемая глубина seed (`EUTERPE_LIBRARY_SCAN_SEED_DEPTH`, default 1).
 3. **Не дублировать обход**: перед постановкой в очередь — `visited` / canonical path (symlink-safe), иначе два воркера проиндексируют одно и то же.
 4. **SQLite**: параллельные `upsert` требуют **WAL** + пул соединений (`sqlx`); при contention — короткие транзакции на файл или batch. Имеет смысл вынести в тот же FP или FP-9d **пропуск неизменённых** файлов (`mtime` + size без полного SHA256), иначе 10 воркеров упрутся в чтение диска.
-5. **Прогресс SSE** — атомарные счётчики `files_seen` / `files_indexed`; периодический flush в `library_scan_runs` как сейчас (`PROGRESS_EVERY`).
+5. **Прогресс SSE** — атомарные счётчики `files_seen`, `files_processed`, `files_indexed`, `files_total` (после enumerate `files_total` фиксирован); периодический flush в `library_scan_runs` (`PROGRESS_EVERY`).
 6. **MVP vs полная версия**:
    - **FP-9a (MVP):** координатор кладёт в очередь только каталоги **уровня Artist**; воркер делает **локальный** `WalkDir` по всему поддереву исполнителя (без re-enqueue вложенных папок). Уже даёт ~linear speedup до `N` на типичной библиотеке.
    - **FP-9b:** динамическая постановка вложенных каталогов в общую очередь с приоритетом (как в исходной идее).
@@ -503,11 +505,11 @@ flowchart LR
 
 | Параметр | Назначение |
 |----------|------------|
-| `EUTERPE_LIBRARY_SCAN_WORKERS` | Размер пула (default 10, min 1, max разумный cap e.g. 32) |
+| `EUTERPE_LIBRARY_SCAN_WORKER_TOTAL`, `…_ENUM_WORKERS`, `…_PROCESS_WORKERS` | Пул воркеров (двухфазный scan: enumerate + process); см. [library-scan.ru.md](../02-backend/library-scan.ru.md) |
 | `EUTERPE_LIBRARY_SCAN_SEED_DEPTH` | Сколько уровней от корня координатор кладёт в очередь (default 1) |
 | (опционально) body `POST …/library/scan` | `{ "workers": 10 }` переопределяет env на один run |
 
-OpenAPI / `ScanProgressEvent` **без breaking change**; опционально поле `queue_depth` в SSE для отладки.
+OpenAPI / `ScanProgressEvent` и `LibraryScanRunSummary`: аддитивные поля `files_total`, `files_processed` (FP-9e); `POST /library/scan` без breaking change тела запроса.
 
 ### Связь с другими FP
 
@@ -519,10 +521,10 @@ OpenAPI / `ScanProgressEvent` **без breaking change**; опционально
 
 | ID | Scope |
 |----|--------|
-| FP-9a | Очередь + пул `N` воркеров; seed = подкаталоги 1-го уровня; локальный `WalkDir` на задачу; тесты на temp tree с 2+ «artist» |
+| FP-9a | ✅ Очередь + пул `N` walk-воркеров + 1 DB writer; seed = подкаталоги 1-го уровня; локальный `WalkDir` на задачу |
 | FP-9b | Re-enqueue вложенных каталогов с приоритетом; `visited`; stress-тест без дублей в `tracks` |
-| FP-9c | Env + cap workers; документация layout; `#[ignore]` live benchmark note |
-| FP-9d | (опционально) skip unchanged files (mtime/size) перед SHA256 |
+| FP-9c | ✅ Env + cap workers; [library-scan.ru.md](../02-backend/library-scan.ru.md) |
+| FP-9e | ✅ Двухфазный scan: enumerate (path queue) + process; `files_total` / `files_processed`; новые env (`WORKER_TOTAL`, enum/process, `PATH_QUEUE`); **удалён** `EUTERPE_LIBRARY_SCAN_WORKERS` |
 
 **Целевая фаза:** **Phase 5b / 6** (после стабилизации FP-7 и пула SQLite).
 

@@ -24,6 +24,7 @@ pub async fn start_library_scan(
         &state.db,
         state.config.library_path.clone(),
         state.scan_events.clone(),
+        state.config.library_scan.clone(),
     )
     .await?;
     Ok((

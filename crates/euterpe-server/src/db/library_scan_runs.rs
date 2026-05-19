@@ -8,7 +8,9 @@ struct ScanRunRow {
     id: i64,
     status: String,
     files_seen: i64,
+    files_processed: i64,
     files_indexed: i64,
+    files_total: i64,
     started_at: String,
     finished_at: Option<String>,
     error_message: Option<String>,
@@ -20,7 +22,9 @@ impl From<ScanRunRow> for LibraryScanRunSummary {
             id: row.id,
             status: row.status,
             files_seen: row.files_seen,
+            files_processed: row.files_processed,
             files_indexed: row.files_indexed,
+            files_total: row.files_total,
             started_at: row.started_at,
             finished_at: row.finished_at,
             error_message: row.error_message,
@@ -52,7 +56,7 @@ pub async fn start(pool: &SqlitePool) -> Result<i64, ApiError> {
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<LibraryScanRunSummary>, ApiError> {
     let row: Option<ScanRunRow> = sqlx::query_as(
         r#"
-        SELECT id, status, files_seen, files_indexed, started_at, finished_at, error_message
+        SELECT id, status, files_seen, files_processed, files_indexed, files_total, started_at, finished_at, error_message
         FROM library_scan_runs WHERE id = ?
         "#,
     )
@@ -65,7 +69,7 @@ pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<LibraryScanR
 pub async fn latest(pool: &SqlitePool) -> Result<Option<LibraryScanRunSummary>, ApiError> {
     let row: Option<ScanRunRow> = sqlx::query_as(
         r#"
-        SELECT id, status, files_seen, files_indexed, started_at, finished_at, error_message
+        SELECT id, status, files_seen, files_processed, files_indexed, files_total, started_at, finished_at, error_message
         FROM library_scan_runs
         ORDER BY id DESC
         LIMIT 1
@@ -80,17 +84,21 @@ pub async fn update_progress(
     pool: &SqlitePool,
     id: i64,
     files_seen: i64,
+    files_processed: i64,
     files_indexed: i64,
+    files_total: i64,
 ) -> Result<(), ApiError> {
     sqlx::query(
         r#"
         UPDATE library_scan_runs
-        SET files_seen = ?, files_indexed = ?
+        SET files_seen = ?, files_processed = ?, files_indexed = ?, files_total = ?
         WHERE id = ?
         "#,
     )
     .bind(files_seen)
+    .bind(files_processed)
     .bind(files_indexed)
+    .bind(files_total)
     .bind(id)
     .execute(pool)
     .await?;
