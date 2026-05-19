@@ -435,7 +435,7 @@ export function useFavoritesList(params: FavoritesListQuery = {}) {
     placeholderData: (previous, previousQuery) => {
       if (!previous || !previousQuery) return undefined;
       const prevFilterKey = previousQuery.queryKey.at(-1);
-      return prevFilterKey === filterKey ? keepPreviousData(previous) : undefined;
+      return prevFilterKey === filterKey ? previous : undefined;
     },
   });
 
