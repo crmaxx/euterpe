@@ -17,20 +17,38 @@ use crate::library::tags::{self, apply_patch, TrackTagsPatch};
 use crate::services::library_scan;
 use crate::state::AppState;
 
+#[derive(Debug, Deserialize)]
+pub struct StartLibraryScanQuery {
+    /// Relative path under library root (e.g. `Artist/Album`) for subtree scan only.
+    pub root: Option<String>,
+}
+
 pub async fn start_library_scan(
     State(state): State<AppState>,
+    Query(q): Query<StartLibraryScanQuery>,
 ) -> Result<(StatusCode, Json<LibraryScanStartResponse>), ApiError> {
+    let scan_root =
+        library_scan::resolve_scan_root_query(&state.config.library_path, q.root.as_deref())?;
     let scan_id = library_scan::start_scan(
         &state.db,
         state.config.library_path.clone(),
         state.scan_events.clone(),
         state.config.library_scan.clone(),
+        scan_root,
     )
     .await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(LibraryScanStartResponse { scan_id }),
     ))
+}
+
+pub async fn cancel_library_scan(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    library_scan::request_cancel(&state.db, id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn library_scan_latest(

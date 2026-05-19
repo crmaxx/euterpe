@@ -339,7 +339,8 @@ export interface paths {
         get: operations["getLibraryScan"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Cancel a running library scan */
+        delete: operations["cancelLibraryScan"];
         options?: never;
         head?: never;
         patch?: never;
@@ -621,7 +622,9 @@ export interface components {
             in_library: boolean;
             /** Format: int64 */
             local_album_id?: number | null;
-            /** @description Qobuz thumbnail URL from last sync (when not in library) */
+            /** @description Library cover path when in_library (`GET /library/albums/{id}/cover`) */
+            local_cover_path?: string | null;
+            /** @description Qobuz thumbnail URL from last sync (fallback when not in library) */
             cover_url?: string | null;
         };
         QobuzFavoritesListResponse: {
@@ -1405,7 +1408,10 @@ export interface operations {
     };
     startLibraryScan: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Relative path under library root for subtree scan only (e.g. Artist/Album) */
+                root?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1465,6 +1471,28 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+        };
+    };
+    cancelLibraryScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan cancelled */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     listLibraryAlbums: {

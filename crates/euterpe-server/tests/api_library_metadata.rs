@@ -52,6 +52,7 @@ async fn setup_album_with_integration() -> (euterpe_server::AppState, i64, i64) 
             duration_sec: Some(180),
             file_mtime: None,
             file_hash: None,
+            file_size: None,
         },
     )
     .await

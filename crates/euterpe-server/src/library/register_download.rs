@@ -7,7 +7,7 @@ use sqlx::SqlitePool;
 
 use crate::db::{albums, artists, tracks};
 use crate::error::ApiError;
-use crate::library::fs::file_mtime;
+use crate::library::fs::file_stat_sync;
 use crate::library::paths::{track_path, year_from_release_date};
 use crate::library::qobuz_tags::track_db_fields_from_qobuz;
 
@@ -86,7 +86,11 @@ async fn upsert_track_from_api(
 ) -> Result<(), ApiError> {
     let dest = track_path(library_root, album, track, format_id);
     let path_str = relative_path(library_root, &dest)?;
-    let mtime = file_mtime(&dest).await;
+    let dest_for_stat = dest.clone();
+    let (mtime, size) = tokio::task::spawn_blocking(move || file_stat_sync(&dest_for_stat))
+        .await
+        .map_err(|e| ApiError::Message(format!("stat task join: {e}")))?;
+    let file_size = i64::try_from(size).ok();
     let (disc_number, genre) = track_db_fields_from_qobuz(album, track);
 
     tracks::upsert(
@@ -103,6 +107,7 @@ async fn upsert_track_from_api(
             duration_sec: track.duration.map(|d| d as i32),
             file_mtime: mtime.as_deref(),
             file_hash: None,
+            file_size,
         },
     )
     .await?;

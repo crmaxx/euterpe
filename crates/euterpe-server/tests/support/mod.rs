@@ -264,7 +264,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         library_path,
         download_concurrency: 2,
         library_scan: euterpe_server::config::LibraryScanConfig::default(),
-        dev_verbose: false,
+        debug: false,
         static_dir: std::path::PathBuf::new(),
     };
     let pool = db::connect(&config.database_url).await.unwrap();

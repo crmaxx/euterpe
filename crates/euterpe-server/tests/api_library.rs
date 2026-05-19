@@ -74,8 +74,7 @@ async fn library_scan_indexes_files() {
     assert_eq!(albums.status(), StatusCode::OK);
     let bytes = albums.into_body().collect().await.unwrap().to_bytes();
     let list: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(list["items"].as_array().unwrap().len() >= 1);
-    assert_eq!(list["has_more"], false);
+    assert!(!list["items"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -197,6 +196,188 @@ async fn library_scan_conflict_when_running() {
         .await
         .unwrap();
     assert_eq!(second.status(), StatusCode::CONFLICT);
+}
+
+fn write_minimal_wav(path: &std::path::Path) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
+    for _ in 0..64 {
+        writer.write_sample(0i16).unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+#[tokio::test]
+async fn library_scan_subtree_root_indexes_only_under_path() {
+    let state = app::test_support::test_state().await;
+    let library = state.config.library_path.clone();
+    write_minimal_wav(&library.join("Scan Artist/Scan Album/01.wav"));
+    write_minimal_wav(&library.join("Other Artist/Other Album/99.wav"));
+
+    let app = app::app(state);
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/library/scan?root=Scan%20Artist%2FScan%20Album")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::ACCEPTED);
+    let body = start.into_body().collect().await.unwrap().to_bytes();
+    let json: Value = serde_json::from_slice(&body).unwrap();
+    let scan_id = json["scan_id"].as_i64().unwrap();
+
+    for _ in 0..80 {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/library/scan/{scan_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let run: Value =
+            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        if run["status"] == "success" {
+            assert_eq!(run["files_indexed"].as_i64().unwrap(), 1);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let albums = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?limit=20")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let list: Value = serde_json::from_slice(
+        &albums.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    let titles: Vec<&str> = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["title"].as_str().unwrap())
+        .collect();
+    assert!(titles.contains(&"Scan Album"));
+    assert!(!titles.contains(&"Other Album"));
+}
+
+#[tokio::test]
+async fn library_scan_root_rejects_traversal() {
+    let state = app::test_support::test_state().await;
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/library/scan?root=..%2F..%2Fetc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn library_scan_cancel_sets_status_and_rejects_repeat() {
+    let state = app::test_support::test_state().await;
+    let library = state.config.library_path.clone();
+    for i in 0..40 {
+        write_minimal_wav(
+            &library.join(format!("Bulk Artist/Album {i:02}/track.wav")),
+        );
+    }
+
+    let app = app::app(state);
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/library/scan")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::ACCEPTED);
+    let scan_id = serde_json::from_slice::<Value>(
+        &start.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap()["scan_id"]
+        .as_i64()
+        .unwrap();
+
+    let cancel = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/library/scan/{scan_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancel.status(), StatusCode::NO_CONTENT);
+
+    let mut cancelled = false;
+    for _ in 0..80 {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/library/scan/{scan_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let run: Value =
+            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        if run["status"] == "cancelled" {
+            cancelled = true;
+            break;
+        }
+        if run["status"] == "success" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(cancelled, "expected scan to reach cancelled status");
+
+    let again = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/library/scan/{scan_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test]

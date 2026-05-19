@@ -192,8 +192,18 @@ export const api = {
   libraryScanLatest: () =>
     fetchJson<LibraryScanLatestResponse>("/library/scan/latest"),
 
-  startLibraryScan: () =>
-    fetchJson<LibraryScanStartResponse>("/library/scan", { method: "POST" }),
+  startLibraryScan: (root?: string) => {
+    const q =
+      root != null && root.length > 0
+        ? `?root=${encodeURIComponent(root)}`
+        : "";
+    return fetchJson<LibraryScanStartResponse>(`/library/scan${q}`, {
+      method: "POST",
+    });
+  },
+
+  cancelLibraryScan: (scanId: number) =>
+    fetchJson<void>(`/library/scan/${scanId}`, { method: "DELETE" }),
 
   libraryAlbums: (params: KeysetListParams & { q?: string } = {}) => {
     const search = new URLSearchParams();

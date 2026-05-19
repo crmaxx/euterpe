@@ -4,8 +4,10 @@ import {
   useLibraryAlbumsKeyset,
   useLibraryTrack,
   usePatchTrackTags,
+  useCancelLibraryScan,
   useScanLatest,
   useStartLibraryScan,
+  usePrefetchLibraryAlbumCovers,
   useUploadLibraryAlbumCover,
 } from "@/api/hooks";
 import type {
@@ -26,6 +28,16 @@ import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
 import { cn } from "@/lib/utils";
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
+
+function albumFolderFromTracks(
+  tracks: { path: string }[],
+): string | undefined {
+  const p = tracks[0]?.path;
+  if (!p) return undefined;
+  const i = p.lastIndexOf("/");
+  if (i <= 0) return undefined;
+  return p.slice(0, i);
+}
 
 function trackToTagForm(d: LibraryTrackDetailResponse): LibraryTrackTagsPatchRequest {
   return {
@@ -209,8 +221,10 @@ export function LibraryPage() {
 
   const { data: scan } = useScanLatest();
   const startScan = useStartLibraryScan();
+  const cancelScan = useCancelLibraryScan();
   const albumsQuery = useLibraryAlbumsKeyset(listParams);
   const albumItems = flattenKeysetPages<LibraryAlbumItem>(albumsQuery.data);
+  usePrefetchLibraryAlbumCovers(albumItems);
   const isLoading = albumsQuery.isLoading;
   const { data: albumDetail } = useLibraryAlbum(selectedAlbumId);
   const trackQuery = useLibraryTrack(editingTrackId);
@@ -218,6 +232,12 @@ export function LibraryPage() {
   const uploadCover = useUploadLibraryAlbumCover();
 
   const scanRunning = scan?.run?.status === "running";
+  const showScanProgress =
+    scan?.run != null &&
+    (scan.run.status === "running" || scan.run.status === "cancelled");
+  const repairFolder = albumDetail
+    ? albumFolderFromTracks(albumDetail.tracks)
+    : undefined;
 
   async function handleCoverFileSelected(
     e: React.ChangeEvent<HTMLInputElement>,
@@ -256,13 +276,30 @@ export function LibraryPage() {
     }
   }
 
-  async function handleScan() {
+  async function handleScan(root?: string) {
     try {
-      await startScan.mutateAsync();
-      toast({ title: "Library scan started" });
+      await startScan.mutateAsync(root);
+      toast({
+        title: root ? "Folder repair started" : "Index rebuild started",
+      });
     } catch (e) {
       toast({
         title: "Scan failed",
+        description: e instanceof Error ? e.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleCancelScan() {
+    const id = scan?.run?.id;
+    if (id == null) return;
+    try {
+      await cancelScan.mutateAsync(id);
+      toast({ title: "Scan cancelled" });
+    } catch (e) {
+      toast({
+        title: "Cancel failed",
         description: e instanceof Error ? e.message : "Unknown error",
         variant: "destructive",
       });
@@ -301,19 +338,34 @@ export function LibraryPage() {
         <div>
           <h2 className="text-2xl font-semibold">Library</h2>
           <p className="text-sm text-muted-foreground">
-            Local files indexed from the server library path.
+            Qobuz downloads are indexed automatically. Use{" "}
+            <strong className="font-medium text-foreground">Rebuild index</strong> for
+            files added on disk manually, or repair a folder from the album view.
           </p>
         </div>
-        <Button
-          type="button"
-          disabled={scanRunning || startScan.isPending}
-          onClick={() => void handleScan()}
-        >
-          {scanRunning ? "Scanning…" : "Rescan library"}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {scanRunning ? (
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={cancelScan.isPending}
+              onClick={() => void handleCancelScan()}
+            >
+              {cancelScan.isPending ? "Cancelling…" : "Cancel scan"}
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={scanRunning || startScan.isPending}
+            onClick={() => void handleScan()}
+          >
+            {scanRunning ? "Scanning…" : "Rebuild index"}
+          </Button>
+        </div>
       </div>
 
-      {scanRunning && scan?.run ? (
+      {showScanProgress && scan.run ? (
         <LibraryScanProgress
           status={scan.run.status}
           filesSeen={scan.run.files_seen}
@@ -427,10 +479,23 @@ export function LibraryPage() {
                       {albumDetail.year != null ? ` · ${albumDetail.year}` : ""}
                     </p>
                   </div>
-                  <TagAutofillBar
-                    albumId={albumDetail.id}
-                    onApplied={handleAutofillApplied}
-                  />
+                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
+                    {repairFolder ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={scanRunning || startScan.isPending}
+                        onClick={() => void handleScan(repairFolder)}
+                      >
+                        Repair folder
+                      </Button>
+                    ) : null}
+                    <TagAutofillBar
+                      albumId={albumDetail.id}
+                      onApplied={handleAutofillApplied}
+                    />
+                  </div>
                 </div>
               </div>
             )}

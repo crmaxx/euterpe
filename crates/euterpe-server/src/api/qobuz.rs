@@ -53,6 +53,9 @@ pub struct QobuzFavoriteItem {
     pub in_library: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_album_id: Option<i64>,
+    /// Relative path under library root (`albums.cover_path`) when `in_library`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_cover_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover_url: Option<String>,
 }

@@ -497,6 +497,13 @@ paths:
       security:
         - AdminBearer: []
         - {}
+      parameters:
+        - name: root
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Relative path under library root for subtree scan only (e.g. Artist/Album)
       responses:
         "202":
           description: Scan accepted
@@ -548,6 +555,28 @@ paths:
                 $ref: "#/components/schemas/LibraryScanRunSummary"
         "404":
           $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: cancelLibraryScan
+      tags: [Library]
+      summary: Cancel a running library scan
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "204":
+          description: Scan cancelled
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/library/albums:
     get:
@@ -1232,9 +1261,12 @@ components:
         local_album_id:
           type: ["integer", "null"]
           format: int64
+        local_cover_path:
+          type: ["string", "null"]
+          description: Library cover path when in_library (`GET /library/albums/{id}/cover`)
         cover_url:
           type: ["string", "null"]
-          description: Qobuz thumbnail URL from last sync (when not in library)
+          description: Qobuz thumbnail URL from last sync (fallback when not in library)
 
     QobuzFavoritesListResponse:
       type: object

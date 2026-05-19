@@ -30,6 +30,7 @@ struct FavoriteRow {
     artist_name: Option<String>,
     cover_url: Option<String>,
     local_album_id: Option<i64>,
+    local_cover_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +117,7 @@ fn row_to_item(r: FavoriteRow) -> QobuzFavoriteItem {
         artist_name: r.artist_name.unwrap_or_default(),
         in_library: r.local_album_id.is_some(),
         local_album_id: r.local_album_id,
+        local_cover_path: r.local_cover_path.filter(|s| !s.trim().is_empty()),
         cover_url: r.cover_url.filter(|s| !s.trim().is_empty()),
     }
 }
@@ -272,7 +274,8 @@ pub async fn list_albums_keyset(
             f.title,
             f.artist_name,
             f.cover_url,
-            a.id AS local_album_id
+            a.id AS local_album_id,
+            a.cover_path AS local_cover_path
         FROM qobuz_favorites f
         LEFT JOIN albums a ON a.qobuz_album_id = f.qobuz_id
         WHERE f.entity_type = 'album' AND f.removed = 0

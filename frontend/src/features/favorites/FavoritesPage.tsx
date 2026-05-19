@@ -4,9 +4,18 @@ import {
   useReactTable,
   type ColumnDef,
 } from "@tanstack/react-table";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   useCreateDownloadByUrl,
+  useActiveAlbumDownloadQobuzIds,
   useCreateDownload,
   useFavoritesList,
   useQobuzSync,
@@ -15,6 +24,7 @@ import {
 } from "@/api/hooks";
 import type { QobuzFavoriteItem, SortOrder } from "@/api/client";
 import { FavoriteAlbumCover } from "@/features/favorites/FavoriteAlbumCover";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -36,6 +46,138 @@ function loadStoredSort(): FavoritesSort {
 function loadStoredOrder(): SortOrder {
   const o = sessionStorage.getItem(ORDER_STORAGE_KEY);
   return o === "desc" ? "desc" : "asc";
+}
+
+const FavoritesOptimisticBusyContext = createContext<ReadonlySet<number>>(
+  new Set(),
+);
+
+const FavoritesActiveDownloadIdsContext = createContext<ReadonlySet<number>>(
+  new Set(),
+);
+
+type FavoritesBusyApi = {
+  addOptimisticBusy: (qobuzId: number) => void;
+  removeOptimisticBusy: (qobuzId: number) => void;
+};
+
+const FavoritesBusyApiContext = createContext<FavoritesBusyApi | null>(null);
+
+/** Polls downloads every 3s; table content is memoized so covers do not re-render. */
+function FavoritesDownloadLayer({ children }: { children: React.ReactNode }) {
+  const activeDownloadIds = useActiveAlbumDownloadQobuzIds();
+  const [optimisticRaw, setOptimisticRaw] = useState<Set<number>>(() => new Set());
+  const [seenInActive, setSeenInActive] = useState<Set<number>>(() => new Set());
+
+  const activeKey = useMemo(
+    () => [...activeDownloadIds].sort((a, b) => a - b).join(","),
+    [activeDownloadIds],
+  );
+  const [prevActiveKey, setPrevActiveKey] = useState(activeKey);
+  if (prevActiveKey !== activeKey) {
+    setPrevActiveKey(activeKey);
+    setSeenInActive((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of activeDownloadIds) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
+
+  const optimisticBusy = useMemo(() => {
+    const visible = new Set<number>();
+    for (const id of optimisticRaw) {
+      if (activeDownloadIds.has(id) || !seenInActive.has(id)) {
+        visible.add(id);
+      }
+    }
+    return visible;
+  }, [optimisticRaw, seenInActive, activeDownloadIds]);
+
+  const addOptimisticBusy = useCallback((qobuzId: number) => {
+    setOptimisticRaw((prev) => {
+      if (prev.has(qobuzId)) return prev;
+      const next = new Set(prev);
+      next.add(qobuzId);
+      return next;
+    });
+  }, []);
+
+  const removeOptimisticBusy = useCallback((qobuzId: number) => {
+    setOptimisticRaw((prev) => {
+      if (!prev.has(qobuzId)) return prev;
+      const next = new Set(prev);
+      next.delete(qobuzId);
+      return next;
+    });
+  }, []);
+
+  const busyApi = useMemo(
+    () => ({ addOptimisticBusy, removeOptimisticBusy }),
+    [addOptimisticBusy, removeOptimisticBusy],
+  );
+
+  return (
+    <FavoritesBusyApiContext.Provider value={busyApi}>
+      <FavoritesActiveDownloadIdsContext.Provider value={activeDownloadIds}>
+        <FavoritesOptimisticBusyContext.Provider value={optimisticBusy}>
+          {children}
+        </FavoritesOptimisticBusyContext.Provider>
+      </FavoritesActiveDownloadIdsContext.Provider>
+    </FavoritesBusyApiContext.Provider>
+  );
+}
+
+/** Subscribes to download polling; keeps cover column cells from remounting. */
+function FavoriteRowActions({
+  item,
+  onQueue,
+  removePending,
+  onRemove,
+}: {
+  item: QobuzFavoriteItem;
+  onQueue: (item: QobuzFavoriteItem) => void;
+  removePending: boolean;
+  onRemove: (qobuzId: number) => void;
+}) {
+  const optimisticBusy = useContext(FavoritesOptimisticBusyContext);
+  const activeDownloadIds = useContext(FavoritesActiveDownloadIdsContext);
+  const busy =
+    activeDownloadIds.has(item.qobuz_id) || optimisticBusy.has(item.qobuz_id);
+  const label = item.in_library ? "Re-download" : "Download";
+  return (
+    <div className="flex gap-2">
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={busy}
+        aria-label={busy ? "Downloading" : label}
+        onClick={() => void onQueue(item)}
+      >
+        {busy ? (
+          <>
+            <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
+            Downloading…
+          </>
+        ) : (
+          label
+        )}
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={removePending}
+        onClick={() => onRemove(item.qobuz_id)}
+      >
+        Remove
+      </Button>
+    </div>
+  );
 }
 
 function SortableHeader({
@@ -64,7 +206,21 @@ function SortableHeader({
   );
 }
 
+const coverColumn: ColumnDef<QobuzFavoriteItem> = {
+  id: "cover",
+  header: "",
+  cell: ({ row }) => <FavoriteAlbumCover item={row.original} />,
+};
+
 export function FavoritesPage() {
+  return (
+    <FavoritesDownloadLayer>
+      <FavoritesPageContent />
+    </FavoritesDownloadLayer>
+  );
+}
+
+const FavoritesPageContent = memo(function FavoritesPageContent() {
   const [sort, setSort] = useState<FavoritesSort>(loadStoredSort);
   const [order, setOrder] = useState<SortOrder>(loadStoredOrder);
   const [qInput, setQInput] = useState("");
@@ -98,11 +254,15 @@ export function FavoritesPage() {
   const favoritesQuery = useFavoritesList(listParams);
   const { items } = favoritesQuery;
   const initialLoading = favoritesQuery.isPending;
-  const isRefetching = favoritesQuery.isFetching;
+  const showSearching =
+    favoritesQuery.isFetching &&
+    !favoritesQuery.isPending &&
+    q.length > 0;
   const sync = useQobuzSync();
   const downloadByUrl = useCreateDownloadByUrl();
   const remove = useRemoveFavorites();
   const download = useCreateDownload();
+  const busyApi = useContext(FavoritesBusyApiContext);
   const { toast } = useToast();
 
   const onSort = useCallback((col: FavoritesSort) => {
@@ -118,6 +278,7 @@ export function FavoritesPage() {
 
   const queueOne = useCallback(
     async (item: QobuzFavoriteItem) => {
+      busyApi?.addOptimisticBusy(item.qobuz_id);
       try {
         await download.mutateAsync({
           job_type: "album",
@@ -127,6 +288,7 @@ export function FavoritesPage() {
         });
         toast({ title: "Download queued", description: item.title });
       } catch (e) {
+        busyApi?.removeOptimisticBusy(item.qobuz_id);
         toast({
           title: "Queue failed",
           description: e instanceof Error ? e.message : "Error",
@@ -134,7 +296,20 @@ export function FavoritesPage() {
         });
       }
     },
-    [download, toast],
+    [busyApi, download, toast],
+  );
+
+  const handleRemoveFavorite = useCallback(
+    (qobuzId: number) => {
+      void remove.mutateAsync([qobuzId]).catch((e) =>
+        toast({
+          title: "Remove failed",
+          description: String(e),
+          variant: "destructive",
+        }),
+      );
+    },
+    [remove, toast],
   );
 
   const columns = useMemo<ColumnDef<QobuzFavoriteItem>[]>(
@@ -156,11 +331,7 @@ export function FavoritesPage() {
           />
         ),
       },
-      {
-        id: "cover",
-        header: "",
-        cell: ({ row }) => <FavoriteAlbumCover item={row.original} />,
-      },
+      coverColumn,
       {
         accessorKey: "title",
         header: () => (
@@ -202,36 +373,16 @@ export function FavoritesPage() {
         id: "actions",
         header: "Actions",
         cell: ({ row }) => (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={download.isPending}
-              onClick={() => void queueOne(row.original)}
-            >
-              Download
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={remove.isPending}
-              onClick={() =>
-                void remove.mutateAsync([row.original.qobuz_id]).catch((e) =>
-                  toast({
-                    title: "Remove failed",
-                    description: String(e),
-                    variant: "destructive",
-                  }),
-                )
-              }
-            >
-              Remove
-            </Button>
-          </div>
+          <FavoriteRowActions
+            item={row.original}
+            onQueue={queueOne}
+            removePending={remove.isPending}
+            onRemove={handleRemoveFavorite}
+          />
         ),
       },
     ],
-    [download.isPending, onSort, order, queueOne, remove, sort, toast],
+    [handleRemoveFavorite, onSort, order, queueOne, remove.isPending, sort],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table API
@@ -375,14 +526,9 @@ export function FavoritesPage() {
         <p className="text-muted-foreground">Loading…</p>
       ) : (
         <>
-          {isRefetching ? (
+          {showSearching ? (
             <p className="text-sm text-muted-foreground">Searching…</p>
           ) : null}
-          <div
-            className={
-              isRefetching ? "pointer-events-none rounded-lg opacity-60" : ""
-            }
-          >
           <div className="overflow-hidden rounded-lg border border-border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
@@ -412,7 +558,6 @@ export function FavoritesPage() {
               </tbody>
             </table>
           </div>
-          </div>
           {favoritesQuery.hasNextPage ? (
             <Button
               variant="outline"
@@ -426,4 +571,4 @@ export function FavoritesPage() {
       )}
     </div>
   );
-}
+});

@@ -15,6 +15,14 @@ use crate::error::ApiError;
 use crate::library::paths::track_path;
 use crate::services::download::resolve::{push_album_api_candidate, resolve_from_qobuz_favorites};
 
+macro_rules! dl_debug {
+    ($deps:expr, $($arg:tt)*) => {
+        if $deps.config.debug {
+            tracing::debug!($($arg)*);
+        }
+    };
+}
+
 pub fn quality_from_format_id(id: u8) -> Option<Quality> {
     match id {
         5 => Some(Quality::Mp3_320),
@@ -58,7 +66,8 @@ async fn fetch_album_detail(
     let mut last_err: Option<QobuzError> = None;
 
     if let Some(api_id) = stored_api_id.map(str::trim).filter(|s| !s.is_empty()) {
-        tracing::debug!(
+        dl_debug!(
+            deps,
             job_id,
             qobuz_id = catalog_id,
             api_album_id = %api_id,
@@ -111,7 +120,7 @@ async fn fetch_album_detail(
     push_album_api_candidate(&mut candidates, &numeric);
 
     for api_id in &candidates {
-        tracing::debug!(job_id, qobuz_id = catalog_id, api_album_id = %api_id, "album/get attempt");
+        dl_debug!(deps, job_id, qobuz_id = catalog_id, api_album_id = %api_id, "album/get attempt");
         match guard.album_ref(api_id).await {
             Ok(album) => {
                 tracing::info!(
@@ -137,15 +146,17 @@ async fn fetch_album_detail(
 
     if let Some(m) = meta {
         let query = format!("{} {}", m.title, m.artist_name);
-        tracing::debug!(job_id, %query, "album/search fallback");
+        dl_debug!(deps, job_id, %query, "album/search fallback");
         let results = guard.album_search(&query, 25).await?;
-        tracing::debug!(
+        dl_debug!(
+            deps,
             job_id,
             hits = results.len(),
             "album/search results"
         );
         for hit in &results {
-            tracing::debug!(
+            dl_debug!(
+                deps,
                 job_id,
                 hit_id = hit.id,
                 hit_api_id = %hit.api_album_id(),
@@ -175,7 +186,7 @@ async fn fetch_album_detail(
                 "album/search match, retry album/get"
             );
             for api_id in hit.album_get_candidate_ids() {
-                tracing::debug!(job_id, api_album_id = %api_id, "album/get attempt (search hit)");
+                dl_debug!(deps, job_id, api_album_id = %api_id, "album/get attempt (search hit)");
                 match guard.album_ref(&api_id).await {
                     Ok(album) => {
                         tracing::info!(
@@ -197,7 +208,7 @@ async fn fetch_album_detail(
     }
 
     if !candidates.iter().any(|c| c == &numeric) {
-        tracing::debug!(job_id, api_album_id = %numeric, "album/get attempt (numeric fallback)");
+        dl_debug!(deps, job_id, api_album_id = %numeric, "album/get attempt (numeric fallback)");
         match guard.album_ref(&numeric).await {
             Ok(album) => return Ok(album),
             Err(e) => last_err = Some(e),
@@ -213,8 +224,11 @@ async fn fetch_album_detail(
 
 pub async fn run_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
     if !download_jobs::claim_running(&deps.pool, job_id).await? {
+        dl_debug!(deps, job_id, "download job not claimed (already running or terminal)");
         return Ok(());
     }
+
+    dl_debug!(deps, job_id, "download job claimed");
 
     let job = download_jobs::get(&deps.pool, job_id)
         .await?
@@ -279,15 +293,35 @@ async fn run_album_job(
     }
 
     let total = tracks.len();
+    dl_debug!(
+        deps,
+        job_id,
+        qobuz_id = album_id,
+        tracks = total,
+        concurrency = deps.config.download_concurrency,
+        quality = ?quality,
+        "album resolved, downloading tracks"
+    );
     let semaphore = Arc::new(Semaphore::new(deps.config.download_concurrency));
     let mut done = 0usize;
 
     for track in &tracks {
         if download_jobs::is_cancelled(&deps.pool, job_id).await? {
+            dl_debug!(deps, job_id, "download job stopped (cancelled)");
             tracing::info!(job_id, "download job stopped (cancelled)");
             return Ok(());
         }
 
+        dl_debug!(
+            deps,
+            job_id,
+            track_id = track.id,
+            track_number = track.track_number,
+            title = %track.title,
+            index = done + 1,
+            total,
+            "downloading track"
+        );
         let _permit = semaphore.acquire().await.map_err(|e| ApiError::Message(e.to_string()))?;
         download_track(job_id, album_id, &album, track, quality, deps).await?;
         done += 1;
@@ -329,6 +363,7 @@ async fn run_album_job(
     }
 
     download_jobs::finish_success(&deps.pool, job_id).await?;
+    dl_debug!(deps, job_id, qobuz_id = album_id, tracks = total, "download job finished");
     Ok(())
 }
 
@@ -381,7 +416,8 @@ async fn download_track(
             .len();
         let remote_len = http_content_length(&deps.http, &url).await?;
         if existing_file_matches_remote_size(local_len, remote_len) {
-            tracing::info!(
+            dl_debug!(
+                deps,
                 job_id,
                 track_id = track.id,
                 path = %dest.display(),
@@ -391,7 +427,8 @@ async fn download_track(
             );
             return Ok(());
         }
-        tracing::info!(
+        dl_debug!(
+            deps,
             job_id,
             track_id = track.id,
             path = %dest.display(),
@@ -400,6 +437,14 @@ async fn download_track(
             "track file exists but size differs or unknown, re-downloading"
         );
     }
+
+    dl_debug!(
+        deps,
+        job_id,
+        track_id = track.id,
+        path = %dest.display(),
+        "fetching stream and writing file"
+    );
 
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| {
@@ -660,7 +705,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
-            dev_verbose: false,
+            debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
@@ -794,7 +839,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
-            dev_verbose: false,
+            debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
@@ -918,7 +963,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
-            dev_verbose: false,
+            debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
@@ -1032,7 +1077,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
-            dev_verbose: false,
+            debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
@@ -1127,7 +1172,7 @@ mod tests {
             library_path: dir.path().to_path_buf(),
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
-            dev_verbose: false,
+            debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
