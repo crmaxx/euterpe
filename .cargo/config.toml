@@ -1,0 +1,23 @@
+# Cross-compilation defaults for `euterpe-server`.
+# See docs/04-deployment/cross-compile.ru.md and `make help-release`.
+
+[alias]
+x64-linux = "build --release -p euterpe-server --target x86_64-unknown-linux-gnu"
+x64-windows = "build --release -p euterpe-server --target x86_64-pc-windows-gnu"
+pi1 = "build --release -p euterpe-server --target arm-unknown-linux-gnueabihf"
+
+# Linux x86_64 (native on amd64 Linux; also used as cross target).
+[target.x86_64-unknown-linux-gnu]
+
+# Windows 10+ x86_64 (GNU toolchain — no MSVC required on the target PC).
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+
+# Raspberry Pi 1 / Zero (ARMv6). DietPi B+ armhf: use this triple + arm1176jzf-s CPU.
+# Requires a matching cross linker (see docs); prefer `cross build` on macOS.
+[target.arm-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+rustflags = [
+  "-C", "target-cpu=arm1176jzf-s",
+  "-C", "link-arg=-Wl,--as-needed",
+]

@@ -1,0 +1,7 @@
+# https://github.com/cross-rs/cross — Docker-based cross builds (recommended on macOS).
+# Usage: `make cross-release-all` (sets Pi 1 RUSTFLAGS for the ARM target).
+
+[build.env]
+passthrough = [
+    "CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS",
+]

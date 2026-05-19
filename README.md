@@ -18,7 +18,7 @@ All implementation follows **strict Test-Driven Development (TDD)** — see [ADR
 ### One-time setup
 
 ```bash
-make prepare   # overmind (macOS), npm ci (husky + frontend), git pre-commit hook
+make prepare   # overmind (macOS), cross, rustup targets, npm ci (husky + frontend), pre-commit hook
 cp .env.example .env   # optional; loaded automatically at server start (cwd)
 ```
 
@@ -82,6 +82,18 @@ EUTERPE_STATIC_DIR=frontend/dist cargo run -p euterpe-server
 Link Qobuz **in the web UI** (Settings → Connect Qobuz). The server stores an encrypted UAT in SQLite (`qobuz_accounts`); **`EUTERPE_MASTER_KEY`** is required. **`EUTERPE_QOBUZ_USER_ID` / `EUTERPE_QOBUZ_AUTH_TOKEN` env vars are no longer used** (breaking change for older Docker setups).
 
 See [docs/05-qobuz/oauth-and-tokens.ru.md](docs/05-qobuz/oauth-and-tokens.ru.md).
+
+## Cross-compilation
+
+Release binaries for Linux amd64, Windows amd64, and Raspberry Pi 1 (ARM1176JZF-S / DietPi):
+
+```bash
+make prepare          # installs cross if missing (see Makefile)
+make cross-release-all
+make dist-cross
+```
+
+See [docs/04-deployment/cross-compile.ru.md](docs/04-deployment/cross-compile.ru.md).
 
 ## Docker (preview)
 

@@ -46,6 +46,7 @@
 ### 04 — Деплой
 
 - [docker.ru.md](04-deployment/docker.ru.md)
+- [cross-compile.ru.md](04-deployment/cross-compile.ru.md)
 - [compose.example.yml](04-deployment/compose.example.yml)
 - [backup-restore.ru.md](04-deployment/backup-restore.ru.md)
 
