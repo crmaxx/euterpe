@@ -198,6 +198,9 @@ export const handlers = [
       artist_name: "Test Artist",
       year: 2020,
       cover_path: null,
+      genre: "Pop",
+      track_total: 10,
+      disc_total: 1,
       tracks: [
         {
           id: 1,
@@ -211,6 +214,31 @@ export const handlers = [
       ],
     }),
   ),
+
+  http.patch("/api/v1/library/albums/:id", async ({ request, params }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      id: Number(params.id),
+      title: (body.album_title as string) ?? "Local Album",
+      artist_name: (body.artist_name as string) ?? "Test Artist",
+      year: (body.year as number) ?? 2020,
+      cover_path: null,
+      genre: (body.genre as string) ?? "Pop",
+      track_total: (body.track_total as number) ?? 10,
+      disc_total: (body.disc_total as number) ?? 1,
+      tracks: [
+        {
+          id: 1,
+          title: "Track One",
+          track_number: 1,
+          year: 2020,
+          disc_number: 1,
+          genre: "Pop",
+          path: "Test Artist/Local Album/t1.flac",
+        },
+      ],
+    });
+  }),
 
   http.get("/api/v1/library/tracks/:id", ({ params }) =>
     HttpResponse.json({

@@ -621,3 +621,145 @@ async fn library_album_cover_put_rejects_oversized_body() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+#[tokio::test]
+async fn library_patch_album_tags_updates_all_track_files() {
+    use euterpe_server::library::tags::{self, TrackTags};
+
+    let state = app::test_support::test_state().await;
+    let library = state.config.library_path.clone();
+    let dir = library.join("Tag Artist/Tag Album");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    fn write_wav_with_tags(path: &std::path::Path, title: &str, track_number: u32) {
+        write_minimal_wav(path);
+        let tags = TrackTags {
+            title: title.into(),
+            artist: "Old Artist".into(),
+            album: "Old Album".into(),
+            track_number: Some(track_number),
+            year: Some(2000),
+            disc_number: Some(1),
+            track_total: None,
+            disc_total: None,
+            genre: None,
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        };
+        tags::write_tags(path, &tags).unwrap();
+    }
+
+    write_wav_with_tags(&dir.join("01 One.wav"), "One", 1);
+    write_wav_with_tags(&dir.join("02 Two.wav"), "Two", 2);
+
+    let app = app::app(state);
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/library/scan?root=Tag%20Artist%2FTag%20Album")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::ACCEPTED);
+    let scan_id: i64 = serde_json::from_slice::<Value>(
+        &start.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap()["scan_id"]
+        .as_i64()
+        .unwrap();
+
+    for _ in 0..80 {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/library/scan/{scan_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let run: Value =
+            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        if run["status"] == "success" {
+            assert_eq!(run["files_indexed"].as_i64().unwrap(), 2);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let albums = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?limit=50&q=Old%20Album")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let list: Value = serde_json::from_slice(
+        &albums.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    let album_id = list["items"]
+        .as_array()
+        .and_then(|items| items.first())
+        .and_then(|a| a["id"].as_i64())
+        .expect("indexed album");
+
+    let patch_body = serde_json::json!({
+        "artist_name": "New Artist",
+        "album_title": "New Album",
+        "year": 2024,
+        "genre": "Jazz",
+        "track_total": 12,
+        "disc_total": 2
+    });
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/library/albums/{album_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(patch_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+    let detail: Value = serde_json::from_slice(
+        &patch.into_body().collect().await.unwrap().to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(detail["artist_name"], "New Artist");
+    assert_eq!(detail["title"], "New Album");
+    assert_eq!(detail["track_total"], 12);
+    assert_eq!(detail["disc_total"], 2);
+
+    for (file, title, num) in [
+        ("01 One.wav", "One", 1u32),
+        ("02 Two.wav", "Two", 2u32),
+    ] {
+        let read = tags::read_tags(&dir.join(file)).unwrap();
+        assert_eq!(read.title, title);
+        assert_eq!(read.track_number, Some(num));
+        assert_eq!(read.disc_number, Some(1));
+        assert_eq!(read.artist, "New Artist");
+        assert_eq!(read.album, "New Album");
+        assert_eq!(read.year, Some(2024));
+        assert_eq!(read.genre.as_deref(), Some("Jazz"));
+        assert_eq!(read.track_total, Some(12));
+        assert_eq!(read.disc_total, Some(2));
+    }
+}

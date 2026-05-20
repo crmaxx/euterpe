@@ -31,7 +31,8 @@ pub use library::{
     AlbumCoverUploadResponse, LibraryAlbumDetailResponse, LibraryAlbumItem,
     LibraryAlbumListResponse,
     LibraryScanLatestResponse, LibraryScanRunSummary, LibraryScanStartResponse,
-    LibraryTrackDetailResponse, LibraryTrackItem, LibraryTrackTagsPatchRequest,
+    LibraryAlbumTagsPatchRequest, LibraryTrackDetailResponse, LibraryTrackItem,
+    LibraryTrackTagsPatchRequest,
     ScanProgressEvent,
 };
 pub use server::ServerInfoResponse;

@@ -3,6 +3,7 @@ import {
   useLibraryAlbum,
   useLibraryAlbumsKeyset,
   useLibraryTrack,
+  usePatchAlbumTags,
   usePatchTrackTags,
   useCancelLibraryScan,
   useScanLatest,
@@ -11,10 +12,14 @@ import {
   useUploadLibraryAlbumCover,
 } from "@/api/hooks";
 import type {
+  LibraryAlbumDetailResponse,
   LibraryAlbumItem,
+  LibraryAlbumTagsPatchRequest,
   LibraryTrackDetailResponse,
   LibraryTrackTagsPatchRequest,
 } from "@/api/client";
+
+type LibraryTrackItem = LibraryAlbumDetailResponse["tracks"][number];
 import { MAX_ALBUM_COVER_BYTES } from "@/api/client";
 import { LibraryAlbumCover } from "@/features/library/LibraryAlbumCover";
 import { Modal } from "@/components/modal";
@@ -22,7 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { flattenKeysetPages } from "@/api/hooks/keyset";
-import { TagAutofillBar } from "@/features/library/TagAutofillBar";
+import { AlbumActionCombo } from "@/features/library/AlbumActionCombo";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
@@ -30,6 +35,50 @@ import { Folder, Pencil, ScanSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
 import { usePreferences } from "@/hooks/use-preferences";
+
+type DiscTrackGroup = { disc: number | null; tracks: LibraryTrackItem[] };
+
+function compareTracks(a: LibraryTrackItem, b: LibraryTrackItem): number {
+  const ta = a.track_number ?? Number.MAX_SAFE_INTEGER;
+  const tb = b.track_number ?? Number.MAX_SAFE_INTEGER;
+  if (ta !== tb) {
+    return ta - tb;
+  }
+  return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+}
+
+function groupTracksByDisc(tracks: LibraryTrackItem[]): DiscTrackGroup[] {
+  const map = new Map<number | null, LibraryTrackItem[]>();
+  for (const track of tracks) {
+    const disc = track.disc_number ?? null;
+    const list = map.get(disc) ?? [];
+    list.push(track);
+    map.set(disc, list);
+  }
+  const discs = [...map.keys()].sort((a, b) => {
+    if (a == null) {
+      return 1;
+    }
+    if (b == null) {
+      return -1;
+    }
+    return a - b;
+  });
+  return discs.map((disc) => ({
+    disc,
+    tracks: (map.get(disc) ?? []).sort(compareTracks),
+  }));
+}
+
+function shouldShowDiscHeaders(
+  groups: DiscTrackGroup[],
+  discTotal: number | null | undefined,
+): boolean {
+  if (groups.length > 1) {
+    return true;
+  }
+  return (discTotal ?? 0) > 1;
+}
 
 function albumFolderFromTracks(
   tracks: { path: string }[],
@@ -39,6 +88,19 @@ function albumFolderFromTracks(
   const i = p.lastIndexOf("/");
   if (i <= 0) return undefined;
   return p.slice(0, i);
+}
+
+function albumToTagForm(
+  d: LibraryAlbumDetailResponse,
+): LibraryAlbumTagsPatchRequest {
+  return {
+    artist_name: d.artist_name,
+    album_title: d.title,
+    year: d.year ?? undefined,
+    genre: d.genre ?? undefined,
+    track_total: d.track_total ?? undefined,
+    disc_total: d.disc_total ?? undefined,
+  };
 }
 
 function trackToTagForm(d: LibraryTrackDetailResponse): LibraryTrackTagsPatchRequest {
@@ -199,6 +261,155 @@ function TrackTagsEditorForm({
   );
 }
 
+function AlbumTagsEditorForm({
+  albumId,
+  album,
+  onClose,
+  onSaveReady,
+  patchAlbumTags,
+  toast,
+}: {
+  albumId: number;
+  album: LibraryAlbumDetailResponse;
+  onClose: () => void;
+  onSaveReady: (save: (() => void) | null) => void;
+  patchAlbumTags: ReturnType<typeof usePatchAlbumTags>;
+  toast: ReturnType<typeof useToast>["toast"];
+}) {
+  const { t } = usePreferences();
+  const [tagForm, setTagForm] = useState<LibraryAlbumTagsPatchRequest>(() =>
+    albumToTagForm(album),
+  );
+
+  const handleSave = useCallback(async () => {
+    try {
+      await patchAlbumTags.mutateAsync({ id: albumId, body: tagForm });
+      toast({ title: t("library.toast.tagsSaved") });
+      onClose();
+    } catch (e) {
+      toast({
+        title: t("library.toast.saveFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
+        variant: "destructive",
+      });
+    }
+  }, [albumId, tagForm, patchAlbumTags, onClose, toast, t]);
+
+  useEffect(() => {
+    onSaveReady(() => void handleSave());
+    return () => onSaveReady(null);
+  }, [handleSave, onSaveReady]);
+
+  return (
+    <>
+      <h3 className="font-medium">{t("library.editAlbumTags")}</h3>
+      <div className="space-y-2">
+        <Label htmlFor="album-tag-artist">{t("library.tagsForm.artist")}</Label>
+        <Input
+          id="album-tag-artist"
+          value={tagForm.artist_name ?? ""}
+          onChange={(e) =>
+            setTagForm((f) => ({ ...f, artist_name: e.target.value }))
+          }
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="album-tag-album">{t("library.tagsForm.album")}</Label>
+        <Input
+          id="album-tag-album"
+          value={tagForm.album_title ?? ""}
+          onChange={(e) =>
+            setTagForm((f) => ({ ...f, album_title: e.target.value }))
+          }
+        />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label htmlFor="album-tag-year">{t("library.tagsForm.year")}</Label>
+          <Input
+            id="album-tag-year"
+            type="number"
+            value={tagForm.year ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setTagForm((f) => ({
+                ...f,
+                year: v === "" ? undefined : Number.parseInt(v, 10),
+              }));
+            }}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="album-tag-genre">{t("library.tagsForm.genre")}</Label>
+          <Input
+            id="album-tag-genre"
+            value={tagForm.genre ?? ""}
+            onChange={(e) =>
+              setTagForm((f) => ({ ...f, genre: e.target.value }))
+            }
+          />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-2">
+          <Label htmlFor="album-tag-track-total">
+            {t("library.tagsForm.trackTotal")}
+          </Label>
+          <Input
+            id="album-tag-track-total"
+            type="number"
+            min={1}
+            value={tagForm.track_total ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setTagForm((f) => ({
+                ...f,
+                track_total: v === "" ? undefined : Number.parseInt(v, 10),
+              }));
+            }}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="album-tag-disc-total">
+            {t("library.tagsForm.discTotal")}
+          </Label>
+          <Input
+            id="album-tag-disc-total"
+            type="number"
+            min={1}
+            value={tagForm.disc_total ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setTagForm((f) => ({
+                ...f,
+                disc_total: v === "" ? undefined : Number.parseInt(v, 10),
+              }));
+            }}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {t("library.tagsForm.albumHint")}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        {t("library.tagsForm.genreHint")}
+      </p>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="secondary" onClick={onClose}>
+          {t("common.cancel")}
+        </Button>
+        <Button
+          type="button"
+          disabled={patchAlbumTags.isPending}
+          onClick={() => void handleSave()}
+        >
+          {t("common.save")}
+        </Button>
+      </div>
+    </>
+  );
+}
+
 const COVER_ACCEPT =
   "image/jpeg,image/png,image/webp,image/bmp";
 
@@ -210,7 +421,9 @@ export function LibraryPage() {
   const [q, setQ] = useState("");
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
+  const [editingAlbumTags, setEditingAlbumTags] = useState(false);
   const tagEditorSaveRef = useRef<(() => void) | null>(null);
+  const albumTagEditorSaveRef = useRef<(() => void) | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -233,6 +446,7 @@ export function LibraryPage() {
   const { data: albumDetail } = useLibraryAlbum(selectedAlbumId);
   const trackQuery = useLibraryTrack(editingTrackId);
   const patchTags = usePatchTrackTags();
+  const patchAlbumTags = usePatchAlbumTags();
   const uploadCover = useUploadLibraryAlbumCover();
 
   const scanRunning = scan?.run?.status === "running";
@@ -242,6 +456,18 @@ export function LibraryPage() {
   const repairFolder = albumDetail
     ? albumFolderFromTracks(albumDetail.tracks)
     : undefined;
+
+  const trackGroups = useMemo(
+    () => (albumDetail ? groupTracksByDisc(albumDetail.tracks) : []),
+    [albumDetail],
+  );
+  const showDiscHeaders = useMemo(
+    () =>
+      albumDetail
+        ? shouldShowDiscHeaders(trackGroups, albumDetail.disc_total)
+        : false,
+    [albumDetail, trackGroups],
+  );
 
   async function handleCoverFileSelected(
     e: React.ChangeEvent<HTMLInputElement>,
@@ -314,18 +540,39 @@ export function LibraryPage() {
     tagEditorSaveRef.current = save;
   }, []);
 
+  const bindAlbumTagEditorSave = useCallback((save: (() => void) | null) => {
+    albumTagEditorSaveRef.current = save;
+  }, []);
+
   function closeTagEditor() {
     tagEditorSaveRef.current = null;
     setEditingTrackId(null);
   }
 
   function openTagEditor(trackId: number) {
+    albumTagEditorSaveRef.current = null;
+    setEditingAlbumTags(false);
     tagEditorSaveRef.current = null;
     setEditingTrackId(trackId);
   }
 
+  function closeAlbumTagEditor() {
+    albumTagEditorSaveRef.current = null;
+    setEditingAlbumTags(false);
+  }
+
+  function openAlbumTagEditor() {
+    tagEditorSaveRef.current = null;
+    setEditingTrackId(null);
+    albumTagEditorSaveRef.current = null;
+    setEditingAlbumTags(true);
+  }
+
   const tagEditorCanConfirm =
     editingTrackId != null && !!trackQuery.data && !trackQuery.isLoading;
+
+  const albumTagEditorCanConfirm =
+    editingAlbumTags && selectedAlbumId != null && !!albumDetail;
 
   const handleAutofillApplied = useCallback(() => {
     if (editingTrackId != null) {
@@ -408,7 +655,11 @@ export function LibraryPage() {
                   <button
                     type="button"
                     className="flex w-full gap-3 px-4 py-3 text-left hover:bg-accent/50"
-                    onClick={() => setSelectedAlbumId(a.id)}
+                    onClick={() => {
+                      setSelectedAlbumId(a.id);
+                      setEditingAlbumTags(false);
+                      albumTagEditorSaveRef.current = null;
+                    }}
                   >
                     <LibraryAlbumCover
                       albumId={a.id}
@@ -486,25 +737,18 @@ export function LibraryPage() {
                     <p className="mt-1 text-sm text-muted-foreground">
                       {albumDetail.artist_name}
                       {albumDetail.year != null ? ` · ${albumDetail.year}` : ""}
+                      {albumDetail.genre ? ` · ${albumDetail.genre}` : ""}
                     </p>
                   </div>
-                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
-                    {repairFolder ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={scanRunning || startScan.isPending}
-                        onClick={() => void handleScan(repairFolder)}
-                      >
-                        {t("library.repairFolder")}
-                      </Button>
-                    ) : null}
-                    <TagAutofillBar
-                      albumId={albumDetail.id}
-                      onApplied={handleAutofillApplied}
-                    />
-                  </div>
+                  <AlbumActionCombo
+                    albumId={albumDetail.id}
+                    repairFolder={repairFolder}
+                    scanRunning={scanRunning}
+                    scanPending={startScan.isPending}
+                    onEditTags={openAlbumTagEditor}
+                    onRepairFolder={(folder) => void handleScan(folder)}
+                    onApplied={handleAutofillApplied}
+                  />
                 </div>
               </div>
             )}
@@ -516,35 +760,47 @@ export function LibraryPage() {
           ) : !albumDetail ? (
             <p className="p-4 text-sm text-muted-foreground">{t("common.loading")}</p>
           ) : (
-            <ul className="divide-y divide-border">
-              {albumDetail.tracks.map((track) => (
-                <li
-                  key={track.id}
-                  className="flex items-center justify-between gap-2 px-4 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium">{track.title}</p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {track.disc_number != null ? `D${track.disc_number} · ` : ""}
-                      {track.track_number != null ? `#${track.track_number} · ` : ""}
-                      {track.year != null ? `${track.year} · ` : ""}
-                      {track.genre ? `${track.genre} · ` : ""}
-                      {track.path}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    className="size-8 shrink-0 p-0"
-                    aria-label={t("library.editTags")}
-                    onClick={() => openTagEditor(track.id)}
-                  >
-                    <Pencil className="size-4" aria-hidden />
-                  </Button>
-                </li>
+            <div className="divide-y divide-border">
+              {trackGroups.map((group) => (
+                <section key={group.disc ?? "other"}>
+                  {showDiscHeaders ? (
+                    <div className="border-b border-border bg-muted/40 px-4 py-2 text-xs font-medium text-muted-foreground">
+                      {group.disc != null
+                        ? t("library.discGroup", { n: group.disc })
+                        : t("library.discGroupOther")}
+                    </div>
+                  ) : null}
+                  <ul className="divide-y divide-border">
+                    {group.tracks.map((track) => (
+                      <li
+                        key={track.id}
+                        className="flex items-center justify-between gap-2 px-4 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{track.title}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {track.track_number != null
+                              ? `#${track.track_number} · `
+                              : ""}
+                            {track.path}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="size-8 shrink-0 p-0"
+                          aria-label={t("library.editTags")}
+                          onClick={() => openTagEditor(track.id)}
+                        >
+                          <Pencil className="size-4" aria-hidden />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ))}
-            </ul>
+            </div>
           )}
         </section>
       </div>
@@ -588,6 +844,29 @@ export function LibraryPage() {
             </div>
           </>
         )}
+      </Modal>
+
+      <Modal
+        open={editingAlbumTags}
+        onClose={closeAlbumTagEditor}
+        onConfirm={
+          albumTagEditorCanConfirm
+            ? () => albumTagEditorSaveRef.current?.()
+            : undefined
+        }
+        confirmDisabled={!albumTagEditorCanConfirm || patchAlbumTags.isPending}
+      >
+        {editingAlbumTags && albumDetail && selectedAlbumId != null ? (
+          <AlbumTagsEditorForm
+            key={`album-${albumDetail.id}-${albumDetail.tracks.length}`}
+            albumId={selectedAlbumId}
+            album={albumDetail}
+            onClose={closeAlbumTagEditor}
+            onSaveReady={bindAlbumTagEditorSave}
+            patchAlbumTags={patchAlbumTags}
+            toast={toast}
+          />
+        ) : null}
       </Modal>
     </div>
   );

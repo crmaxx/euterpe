@@ -377,7 +377,13 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update album-wide tags on all track files
+         * @description Writes shared metadata (artist, album title, year, genre, total tracks, total discs)
+         *     to every audio file in the album. Per-track title, track number, and disc number are
+         *     not changed.
+         */
+        patch: operations["patchLibraryAlbumTags"];
         trace?: never;
     };
     "/api/v1/library/albums/{id}/cover": {
@@ -751,7 +757,18 @@ export interface components {
             artist_name: string;
             year?: number | null;
             cover_path?: string | null;
+            genre?: string | null;
+            track_total?: number | null;
+            disc_total?: number | null;
             tracks: components["schemas"]["LibraryTrackItem"][];
+        };
+        LibraryAlbumTagsPatchRequest: {
+            artist_name?: string;
+            album_title?: string;
+            year?: number;
+            genre?: string;
+            track_total?: number;
+            disc_total?: number;
         };
         LibraryTrackDetailResponse: {
             /** Format: int64 */
@@ -1541,6 +1558,34 @@ export interface operations {
                     "application/json": components["schemas"]["LibraryAlbumDetailResponse"];
                 };
             };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    patchLibraryAlbumTags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryAlbumTagsPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated album detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAlbumDetailResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
         };
     };

@@ -16,6 +16,8 @@ pub struct TrackTags {
     pub track_number: Option<u32>,
     pub year: Option<u32>,
     pub disc_number: Option<u32>,
+    pub track_total: Option<u32>,
+    pub disc_total: Option<u32>,
     pub genre: Option<String>,
     pub duration_sec: Option<u32>,
     pub qobuz_track_id: Option<u64>,
@@ -23,6 +25,17 @@ pub struct TrackTags {
     pub label: Option<String>,
     pub isrc: Option<String>,
     pub composer: Option<String>,
+}
+
+/// Album-wide tag fields applied to every track file (per-track title/number unchanged).
+#[derive(Debug, Clone, Default)]
+pub struct AlbumTagsPatch {
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub year: Option<u32>,
+    pub genre: Option<String>,
+    pub track_total: Option<u32>,
+    pub disc_total: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -60,7 +73,7 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
         .primary_tag()
         .or_else(|| tagged.tags().first());
 
-    let (title, artist, album, track_number, year, disc_number, genre) =
+    let (title, artist, album, track_number, year, disc_number, track_total, disc_total, genre) =
         if let Some(tag) = tag {
             (
                 tag.title()
@@ -75,6 +88,8 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
                 tag.track(),
                 tag.year(),
                 tag.disk(),
+                tag.track_total(),
+                tag.disk_total(),
                 tag.genre().map(|g| g.to_string()),
             )
         } else {
@@ -89,6 +104,8 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
                     .and_then(|s| s.to_str())
                     .unwrap_or("Unknown Album")
                     .to_string(),
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -109,6 +126,8 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
         track_number,
         year,
         disc_number,
+        track_total,
+        disc_total,
         genre,
         duration_sec,
         qobuz_track_id,
@@ -147,6 +166,33 @@ fn parse_qobuz_ids(tag: Option<&Tag>) -> (Option<u64>, Option<u64>) {
     (track_id, album_id)
 }
 
+pub fn apply_album_patch(tags: &TrackTags, patch: &AlbumTagsPatch) -> TrackTags {
+    let mut out = tags.clone();
+    if let Some(artist) = &patch.artist {
+        out.artist = artist.clone();
+    }
+    if let Some(album) = &patch.album {
+        out.album = album.clone();
+    }
+    if let Some(year) = patch.year {
+        out.year = Some(year);
+    }
+    if let Some(genre) = &patch.genre {
+        out.genre = if genre.is_empty() {
+            None
+        } else {
+            Some(genre.clone())
+        };
+    }
+    if let Some(n) = patch.track_total {
+        out.track_total = Some(n);
+    }
+    if let Some(n) = patch.disc_total {
+        out.disc_total = Some(n);
+    }
+    out
+}
+
 pub fn apply_patch(tags: &TrackTags, patch: &TrackTagsPatch) -> TrackTags {
     TrackTags {
         title: patch.title.clone().unwrap_or_else(|| tags.title.clone()),
@@ -155,6 +201,8 @@ pub fn apply_patch(tags: &TrackTags, patch: &TrackTagsPatch) -> TrackTags {
         track_number: patch.track_number.or(tags.track_number),
         year: patch.year.or(tags.year),
         disc_number: patch.disc_number.or(tags.disc_number),
+        track_total: tags.track_total,
+        disc_total: tags.disc_total,
         genre: patch.genre.clone().or_else(|| tags.genre.clone()),
         duration_sec: tags.duration_sec,
         qobuz_track_id: tags.qobuz_track_id,
@@ -187,6 +235,12 @@ pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
     }
     if let Some(n) = tags.disc_number {
         tag.set_disk(n);
+    }
+    if let Some(n) = tags.track_total {
+        tag.set_track_total(n);
+    }
+    if let Some(n) = tags.disc_total {
+        tag.set_disk_total(n);
     }
     match &tags.genre {
         Some(g) if !g.is_empty() => {
@@ -271,6 +325,8 @@ mod tests {
             track_number: Some(3),
             year: Some(2024),
             disc_number: Some(2),
+            track_total: Some(12),
+            disc_total: Some(2),
             genre: Some("Rock".into()),
             duration_sec: None,
             qobuz_track_id: Some(999),
@@ -287,6 +343,8 @@ mod tests {
         assert_eq!(read.track_number, Some(3));
         assert_eq!(read.year, Some(2024));
         assert_eq!(read.disc_number, Some(2));
+        assert_eq!(read.track_total, Some(12));
+        assert_eq!(read.disc_total, Some(2));
         assert_eq!(read.genre.as_deref(), Some("Rock"));
         assert_eq!(read.label.as_deref(), Some("Indie Records"));
         assert_eq!(read.isrc.as_deref(), Some("USRC17607839"));
@@ -309,6 +367,8 @@ mod tests {
             track_number: Some(1),
             year: Some(2000),
             disc_number: None,
+            track_total: None,
+            disc_total: None,
             genre: None,
             duration_sec: None,
             qobuz_track_id: None,
@@ -326,6 +386,43 @@ mod tests {
         );
         assert_eq!(patched.title, "New");
         assert_eq!(patched.artist, "B");
+    }
+
+    #[test]
+    fn apply_album_patch_preserves_per_track_fields() {
+        let tags = TrackTags {
+            title: "Song A".into(),
+            artist: "Old Artist".into(),
+            album: "Old Album".into(),
+            track_number: Some(3),
+            year: Some(2000),
+            disc_number: Some(1),
+            track_total: None,
+            disc_total: None,
+            genre: None,
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        };
+        let patched = apply_album_patch(
+            &tags,
+            &AlbumTagsPatch {
+                artist: Some("New Artist".into()),
+                album: Some("New Album".into()),
+                track_total: Some(10),
+                disc_total: Some(2),
+                ..Default::default()
+            },
+        );
+        assert_eq!(patched.title, "Song A");
+        assert_eq!(patched.track_number, Some(3));
+        assert_eq!(patched.disc_number, Some(1));
+        assert_eq!(patched.artist, "New Artist");
+        assert_eq!(patched.track_total, Some(10));
+        assert_eq!(patched.disc_total, Some(2));
     }
 
     #[test]

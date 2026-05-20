@@ -8,12 +8,13 @@ use serde::Deserialize;
 use crate::api::{
     AlbumCoverUploadResponse, LibraryAlbumDetailResponse, LibraryAlbumListResponse,
     LibraryScanLatestResponse, LibraryScanStartResponse, LibraryScanRunSummary,
-    LibraryTrackDetailResponse, LibraryTrackItem, LibraryTrackTagsPatchRequest,
+    LibraryAlbumTagsPatchRequest, LibraryTrackDetailResponse, LibraryTrackItem,
+    LibraryTrackTagsPatchRequest,
 };
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
 use crate::library::covers;
-use crate::library::tags::{self, apply_patch, TrackTagsPatch};
+use crate::library::tags::{self, apply_album_patch, apply_patch, AlbumTagsPatch, TrackTagsPatch};
 use crate::services::library_scan;
 use crate::state::AppState;
 
@@ -165,6 +166,10 @@ pub async fn get_library_album(
     )
     .await?;
     let track_rows = tracks::list_by_album(&state.db, id).await?;
+    let album_tags_from_file = track_rows.first().and_then(|first| {
+        let file_path = state.config.library_path.join(&first.path);
+        tags::read_tags(&file_path).ok()
+    });
     let tracks_list: Vec<LibraryTrackItem> = track_rows
         .into_iter()
         .map(|t| LibraryTrackItem {
@@ -184,8 +189,100 @@ pub async fn get_library_album(
         artist_name,
         year: album.year,
         cover_path,
+        genre: album_tags_from_file
+            .as_ref()
+            .and_then(|t| t.genre.clone()),
+        track_total: album_tags_from_file
+            .as_ref()
+            .and_then(|t| t.track_total.map(|n| n as i32)),
+        disc_total: album_tags_from_file
+            .as_ref()
+            .and_then(|t| t.disc_total.map(|n| n as i32)),
         tracks: tracks_list,
     }))
+}
+
+pub async fn patch_library_album_tags(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<LibraryAlbumTagsPatchRequest>,
+) -> Result<Json<LibraryAlbumDetailResponse>, ApiError> {
+    let album = albums::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("album not found".into()))?;
+    let track_rows = tracks::list_by_album(&state.db, id).await?;
+    if track_rows.is_empty() {
+        return Err(ApiError::bad_request("album has no tracks"));
+    }
+
+    let artist_name = body.artist_name.clone();
+    let album_title = body.album_title.clone();
+    let patch = AlbumTagsPatch {
+        artist: artist_name.clone(),
+        album: album_title.clone(),
+        year: body.year.map(|y| y as u32),
+        genre: body.genre.clone(),
+        track_total: body.track_total.map(|n| n as u32),
+        disc_total: body.disc_total.map(|n| n as u32),
+    };
+
+    for track in &track_rows {
+        let file_path = state.config.library_path.join(&track.path);
+        let current = tags::read_tags(&file_path)?;
+        let updated = apply_album_patch(&current, &patch);
+        tags::write_tags(&file_path, &updated)?;
+        let mtime = file_metadata_iso(&file_path)?;
+        tracks::update_metadata(
+            &state.db,
+            track.id,
+            tracks::TrackMetadataUpdate {
+                title: &track.title,
+                track_number: track.track_number,
+                year: updated.year.map(|y| y as i32),
+                disc_number: track.disc_number,
+                genre: updated
+                    .genre
+                    .as_deref()
+                    .and_then(|g| if g.is_empty() { None } else { Some(g) }),
+                file_mtime: mtime.as_deref(),
+            },
+        )
+        .await?;
+    }
+
+    let album_year = body.year.or(album.year);
+    if let Some(artist_name) = &artist_name {
+        let artist_id = artists::upsert_by_name(&state.db, artist_name, None).await?;
+        let title = album_title.as_deref().unwrap_or(album.title.as_str());
+        let _ = albums::upsert(
+            &state.db,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title,
+                year: album_year,
+                qobuz_album_id: album.qobuz_album_id,
+                path: album.path.as_deref(),
+                cover_path: album.cover_path.as_deref(),
+            },
+        )
+        .await?;
+    } else if album_title.is_some() || body.year.is_some() {
+        let title = album_title.as_deref().unwrap_or(album.title.as_str());
+        let _ = albums::upsert(
+            &state.db,
+            albums::AlbumUpsert {
+                artist_id: album.artist_id,
+                title,
+                year: album_year,
+                qobuz_album_id: album.qobuz_album_id,
+                path: album.path.as_deref(),
+                cover_path: album.cover_path.as_deref(),
+            },
+        )
+        .await?;
+    }
+
+    get_library_album(State(state), Path(id)).await
 }
 
 pub async fn put_library_album_cover(

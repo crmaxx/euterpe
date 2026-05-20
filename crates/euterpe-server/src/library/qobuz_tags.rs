@@ -20,6 +20,8 @@ pub fn track_tags_from_qobuz(
         track_number: track.track_number,
         year,
         disc_number: track.media_number,
+        track_total: None,
+        disc_total: None,
         genre: resolve_genre(track.genre.as_ref(), album.summary.genre.as_ref()),
         duration_sec: None,
         qobuz_track_id: Some(track.id),
