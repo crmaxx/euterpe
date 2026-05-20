@@ -51,9 +51,13 @@ PR без diff в `openapi.yaml` при изменении JSON-контракт
 
 - `cargo test --workspace` — все зелёные
 - `npx @redocly/cli lint openapi/openapi.yaml` — spec валиден
-- `cargo clippy --workspace -- -D warnings` (когда появится код)
+- `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo fmt --check`
 - Integration-тесты с `#[ignore]` не блокируют CI, но обязательны локально перед релизом Qobuz-фич
+
+## Rust: Clippy
+
+CI и локальная проверка: `-D warnings`. Типичные ловушки (`let_underscore_future`, `mpsc::send` vs `broadcast::send`, таблица частых lint’ов) — в правиле Cursor **`rust-best-practices`** (`~/.cursor/rules/rust-best-practices.mdc`).
 
 ## Milestones и TDD
 

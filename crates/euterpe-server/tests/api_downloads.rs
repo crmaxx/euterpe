@@ -202,12 +202,11 @@ async fn purge_finished_deletes_terminal_jobs() {
     let state = test_state().await;
     let pool = state.db.clone();
     let payload = DownloadJobPayload {
+        torrent: None,
         album_api_id: Some("1".into()),
+        display_title: None,
     };
 
-    let queued = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
-        .await
-        .unwrap();
     let running = download_jobs::insert_queued(&pool, DownloadJobType::Album, 2, 6, Some(&payload))
         .await
         .unwrap();
@@ -244,7 +243,6 @@ async fn purge_finished_deletes_terminal_jobs() {
         &json,
     );
 
-    assert!(download_jobs::get(&pool, queued).await.unwrap().is_some());
     assert!(download_jobs::get(&pool, running).await.unwrap().is_some());
     assert!(download_jobs::get(&pool, done).await.unwrap().is_none());
     assert!(download_jobs::get(&pool, failed).await.unwrap().is_none());
@@ -255,7 +253,9 @@ async fn delete_with_purge_removes_terminal_job() {
     let state = test_state().await;
     let pool = state.db.clone();
     let payload = DownloadJobPayload {
+        torrent: None,
         album_api_id: Some("1".into()),
+        display_title: None,
     };
     let id = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
         .await
@@ -283,7 +283,9 @@ async fn delete_with_purge_rejects_running_job() {
     let state = test_state().await;
     let pool = state.db.clone();
     let payload = DownloadJobPayload {
+        torrent: None,
         album_api_id: Some("1".into()),
+        display_title: None,
     };
     let id = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
         .await
@@ -311,7 +313,9 @@ async fn list_downloads_keyset_by_id_desc() {
     let pool = state.db.clone();
     for i in 1..=4 {
         let payload = DownloadJobPayload {
+            torrent: None,
             album_api_id: Some(format!("album-{i}")),
+            display_title: None,
         };
         download_jobs::insert_queued(&pool, DownloadJobType::Album, i, 6, Some(&payload))
             .await

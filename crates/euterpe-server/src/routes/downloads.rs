@@ -3,15 +3,19 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
+use crate::db::download_jobs::PriorityDirection;
+
 use euterpe_qobuz::parse_album_url;
 
 use crate::api::{
     CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse,
     DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
 };
-use crate::db::download_jobs;
+use crate::db::{download_jobs, favorites};
 use crate::error::ApiError;
-use crate::services::download::{quality_from_format_id, DownloadJobPayload};
+use crate::services::download::{
+    format_album_display_title, quality_from_format_id, DownloadJobPayload,
+};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -31,7 +35,7 @@ fn default_download_limit() -> u32 {
 }
 
 fn default_download_sort() -> String {
-    "id".to_string()
+    "queue_position".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +55,7 @@ async fn queue_album_download(
     album_api_id: &str,
     quality: u8,
     qobuz_id: Option<u64>,
+    display_title: Option<String>,
 ) -> Result<i64, ApiError> {
     let qobuz_for_dedup = qobuz_id.filter(|id| *id > 0);
     if download_jobs::has_running_album(&state.db, album_api_id, qobuz_for_dedup, quality).await? {
@@ -61,6 +66,8 @@ async fn queue_album_download(
 
     let payload = DownloadJobPayload {
         album_api_id: Some(album_api_id.to_string()),
+        display_title: display_title.filter(|s| !s.trim().is_empty()),
+        torrent: None,
     };
     let catalog_id = qobuz_id.unwrap_or(0);
     let job_id = download_jobs::insert_queued(
@@ -121,8 +128,22 @@ pub async fn create_download(
         album_api_id.to_string()
     };
 
-    let job_id =
-        queue_album_download(&state, &resolved_api_id, body.quality, body.qobuz_id).await?;
+    let display_title = if let Some(catalog_id) = body.qobuz_id.filter(|id| *id > 0) {
+        favorites::album_meta(&state.db, catalog_id)
+            .await?
+            .map(|m| format_album_display_title(&m.artist_name, &m.title))
+    } else {
+        None
+    };
+
+    let job_id = queue_album_download(
+        &state,
+        &resolved_api_id,
+        body.quality,
+        body.qobuz_id,
+        display_title,
+    )
+    .await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(CreateDownloadResponse { job_id }),
@@ -151,8 +172,21 @@ pub async fn create_download_by_url(
     // `pick_album_api_id` may return a human slug that 404s on a second request.
     let album_api_id = album_ref;
 
-    let job_id =
-        queue_album_download(&state, &album_api_id, body.quality, Some(summary.id)).await?;
+    let artist = summary
+        .artist
+        .as_ref()
+        .map(|a| a.name.as_str())
+        .unwrap_or("");
+    let display_title = Some(format_album_display_title(artist, &summary.title));
+
+    let job_id = queue_album_download(
+        &state,
+        &album_api_id,
+        body.quality,
+        Some(summary.id),
+        display_title,
+    )
+    .await?;
     Ok((
         StatusCode::ACCEPTED,
         Json(CreateDownloadResponse { job_id }),
@@ -170,7 +204,13 @@ pub async fn list_downloads(
     let limit = parse_limit(q.limit, 100, 500)?;
     let sort = DownloadsSort::parse(&q.sort)?;
     let order = match q.order.as_deref() {
-        None => SortOrder::Desc,
+        None => {
+            if sort == DownloadsSort::QueuePosition {
+                SortOrder::Asc
+            } else {
+                SortOrder::Desc
+            }
+        }
         Some(s) => SortOrder::parse(s)?,
     };
     let page = download_jobs::list_keyset(
@@ -238,9 +278,45 @@ pub async fn delete_download(
         ));
     }
 
+    if job.job_type == crate::api::DownloadJobType::Torrent {
+        if let Some(payload) = download_jobs::get_payload(&state.db, id).await? {
+            if let Some(t) = payload.torrent {
+                if let (Some(engine), Some(lid)) = (state.torrent.as_ref(), t.librqbit_id) {
+                    let handle = euterpe_torrent::JobHandle {
+                        librqbit_id: lid,
+                        info_hash: t.info_hash,
+                    };
+                    let _ = engine.cancel(&handle).await;
+                }
+            }
+        }
+    }
+
     if !download_jobs::cancel(&state.db, id).await? {
         return Err(ApiError::Message(format!("job {id} not found")));
     }
 
+    let _ = state.job_tx.send(0).await;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn patch_download_priority(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<crate::api::PatchDownloadPriorityRequest>,
+) -> Result<StatusCode, ApiError> {
+    let direction = match body.direction.as_str() {
+        "up" => PriorityDirection::Up,
+        "down" => PriorityDirection::Down,
+        _ => {
+            return Err(ApiError::bad_request(
+                "direction must be up or down",
+            ));
+        }
+    };
+
+    download_jobs::adjust_queue_priority(&state.db, id, direction).await?;
+    let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }

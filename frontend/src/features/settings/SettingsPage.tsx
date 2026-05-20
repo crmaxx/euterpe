@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { IntegrationsSection } from "@/features/settings/IntegrationsSection";
+import { TorrentSettingsSection } from "@/features/settings/TorrentSettingsSection";
 import { useToast } from "@/hooks/use-toast";
 import {
   getDefaultQuality,
@@ -221,6 +222,8 @@ export function SettingsPage() {
       </section>
 
       <IntegrationsSection />
+
+      {info?.torrent_incoming_dir ? <TorrentSettingsSection /> : null}
 
       <section className="space-y-4 rounded-lg border border-border bg-card p-4">
         <h3 className="font-medium">{t("settings.downloads.title")}</h3>

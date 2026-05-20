@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
 use euterpe_qobuz::QobuzApi;
+use euterpe_torrent::TorrentEngine;
 use reqwest::Client;
 use sqlx::SqlitePool;
 use tokio::sync::{broadcast, mpsc, Mutex};
 
 use crate::api::{JobProgressEvent, ScanProgressEvent};
 use crate::config::AppConfig;
+use crate::services::torrent_staging::TorrentStaging;
 use crate::credentials::{self, QobuzCredentials};
 use crate::crypto::MasterKey;
 use crate::error::ApiError;
@@ -21,6 +23,8 @@ pub struct AppState {
     pub events: broadcast::Sender<JobProgressEvent>,
     pub scan_events: broadcast::Sender<ScanProgressEvent>,
     pub hawk: Option<Arc<euterpe_hawk::Hawk>>,
+    pub torrent: Option<Arc<dyn TorrentEngine>>,
+    pub torrent_staging: Arc<TorrentStaging>,
 }
 
 impl AppState {
@@ -47,6 +51,22 @@ impl AppState {
             .build()
             .map_err(|e| ApiError::Config(e.to_string()))?;
 
+        let torrent = if let Some(ref dir) = config.torrent_incoming_dir {
+            let settings = crate::services::torrent_settings::load(&db).await?;
+            let mut session_settings =
+                crate::services::torrent_settings::to_session_settings(&settings);
+            session_settings.enable_upnp_port_forwarding = config.torrent_enable_upnp;
+            let engine = euterpe_torrent::LibrqbitEngine::new(euterpe_torrent::TorrentEngineConfig {
+                incoming_dir: dir.clone(),
+                session_settings,
+            })
+            .await
+            .map_err(|e| ApiError::Message(e.to_string()))?;
+            Some(Arc::new(engine) as Arc<dyn TorrentEngine>)
+        } else {
+            None
+        };
+
         Ok(Self {
             db,
             config,
@@ -56,6 +76,8 @@ impl AppState {
             events,
             scan_events,
             hawk,
+            torrent,
+            torrent_staging: Arc::new(TorrentStaging::new()),
         })
     }
 

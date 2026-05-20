@@ -137,6 +137,9 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         qobuz_api_base: None,
         qobuz_play_base: None,
         library_path,
+        torrent_incoming_dir: None,
+        torrent_max_active: 2,
+        torrent_enable_upnp: false,
         download_concurrency: 2,
         library_scan: euterpe_server::config::LibraryScanConfig::default(),
         debug: false,
@@ -160,10 +163,13 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         events: events.clone(),
         scan_events,
         hawk: None,
+        torrent: None,
+        torrent_staging: Arc::new(euterpe_server::services::torrent_staging::TorrentStaging::new()),
     };
 
     qobuz_account::seed_active_qobuz_account(&state, 1, "test-token").await;
 
+    let job_tx_wake = state.job_tx.clone();
     spawn_worker(
         job_rx,
         WorkerDeps {
@@ -172,8 +178,13 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
             config,
             events,
             http: Client::new(),
+            torrent: None,
+            torrent_semaphore: None,
+            scan_events: state.scan_events.clone(),
+            job_tx: job_tx_wake.clone(),
         },
     );
+    let _ = job_tx_wake.send(0).await;
 
     state
 }

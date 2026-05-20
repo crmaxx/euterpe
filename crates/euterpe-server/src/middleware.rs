@@ -46,21 +46,33 @@ fn check_request_auth(request: &Request<Body>, expected: &str) -> bool {
         }
     }
 
-    let path = request.uri().path();
-    if path.ends_with("/stream") {
-        if let Some(query) = request.uri().query() {
-            for pair in query.split('&') {
-                let (key, value) = match pair.split_once('=') {
-                    Some((k, v)) => (k, v),
-                    None => (pair, ""),
-                };
-                if key == "access_token" && value == expected {
-                    return true;
-                }
-            }
-        }
+    if path_allows_query_token(request.uri().path())
+        && query_access_token_matches(request.uri().query(), expected)
+    {
+        return true;
     }
 
+    false
+}
+
+/// Endpoints used by browser APIs that cannot set `Authorization` (EventSource, `<audio>`).
+fn path_allows_query_token(path: &str) -> bool {
+    path.ends_with("/stream") || path == "/api/v1/events"
+}
+
+fn query_access_token_matches(query: Option<&str>, expected: &str) -> bool {
+    let Some(query) = query else {
+        return false;
+    };
+    for pair in query.split('&') {
+        let (key, value) = match pair.split_once('=') {
+            Some((k, v)) => (k, v),
+            None => (pair, ""),
+        };
+        if key == "access_token" && value == expected {
+            return true;
+        }
+    }
     false
 }
 

@@ -57,6 +57,7 @@ Phase 1: только `euterpe-qobuz` CLI binary optional.
 |-------|------------------|------------|
 | `euterpe-data` | `/data` | `library.db`, config, qobuz cache |
 | `euterpe-music` | `/music` | FLAC/MP3 |
+| `euterpe-torrent` (опционально) | `/data/torrent-incoming` | staging и загрузки BitTorrent (librqbit) |
 
 ## Environment
 
@@ -65,6 +66,11 @@ Phase 1: только `euterpe-qobuz` CLI binary optional.
 | `EUTERPE_BIND` | `127.0.0.1:8080` | Listen address |
 | `EUTERPE_DATABASE_URL` | `sqlite:/data/library.db` | sqlx URL |
 | `EUTERPE_LIBRARY_PATH` | `/music` | Scan/download root |
+| `EUTERPE_TORRENT_INCOMING_DIR` | — | Каталог для inspect/download торрентов; без него API торрентов отключён |
+| `EUTERPE_TORRENT_MAX_ACTIVE` | `2` | Параллельных torrent-задач |
+| `EUTERPE_TORRENT_DEFAULT_SEED_RATIO` | `0` | 0 = только загрузка (без отдачи) |
+| `EUTERPE_TORRENT_DEFAULT_SEED_TIME_SEC` | `0` | 0 = только загрузка |
+| `EUTERPE_TORRENT_DEFAULT_MAX_UPLOAD_KIB` | `0` | Лимит отдачи (КиБ/с) |
 | `EUTERPE_QOBUZ_USER_ID` | — | **Recommended** — from browser `localuser.id` |
 | `EUTERPE_QOBUZ_AUTH_TOKEN` | — | **Recommended** — `userAuthToken` |
 | `EUTERPE_QOBUZ_EMAIL` | — | Deprecated (password login unreliable) |
