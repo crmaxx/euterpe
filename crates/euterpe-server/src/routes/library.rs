@@ -6,12 +6,13 @@ use axum::response::Response;
 use serde::Deserialize;
 
 use crate::api::{
-    AlbumCoverUploadResponse, LibraryAlbumDetailResponse, LibraryAlbumListResponse,
-    LibraryAlbumTagsPatchRequest, LibraryScanLatestResponse, LibraryScanRunSummary,
-    LibraryScanStartResponse, LibraryTrackDetailResponse, LibraryTrackItem,
+    AlbumCoverUploadResponse, ConvertAlbumResponse, ConvertJobResponse, LibraryAlbumDetailResponse,
+    LibraryAlbumListResponse, LibraryAlbumTagsPatchRequest, LibraryScanLatestResponse,
+    LibraryScanRunSummary, LibraryScanStartResponse, LibraryTrackDetailResponse, LibraryTrackItem,
     LibraryTrackTagsPatchRequest,
 };
-use crate::db::{albums, artists, library_scan_runs, tracks};
+use crate::db::{albums, artists, convert_jobs, library_scan_runs, tracks};
+use crate::services::convert::start_album_convert;
 use crate::error::ApiError;
 use crate::library::covers;
 use crate::library::stream;
@@ -33,12 +34,19 @@ pub async fn start_library_scan(
 ) -> Result<(StatusCode, Json<LibraryScanStartResponse>), ApiError> {
     let scan_root =
         library_scan::resolve_scan_root_query(&state.config.library_path, q.root.as_deref())?;
+    let scan_cfg = state
+        .runtime
+        .read()
+        .await
+        .library_scan_config(state.config.debug)?;
     let scan_id = library_scan::start_scan(
         &state.db,
         state.config.library_path.clone(),
         state.scan_events.clone(),
-        state.config.library_scan.clone(),
+        scan_cfg,
         scan_root,
+        Some(state.convert_job_tx.clone()),
+        Some(state.runtime.clone()),
     )
     .await?;
     Ok((
@@ -186,6 +194,7 @@ pub async fn get_library_album(
             duration_sec: t.duration_sec,
         })
         .collect();
+    let has_convertible_tracks = tracks::album_has_convertible_tracks(&state.db, id).await?;
     Ok(Json(LibraryAlbumDetailResponse {
         id: album.id,
         title: album.title,
@@ -193,6 +202,7 @@ pub async fn get_library_album(
         year: album.year,
         cover_path,
         genre: album_tags_from_file.as_ref().and_then(|t| t.genre.clone()),
+        has_convertible_tracks,
         track_total: album_tags_from_file
             .as_ref()
             .and_then(|t| t.track_total.map(|n| n as i32)),
@@ -482,6 +492,43 @@ async fn track_detail(state: &AppState, id: i64) -> Result<LibraryTrackDetailRes
         path: track.path,
         duration_sec: t.duration_sec.map(|d| d as i32),
     })
+}
+
+pub async fn post_library_album_convert(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<(StatusCode, Json<ConvertAlbumResponse>), ApiError> {
+    albums::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("album not found".into()))?;
+    let job_id =
+        start_album_convert(&state.db, id, &state.convert_job_tx).await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(ConvertAlbumResponse { job_id }),
+    ))
+}
+
+pub async fn get_library_album_convert_latest(
+    State(state): State<AppState>,
+    Path(album_id): Path<i64>,
+) -> Result<Json<ConvertJobResponse>, ApiError> {
+    let row = convert_jobs::latest_for_album(&state.db, album_id)
+        .await?
+        .ok_or_else(|| ApiError::Message("no convert job for album".into()))?;
+    let job = convert_jobs::row_to_summary(row).await?;
+    Ok(Json(ConvertJobResponse { job }))
+}
+
+pub async fn get_convert_job(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<ConvertJobResponse>, ApiError> {
+    let row = convert_jobs::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("convert job not found".into()))?;
+    let job = convert_jobs::row_to_summary(row).await?;
+    Ok(Json(ConvertJobResponse { job }))
 }
 
 fn file_metadata_iso(path: &std::path::Path) -> Result<Option<String>, ApiError> {

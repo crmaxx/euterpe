@@ -74,10 +74,18 @@ pub fn is_audio_file(path: &Path) -> bool {
         .map(|e| {
             matches!(
                 e.to_ascii_lowercase().as_str(),
-                "flac" | "mp3" | "m4a" | "aac" | "ogg" | "opus" | "wav" | "aiff" | "aif"
+                "flac" | "mp3" | "m4a" | "aac" | "ogg" | "opus" | "wav" | "aiff" | "aif" | "wv"
+                    | "ape"
             )
         })
         .unwrap_or(false)
+}
+
+/// Path is a phase-1 convertible lossless source (extension only; ALAC vs AAC resolved at convert).
+pub fn is_convertible_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(euterpe_converter::is_convertible_extension)
 }
 
 pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {

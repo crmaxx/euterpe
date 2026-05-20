@@ -1,4 +1,6 @@
+mod convert;
 mod downloads;
+mod settings;
 mod health;
 mod integrations;
 pub mod keyset;
@@ -9,6 +11,9 @@ mod torrent;
 
 pub use keyset::{KeysetPage, SortKeyKind, SortKeyValue, SortOrder};
 
+pub use convert::{
+    ConvertAlbumResponse, ConvertJobResponse, ConvertJobSummary, ConvertProgressEvent,
+};
 pub use downloads::{
     CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse, DownloadJob,
     DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
@@ -27,6 +32,12 @@ pub use library::{
     LibraryAlbumListResponse, LibraryAlbumTagsPatchRequest, LibraryScanLatestResponse,
     LibraryScanRunSummary, LibraryScanStartResponse, LibraryTrackDetailResponse, LibraryTrackItem,
     LibraryTrackTagsPatchRequest, ScanProgressEvent,
+};
+pub use settings::{
+    ConverterSettings, ConverterSettingsPatch, ConverterSettingsResponse, DownloadsSettings,
+    DownloadsSettingsPatch, DownloadsSettingsResponse, FilePolicyDto, FlacEncodeSettingsDto,
+    FlacPresetDto, LibraryScanSettings, LibraryScanSettingsPatch, LibraryScanSettingsResponse,
+    UiLocale, UiPreferences, UiPreferencesPatch, UiPreferencesResponse, UiTheme,
 };
 pub use qobuz::{
     QobuzAccountListItem, QobuzAccountsListResponse, QobuzConnectionStatusResponse,

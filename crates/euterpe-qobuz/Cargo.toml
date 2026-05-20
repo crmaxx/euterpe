@@ -27,3 +27,6 @@ pretty_assertions = "1"
 default = []
 download = []
 raw_json = []
+
+[lib]
+doctest = false

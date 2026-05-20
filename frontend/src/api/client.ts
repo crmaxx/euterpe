@@ -80,6 +80,40 @@ export type AlbumMetadataApplyResponse =
   components["schemas"]["AlbumMetadataApplyResponse"];
 export type AlbumCoverUploadResponse =
   components["schemas"]["AlbumCoverUploadResponse"];
+export type UiPreferences = components["schemas"]["UiPreferences"];
+export type UiPreferencesPatch = components["schemas"]["UiPreferencesPatch"];
+export type UiPreferencesResponse =
+  components["schemas"]["UiPreferencesResponse"];
+export type ConverterSettings = components["schemas"]["ConverterSettings"];
+export type ConverterSettingsPatch =
+  components["schemas"]["ConverterSettingsPatch"];
+export type ConverterSettingsResponse =
+  components["schemas"]["ConverterSettingsResponse"];
+export type LibraryScanSettings = components["schemas"]["LibraryScanSettings"];
+export type LibraryScanSettingsPatch =
+  components["schemas"]["LibraryScanSettingsPatch"];
+export type LibraryScanSettingsResponse =
+  components["schemas"]["LibraryScanSettingsResponse"];
+export type DownloadsSettings = components["schemas"]["DownloadsSettings"];
+export type DownloadsSettingsPatch =
+  components["schemas"]["DownloadsSettingsPatch"];
+export type DownloadsSettingsResponse =
+  components["schemas"]["DownloadsSettingsResponse"];
+export type ConvertAlbumResponse =
+  components["schemas"]["ConvertAlbumResponse"];
+export type ConvertJobResponse = components["schemas"]["ConvertJobResponse"];
+export type ConvertJobSummary = components["schemas"]["ConvertJobSummary"];
+
+/** SSE `convert_progress` payload (not in OpenAPI event schemas). */
+export type ConvertProgressEvent = {
+  job_id: number;
+  album_id: number;
+  status: string;
+  files_total: number;
+  files_done: number;
+  progress_pct: number;
+  error_message?: string | null;
+};
 
 /** Max cover upload size (must match server `MAX_ALBUM_COVER_BYTES`). */
 export const MAX_ALBUM_COVER_BYTES = 20 * 1024 * 1024;
@@ -218,6 +252,52 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+
+  uiSettings: () => fetchJson<UiPreferencesResponse>("/settings/ui"),
+
+  patchUiSettings: (body: UiPreferencesPatch) =>
+    fetchJson<UiPreferencesResponse>("/settings/ui", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  converterSettings: () =>
+    fetchJson<ConverterSettingsResponse>("/settings/converter"),
+
+  patchConverterSettings: (body: ConverterSettingsPatch) =>
+    fetchJson<ConverterSettingsResponse>("/settings/converter", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  libraryScanSettings: () =>
+    fetchJson<LibraryScanSettingsResponse>("/settings/library-scan"),
+
+  patchLibraryScanSettings: (body: LibraryScanSettingsPatch) =>
+    fetchJson<LibraryScanSettingsResponse>("/settings/library-scan", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  downloadsSettings: () =>
+    fetchJson<DownloadsSettingsResponse>("/settings/downloads"),
+
+  patchDownloadsSettings: (body: DownloadsSettingsPatch) =>
+    fetchJson<DownloadsSettingsResponse>("/settings/downloads", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  postAlbumConvert: (albumId: number) =>
+    fetchJson<ConvertAlbumResponse>(`/library/albums/${albumId}/convert`, {
+      method: "POST",
+    }),
+
+  albumConvertLatest: (albumId: number) =>
+    fetchJson<ConvertJobResponse>(`/library/albums/${albumId}/convert/latest`),
+
+  convertJob: (jobId: number) =>
+    fetchJson<ConvertJobResponse>(`/library/convert/jobs/${jobId}`),
 
   downloads: (
     params: KeysetListParams & { status?: string } = {},
@@ -361,6 +441,7 @@ export const api = {
 export function subscribeServerEvents(handlers: {
   onJobProgress?: (event: JobProgressEvent) => void;
   onScanProgress?: (event: ScanProgressEvent) => void;
+  onConvertProgress?: (event: ConvertProgressEvent) => void;
 }): EventSource {
   const token = getAdminToken();
   const eventsUrl =
@@ -376,6 +457,11 @@ export function subscribeServerEvents(handlers: {
   if (handlers.onScanProgress) {
     source.addEventListener("scan_progress", (ev) => {
       handlers.onScanProgress?.(JSON.parse(ev.data) as ScanProgressEvent);
+    });
+  }
+  if (handlers.onConvertProgress) {
+    source.addEventListener("convert_progress", (ev) => {
+      handlers.onConvertProgress?.(JSON.parse(ev.data) as ConvertProgressEvent);
     });
   }
   return source;

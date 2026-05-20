@@ -18,4 +18,4 @@ mod static_files;
 
 pub use app::{app, serve, test_support};
 pub use config::AppConfig;
-pub use state::AppState;
+pub use state::{AppChannels, AppState};

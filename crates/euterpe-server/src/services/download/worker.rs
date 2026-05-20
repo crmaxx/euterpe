@@ -40,6 +40,7 @@ pub struct WorkerDeps {
     pub pool: SqlitePool,
     pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     pub config: Arc<AppConfig>,
+    pub runtime: crate::services::app_settings::RuntimeSettingsHandle,
     pub events: broadcast::Sender<JobProgressEvent>,
     pub http: Client,
     pub torrent: Option<Arc<dyn TorrentEngine>>,
@@ -379,16 +380,23 @@ async fn run_album_job(
     }
 
     let total = tracks.len();
+    let concurrency = deps
+        .runtime
+        .read()
+        .await
+        .downloads
+        .concurrency
+        .max(1) as usize;
     dl_debug!(
         deps,
         job_id,
         qobuz_id = album_id,
         tracks = total,
-        concurrency = deps.config.download_concurrency,
+        concurrency,
         quality = ?quality,
         "album resolved, downloading tracks"
     );
-    let semaphore = Arc::new(Semaphore::new(deps.config.download_concurrency));
+    let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut done = 0usize;
 
     for track in &tracks {
@@ -692,6 +700,9 @@ async fn download_url_to_file(
 mod tests {
     use std::sync::Arc;
 
+    use crate::services::app_settings::{
+        self, RuntimeSettings, RuntimeSettingsHandle,
+    };
     use async_trait::async_trait;
     use axum::{
         Router,
@@ -711,6 +722,15 @@ mod tests {
     use crate::api::DownloadJobType;
     use crate::config::AppConfig;
     use crate::db;
+
+    fn test_runtime(config: &AppConfig) -> RuntimeSettingsHandle {
+        Arc::new(tokio::sync::RwLock::new(RuntimeSettings {
+            ui: app_settings::ui_defaults_from_config(config),
+            converter: app_settings::converter_defaults(),
+            library_scan: app_settings::library_scan_defaults(config),
+            downloads: app_settings::downloads_defaults(config),
+        }))
+    }
 
     fn stream_mock_router(body: &'static [u8]) -> Router {
         let content_len = body.len();
@@ -918,7 +938,8 @@ mod tests {
                 album,
                 stream_url,
             }))),
-            config,
+            config: config.clone(),
+            runtime: test_runtime(&config),
             events,
             http: Client::new(),
             torrent: None,
@@ -1061,7 +1082,8 @@ mod tests {
                 album,
                 stream_url,
             }))),
-            config,
+            config: config.clone(),
+            runtime: test_runtime(&config),
             events,
             http: Client::new(),
             torrent: None,
@@ -1203,7 +1225,8 @@ mod tests {
                 album: album.clone(),
                 stream_url: format!("http://{addr}/stream"),
             }))),
-            config,
+            config: config.clone(),
+            runtime: test_runtime(&config),
             events,
             http: Client::new(),
             torrent: None,
@@ -1340,7 +1363,8 @@ mod tests {
                 album: album.clone(),
                 stream_url: format!("http://{addr}/stream"),
             }))),
-            config,
+            config: config.clone(),
+            runtime: test_runtime(&config),
             events,
             http: Client::new(),
             torrent: None,
@@ -1449,7 +1473,8 @@ mod tests {
                 album,
                 stream_url: format!("http://{addr}/stream"),
             }))),
-            config,
+            config: config.clone(),
+            runtime: test_runtime(&config),
             events,
             http: Client::new(),
             torrent: None,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   useQobuzConnection,
@@ -16,15 +16,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ConverterSettingsSection } from "@/features/settings/ConverterSettingsSection";
+import { DownloadsSettingsSection } from "@/features/settings/DownloadsSettingsSection";
 import { IntegrationsSection } from "@/features/settings/IntegrationsSection";
+import { LibraryScanSettingsSection } from "@/features/settings/LibraryScanSettingsSection";
 import { TorrentSettingsSection } from "@/features/settings/TorrentSettingsSection";
 import { useToast } from "@/hooks/use-toast";
-import {
-  getDefaultQuality,
-  QUALITY_OPTIONS,
-  setDefaultQuality,
-  type QualityId,
-} from "@/lib/quality";
+import { QUALITY_OPTIONS, type QualityId } from "@/lib/quality";
 import { usePreferences } from "@/hooks/use-preferences";
 import type { Locale } from "@/i18n/translate";
 import type { Theme } from "@/lib/theme";
@@ -46,15 +44,14 @@ function qobuzUserLabel(
 }
 
 export function SettingsPage() {
-  const { t, theme, setTheme, locale, setLocale } = usePreferences();
+  const { t, theme, setTheme, locale, setLocale, defaultQuality, setDefaultQuality } =
+    usePreferences();
   const { data: info } = useServerInfo();
   const { data: connection, refetch: refetchConnection } = useQobuzConnection();
   const oauthStart = useQobuzOAuthStart();
   const logout = useQobuzLogout();
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
-
-  const [quality, setQuality] = useState<QualityId>(getDefaultQuality);
 
   useEffect(() => {
     const qobuz = searchParams.get("qobuz");
@@ -223,6 +220,10 @@ export function SettingsPage() {
 
       <IntegrationsSection />
 
+      <ConverterSettingsSection />
+
+      <LibraryScanSettingsSection />
+
       {info?.torrent_incoming_dir ? <TorrentSettingsSection /> : null}
 
       <section className="space-y-4 rounded-lg border border-border bg-card p-4">
@@ -230,12 +231,8 @@ export function SettingsPage() {
         <div className="space-y-2">
           <Label>{t("settings.downloads.defaultQuality")}</Label>
           <Select
-            value={String(quality)}
-            onValueChange={(v) => {
-              const q = Number(v) as QualityId;
-              setQuality(q);
-              setDefaultQuality(q);
-            }}
+            value={String(defaultQuality)}
+            onValueChange={(v) => setDefaultQuality(Number(v) as QualityId)}
           >
             <SelectTrigger>
               <SelectValue />
@@ -255,6 +252,7 @@ export function SettingsPage() {
             {info?.library_path ?? "…"}
           </p>
         </div>
+        <DownloadsSettingsSection />
       </section>
     </div>
   );

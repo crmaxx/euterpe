@@ -88,6 +88,7 @@ pub struct LibraryAlbumDetailResponse {
     pub track_total: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disc_total: Option<i32>,
+    pub has_convertible_tracks: bool,
     pub tracks: Vec<LibraryTrackItem>,
 }
 

@@ -12,7 +12,7 @@ import { useToast } from "@/hooks/use-toast";
 import { usePreferences } from "@/hooks/use-preferences";
 
 export function SourcesPage() {
-  const { t } = usePreferences();
+  const { t, defaultQuality } = usePreferences();
   const { toast } = useToast();
   const { data: info } = useServerInfo();
   const downloadByUrl = useCreateDownloadByUrl();
@@ -25,7 +25,7 @@ export function SourcesPage() {
     const url = urlInput.trim();
     if (!url) return;
     void downloadByUrl
-      .mutateAsync(url)
+      .mutateAsync({ url, quality: defaultQuality })
       .then(() => {
         setUrlInput("");
         toast({ title: t("sources.qobuz.queued") });

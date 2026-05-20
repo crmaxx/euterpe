@@ -19,9 +19,13 @@ async fn static_spa_fallback_serves_index() {
     let state = euterpe_server::AppState::new(
         config,
         state.db.clone(),
-        state.job_tx.clone(),
-        state.events.clone(),
-        state.scan_events.clone(),
+        euterpe_server::AppChannels {
+            job_tx: state.job_tx.clone(),
+            convert_job_tx: state.convert_job_tx.clone(),
+            events: state.events.clone(),
+            scan_events: state.scan_events.clone(),
+            convert_events: state.convert_events.clone(),
+        },
         None,
     )
     .await

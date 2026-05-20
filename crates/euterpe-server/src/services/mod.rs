@@ -1,3 +1,5 @@
+pub mod app_settings;
+pub mod convert;
 pub mod download;
 pub mod integrations;
 pub mod library_scan;
