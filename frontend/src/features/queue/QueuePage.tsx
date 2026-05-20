@@ -5,7 +5,10 @@ import {
   useDownloads,
   useFavoritesFlat,
   usePatchDownloadPriority,
+  usePauseDownload,
   usePurgeDownload,
+  useResumeDownload,
+  useRetryDownload,
   usePurgeFinishedDownloads,
 } from "@/api/hooks";
 import {
@@ -17,8 +20,10 @@ import {
 import { ArrowDown, ArrowUp, ListMusic, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { sortDownloadQueueJobs } from "@/lib/download-queue-sort";
 import { formatBytes, formatBytesPerSec, formatEtaSecs } from "@/lib/format";
 import { formatQualityLabel } from "@/lib/quality";
+import { useToast } from "@/hooks/use-toast";
 import { usePreferences } from "@/hooks/use-preferences";
 
 type LiveJobState = {
@@ -126,11 +131,15 @@ function torrentStatusForJob(
 
 export function QueuePage() {
   const { t } = usePreferences();
+  const { toast } = useToast();
   const { data, isLoading } = useDownloads();
   const { items: favoriteItems } = useFavoritesFlat({ limit: 100 });
   const cancel = useCancelDownload();
   const purgeFinished = usePurgeFinishedDownloads();
   const purgeOne = usePurgeDownload();
+  const retry = useRetryDownload();
+  const pause = usePauseDownload();
+  const resume = useResumeDownload();
   const patchPriority = usePatchDownloadPriority();
   const qc = useQueryClient();
   const [live, setLive] = useState<Record<number, LiveJobState>>({});
@@ -158,10 +167,58 @@ export function QueuePage() {
     return () => source.close();
   }, [qc]);
 
-  const jobs = data?.items ?? [];
+  const jobs = useMemo(
+    () => sortDownloadQueueJobs(data?.items ?? []),
+    [data?.items],
+  );
   const qobuzJobs = jobs.filter((j) => j.source === "qobuz");
   const torrentJobs = jobs.filter((j) => j.source === "torrent");
   const hasTerminalJobs = jobs.some((j) => isTerminalStatus(j.status));
+
+  const clearLiveProgress = (id: number) => {
+    setLive((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const handlePause = (id: number) => {
+    void pause
+      .mutateAsync(id)
+      .then(() => clearLiveProgress(id))
+      .catch((e) =>
+        toast({
+          title: t("queue.pauseFailed"),
+          description: e instanceof Error ? e.message : t("common.unknownError"),
+          variant: "destructive",
+        }),
+      );
+  };
+
+  const handleResume = (id: number) => {
+    void resume.mutateAsync(id).catch((e) =>
+      toast({
+        title: t("queue.resumeFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
+        variant: "destructive",
+      }),
+    );
+  };
+
+  const handleRetry = (id: number) => {
+    void retry
+      .mutateAsync(id)
+      .then(() => clearLiveProgress(id))
+      .catch((e) =>
+        toast({
+          title: t("queue.retryFailed"),
+          description: e instanceof Error ? e.message : t("common.unknownError"),
+          variant: "destructive",
+        }),
+      );
+  };
 
   const handleClearHistory = () => {
     if (!window.confirm(t("queue.clearConfirm"))) {
@@ -208,8 +265,14 @@ export function QueuePage() {
             onPriority={(id, direction) =>
               void patchPriority.mutateAsync({ id, direction })
             }
+            onPause={handlePause}
+            onResume={handleResume}
+            onRetry={handleRetry}
             cancelPending={cancel.isPending}
             deletePending={purgeOne.isPending}
+            pausePending={pause.isPending}
+            resumePending={resume.isPending}
+            retryPending={retry.isPending}
             priorityPending={patchPriority.isPending}
             t={t}
           />
@@ -223,8 +286,14 @@ export function QueuePage() {
             onPriority={(id, direction) =>
               void patchPriority.mutateAsync({ id, direction })
             }
+            onPause={handlePause}
+            onResume={handleResume}
+            onRetry={handleRetry}
             cancelPending={cancel.isPending}
             deletePending={purgeOne.isPending}
+            pausePending={pause.isPending}
+            resumePending={resume.isPending}
+            retryPending={retry.isPending}
             priorityPending={patchPriority.isPending}
             t={t}
           />
@@ -241,9 +310,15 @@ function QueueSection({
   live,
   onCancel,
   onDelete,
+  onPause,
+  onResume,
+  onRetry,
   onPriority,
   cancelPending,
   deletePending,
+  pausePending,
+  resumePending,
+  retryPending,
   priorityPending,
   t,
 }: {
@@ -253,9 +328,15 @@ function QueueSection({
   live: Record<number, LiveJobState>;
   onCancel: (id: number) => void;
   onDelete: (id: number) => void;
+  onPause: (id: number) => void;
+  onResume: (id: number) => void;
+  onRetry: (id: number) => void;
   onPriority: (id: number, direction: "up" | "down") => void;
   cancelPending: boolean;
   deletePending: boolean;
+  pausePending: boolean;
+  resumePending: boolean;
+  retryPending: boolean;
   priorityPending: boolean;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
@@ -277,10 +358,16 @@ function QueueSection({
             live={live[job.id]}
             onCancel={() => onCancel(job.id)}
             onDelete={() => onDelete(job.id)}
+            onPause={() => onPause(job.id)}
+            onResume={() => onResume(job.id)}
+            onRetry={() => onRetry(job.id)}
             onPriorityUp={() => onPriority(job.id, "up")}
             onPriorityDown={() => onPriority(job.id, "down")}
             cancelPending={cancelPending}
             deletePending={deletePending}
+            pausePending={pausePending}
+            resumePending={resumePending}
+            retryPending={retryPending}
             priorityPending={priorityPending}
             t={t}
           />
@@ -297,10 +384,16 @@ function JobRow({
   live,
   onCancel,
   onDelete,
+  onPause,
+  onResume,
+  onRetry,
   onPriorityUp,
   onPriorityDown,
   cancelPending,
   deletePending,
+  pausePending,
+  resumePending,
+  retryPending,
   priorityPending,
   t,
 }: {
@@ -310,10 +403,16 @@ function JobRow({
   live?: LiveJobState;
   onCancel: () => void;
   onDelete: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onRetry: () => void;
   onPriorityUp: () => void;
   onPriorityDown: () => void;
   cancelPending: boolean;
   deletePending: boolean;
+  pausePending: boolean;
+  resumePending: boolean;
+  retryPending: boolean;
   priorityPending: boolean;
   t: (key: string, params?: Record<string, string | number>) => string;
 }) {
@@ -324,7 +423,13 @@ function JobRow({
     job.source === "torrent"
       ? torrentStatusForJob(job, torrentDetail, t)
       : null;
-  const canCancel = job.status === "queued" || job.status === "running";
+  const canCancel =
+    job.status === "queued" ||
+    job.status === "running" ||
+    job.status === "paused";
+  const canPause = job.status === "queued" || job.status === "running";
+  const canResume = job.status === "paused";
+  const canRetry = job.status === "failed";
   const canDelete = isTerminalStatus(job.status);
   const canReorder = job.status === "queued";
   const torrentSpeedBps =
@@ -377,6 +482,26 @@ function JobRow({
               </Button>
             </>
           ) : null}
+          {canPause ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pausePending}
+              onClick={onPause}
+            >
+              {t("queue.pause")}
+            </Button>
+          ) : null}
+          {canResume ? (
+            <Button
+              size="sm"
+              variant="default"
+              disabled={resumePending}
+              onClick={onResume}
+            >
+              {t("queue.resume")}
+            </Button>
+          ) : null}
           {canCancel ? (
             <Button
               size="sm"
@@ -385,6 +510,16 @@ function JobRow({
               onClick={onCancel}
             >
               {t("queue.cancel")}
+            </Button>
+          ) : null}
+          {canRetry ? (
+            <Button
+              size="sm"
+              variant="default"
+              disabled={retryPending}
+              onClick={onRetry}
+            >
+              {t("queue.retry")}
             </Button>
           ) : null}
           {canDelete ? (

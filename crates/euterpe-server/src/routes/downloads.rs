@@ -50,6 +50,24 @@ fn purge_requested(q: &DeleteDownloadQuery) -> bool {
         .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"))
 }
 
+async fn cancel_torrent_for_job(state: &AppState, id: i64) -> Result<(), ApiError> {
+    let Some(payload) = download_jobs::get_payload(&state.db, id).await? else {
+        return Ok(());
+    };
+    let Some(t) = payload.torrent else {
+        return Ok(());
+    };
+    let (Some(engine), Some(lid)) = (state.torrent.as_ref(), t.librqbit_id) else {
+        return Ok(());
+    };
+    let handle = euterpe_torrent::JobHandle {
+        librqbit_id: lid,
+        info_hash: t.info_hash,
+    };
+    let _ = engine.cancel(&handle).await;
+    Ok(())
+}
+
 async fn queue_album_download(
     state: &AppState,
     album_api_id: &str,
@@ -260,7 +278,7 @@ pub async fn delete_download(
     if purge_requested(&q) {
         if !download_jobs::is_terminal_status(job.status) {
             return Err(ApiError::Message(
-                "cannot purge queued or running job; cancel it first".into(),
+                "cannot purge active job; cancel it first".into(),
             ));
         }
         if !download_jobs::delete_by_id(&state.db, id).await? {
@@ -278,19 +296,7 @@ pub async fn delete_download(
         ));
     }
 
-    if job.job_type == crate::api::DownloadJobType::Torrent {
-        if let Some(payload) = download_jobs::get_payload(&state.db, id).await? {
-            if let Some(t) = payload.torrent {
-                if let (Some(engine), Some(lid)) = (state.torrent.as_ref(), t.librqbit_id) {
-                    let handle = euterpe_torrent::JobHandle {
-                        librqbit_id: lid,
-                        info_hash: t.info_hash,
-                    };
-                    let _ = engine.cancel(&handle).await;
-                }
-            }
-        }
-    }
+    cancel_torrent_for_job(&state, id).await?;
 
     if !download_jobs::cancel(&state.db, id).await? {
         return Err(ApiError::Message(format!("job {id} not found")));
@@ -317,6 +323,42 @@ pub async fn patch_download_priority(
     };
 
     download_jobs::adjust_queue_priority(&state.db, id, direction).await?;
+    let _ = state.job_tx.send(0).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn retry_download(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    download_jobs::retry_failed(&state.db, id).await?;
+    let _ = state.job_tx.send(0).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn pause_download(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let job = download_jobs::get(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message(format!("job {id} not found")))?;
+
+    download_jobs::pause(&state.db, id).await?;
+
+    if job.job_type == DownloadJobType::Torrent {
+        cancel_torrent_for_job(&state, id).await?;
+    }
+
+    let _ = state.job_tx.send(0).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn resume_download(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    download_jobs::resume_paused(&state.db, id).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }

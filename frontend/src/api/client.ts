@@ -238,6 +238,15 @@ export const api = {
       body: JSON.stringify({ direction }),
     }),
 
+  retryDownload: (id: number) =>
+    fetchJson<void>(`/downloads/${id}/retry`, { method: "POST" }),
+
+  pauseDownload: (id: number) =>
+    fetchJson<void>(`/downloads/${id}/pause`, { method: "POST" }),
+
+  resumeDownload: (id: number) =>
+    fetchJson<void>(`/downloads/${id}/resume`, { method: "POST" }),
+
   createDownload: (body: CreateDownloadRequest) =>
     fetchJson<CreateDownloadResponse>("/downloads", {
       method: "POST",

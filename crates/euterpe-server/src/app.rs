@@ -80,6 +80,18 @@ pub fn app(state: AppState) -> Router {
             axum::routing::patch(downloads::patch_download_priority),
         )
         .route(
+            "/api/v1/downloads/{id}/retry",
+            axum::routing::post(downloads::retry_download),
+        )
+        .route(
+            "/api/v1/downloads/{id}/pause",
+            axum::routing::post(downloads::pause_download),
+        )
+        .route(
+            "/api/v1/downloads/{id}/resume",
+            axum::routing::post(downloads::resume_download),
+        )
+        .route(
             "/api/v1/downloads/torrent/inspect",
             post(torrent::inspect_torrent_magnet),
         )
@@ -241,6 +253,7 @@ pub async fn serve(
         events,
         http: Client::builder()
             .timeout(std::time::Duration::from_secs(600))
+            .redirect(reqwest::redirect::Policy::limited(10))
             .build()?,
         torrent: state.torrent.clone(),
         torrent_semaphore: state.torrent.as_ref().map(|_| {

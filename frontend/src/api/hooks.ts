@@ -698,3 +698,33 @@ export function usePatchDownloadPriority() {
     },
   });
 }
+
+export function useRetryDownload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.retryDownload(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}
+
+export function usePauseDownload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.pauseDownload(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}
+
+export function useResumeDownload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.resumeDownload(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}

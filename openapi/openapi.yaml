@@ -610,6 +610,85 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
 
+  /api/v1/downloads/{id}/pause:
+    post:
+      operationId: pauseDownload
+      tags: [Downloads]
+      summary: Pause a queued or running download job
+      description: |
+        Sets status to `paused` and wakes the scheduler so the next queued job in the same group can start.
+        Running torrent jobs are removed from the librqbit session; progress is kept for resume.
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "204":
+          description: Job paused
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/downloads/{id}/resume:
+    post:
+      operationId: resumeDownload
+      tags: [Downloads]
+      summary: Resume a paused download job
+      description: Re-queues the job at the end of its type group and wakes the scheduler.
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "204":
+          description: Job resumed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/downloads/{id}/retry:
+    post:
+      operationId: retryDownload
+      tags: [Downloads]
+      summary: Re-queue a failed download job
+      description: |
+        Resets a `failed` job to `queued` (progress cleared, new queue position at end of its group).
+        Torrent jobs drop the previous librqbit session and start fresh.
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "204":
+          description: Job re-queued
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/downloads/{id}/priority:
     patch:
       operationId: patchDownloadPriority
@@ -1567,7 +1646,7 @@ components:
 
     DownloadJobStatus:
       type: string
-      enum: [queued, running, completed, failed, cancelled]
+      enum: [queued, running, paused, completed, failed, cancelled]
 
     DownloadJobType:
       type: string
