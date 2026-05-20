@@ -24,7 +24,7 @@ import {
 } from "@/api/hooks";
 import type { QobuzFavoriteItem, SortOrder } from "@/api/client";
 import { FavoriteAlbumCover } from "@/features/favorites/FavoriteAlbumCover";
-import { Loader2 } from "lucide-react";
+import { Heart, Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -405,7 +405,10 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-2xl font-semibold">Favorites</h2>
+        <div className="flex items-center gap-2">
+          <Heart className="size-5 shrink-0 text-muted-foreground" aria-hidden />
+          <h2 className="text-2xl font-semibold">Favorites</h2>
+        </div>
         <div className="flex flex-wrap gap-2">
           <Button
             disabled={sync.isPending}
@@ -418,6 +421,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
               )
             }
           >
+            <RefreshCw className="size-4" aria-hidden />
             Sync now
           </Button>
           <Button

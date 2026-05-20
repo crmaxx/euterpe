@@ -8,6 +8,7 @@ import {
   usePurgeFinishedDownloads,
 } from "@/api/hooks";
 import { subscribeJobProgress, type DownloadJob } from "@/api/client";
+import { ListMusic, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { formatQualityLabel } from "@/lib/quality";
@@ -58,7 +59,13 @@ export function QueuePage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-2xl font-semibold">Download queue</h2>
+        <div className="flex items-center gap-2">
+          <ListMusic
+            className="size-5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <h2 className="text-2xl font-semibold">Download queue</h2>
+        </div>
         {hasTerminalJobs ? (
           <Button
             size="sm"
@@ -66,6 +73,7 @@ export function QueuePage() {
             disabled={purgeFinished.isPending}
             onClick={handleClearHistory}
           >
+            <Trash2 className="size-4" aria-hidden />
             Clear history
           </Button>
         ) : null}

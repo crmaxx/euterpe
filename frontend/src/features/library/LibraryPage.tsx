@@ -26,6 +26,7 @@ import { TagAutofillBar } from "@/features/library/TagAutofillBar";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
+import { Folder, ScanSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
 
@@ -336,7 +337,13 @@ export function LibraryPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold">Library</h2>
+          <div className="flex items-center gap-2">
+            <Folder
+              className="size-5 shrink-0 text-muted-foreground"
+              aria-hidden
+            />
+            <h2 className="text-2xl font-semibold">Library</h2>
+          </div>
           <p className="text-sm text-muted-foreground">
             Qobuz downloads are indexed automatically. Use{" "}
             <strong className="font-medium text-foreground">Rebuild index</strong> for
@@ -360,6 +367,7 @@ export function LibraryPage() {
             disabled={scanRunning || startScan.isPending}
             onClick={() => void handleScan()}
           >
+            <ScanSearch className="size-4" aria-hidden />
             {scanRunning ? "Scanning…" : "Rebuild index"}
           </Button>
         </div>

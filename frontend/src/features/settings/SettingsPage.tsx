@@ -6,6 +6,7 @@ import {
   useQobuzOAuthStart,
   useServerInfo,
 } from "@/api/hooks";
+import { LogOut, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -112,7 +113,13 @@ export function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <div>
-        <h2 className="text-2xl font-semibold">Settings</h2>
+        <div className="flex items-center gap-2">
+          <Settings
+            className="size-5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <h2 className="text-2xl font-semibold">Settings</h2>
+        </div>
         <p className="text-sm text-muted-foreground">
           Link your Qobuz account via OAuth. Credentials stay encrypted on the
           server.
@@ -148,6 +155,7 @@ export function SettingsPage() {
                 disabled={logout.isPending}
                 onClick={() => void logOutQobuz()}
               >
+                <LogOut className="size-4" aria-hidden />
                 Log out
               </Button>
             </div>
