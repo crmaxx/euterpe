@@ -28,12 +28,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { flattenKeysetPages } from "@/api/hooks/keyset";
 import { AlbumActionCombo } from "@/features/library/AlbumActionCombo";
+import { TrackPlaybackScale } from "@/features/library/TrackPlaybackScale";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
-import { Folder, Pencil, ScanSearch } from "lucide-react";
+import { Folder, Pause, Pencil, Play, ScanSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
+import {
+  howlerFormatFromPath,
+  useAlbumPlayer,
+} from "@/hooks/use-album-player";
 import { usePreferences } from "@/hooks/use-preferences";
 
 type DiscTrackGroup = { disc: number | null; tracks: LibraryTrackItem[] };
@@ -469,6 +474,21 @@ export function LibraryPage() {
     [albumDetail, trackGroups],
   );
 
+  const playerQueue = useMemo(
+    () =>
+      trackGroups.flatMap((g) =>
+        g.tracks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          format: howlerFormatFromPath(t.path),
+          durationSec: t.duration_sec ?? undefined,
+        })),
+      ),
+    [trackGroups],
+  );
+
+  const player = useAlbumPlayer(selectedAlbumId, playerQueue);
+
   async function handleCoverFileSelected(
     e: React.ChangeEvent<HTMLInputElement>,
   ) {
@@ -740,15 +760,44 @@ export function LibraryPage() {
                       {albumDetail.genre ? ` · ${albumDetail.genre}` : ""}
                     </p>
                   </div>
-                  <AlbumActionCombo
-                    albumId={albumDetail.id}
-                    repairFolder={repairFolder}
-                    scanRunning={scanRunning}
-                    scanPending={startScan.isPending}
-                    onEditTags={openAlbumTagEditor}
-                    onRepairFolder={(folder) => void handleScan(folder)}
-                    onApplied={handleAutofillApplied}
-                  />
+                  <div className="flex shrink-0 items-start gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="gap-1.5"
+                      aria-label={
+                        player.isAlbumActive && player.isPlaying
+                          ? t("library.pausePlayback")
+                          : t("library.playAlbum")
+                      }
+                      onClick={() => {
+                        if (player.isAlbumActive) {
+                          player.togglePlayPause();
+                        } else {
+                          player.playAlbum();
+                        }
+                      }}
+                    >
+                      {player.isAlbumActive && player.isPlaying ? (
+                        <Pause className="size-4" aria-hidden />
+                      ) : (
+                        <Play className="size-4" aria-hidden />
+                      )}
+                      {player.isAlbumActive && player.isPlaying
+                        ? t("library.pausePlayback")
+                        : t("library.playAlbum")}
+                    </Button>
+                    <AlbumActionCombo
+                      albumId={albumDetail.id}
+                      repairFolder={repairFolder}
+                      scanRunning={scanRunning}
+                      scanPending={startScan.isPending}
+                      onEditTags={openAlbumTagEditor}
+                      onRepairFolder={(folder) => void handleScan(folder)}
+                      onApplied={handleAutofillApplied}
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -772,29 +821,50 @@ export function LibraryPage() {
                   ) : null}
                   <ul className="divide-y divide-border">
                     {group.tracks.map((track) => (
-                      <li
-                        key={track.id}
-                        className="flex items-center justify-between gap-2 px-4 py-2"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate font-medium">{track.title}</p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {track.track_number != null
-                              ? `#${track.track_number} · `
-                              : ""}
-                            {track.path}
-                          </p>
+                      <li key={track.id} className="flex flex-col">
+                        <div className="flex items-center gap-2 px-4 py-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="size-8 shrink-0 p-0"
+                            aria-label={t("library.playFromTrack")}
+                            onClick={() => player.playTrack(track.id)}
+                          >
+                            {player.playingTrackId === track.id &&
+                            player.isPlaying ? (
+                              <Pause className="size-4" aria-hidden />
+                            ) : (
+                              <Play className="size-4" aria-hidden />
+                            )}
+                          </Button>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium">{track.title}</p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {track.track_number != null
+                                ? `#${track.track_number} · `
+                                : ""}
+                              {track.path}
+                            </p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="size-8 shrink-0 p-0"
+                            aria-label={t("library.editTags")}
+                            onClick={() => openTagEditor(track.id)}
+                          >
+                            <Pencil className="size-4" aria-hidden />
+                          </Button>
                         </div>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          className="size-8 shrink-0 p-0"
-                          aria-label={t("library.editTags")}
-                          onClick={() => openTagEditor(track.id)}
-                        >
-                          <Pencil className="size-4" aria-hidden />
-                        </Button>
+                        {player.playback?.trackId === track.id ? (
+                          <TrackPlaybackScale
+                            positionSec={player.playback.positionSec}
+                            durationSec={player.playback.durationSec}
+                            onSeek={player.seekTo}
+                          />
+                        ) : null}
                       </li>
                     ))}
                   </ul>

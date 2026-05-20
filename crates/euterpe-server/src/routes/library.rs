@@ -14,7 +14,8 @@ use crate::api::{
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
 use crate::library::covers;
-use crate::library::tags::{self, apply_album_patch, apply_patch, AlbumTagsPatch, TrackTagsPatch};
+use crate::library::stream;
+use crate::library::tags::{self, apply_album_patch, apply_patch, is_audio_file, AlbumTagsPatch, TrackTagsPatch};
 use crate::services::library_scan;
 use crate::state::AppState;
 
@@ -352,6 +353,29 @@ pub async fn get_library_track(
 ) -> Result<Json<LibraryTrackDetailResponse>, ApiError> {
     let detail = track_detail(&state, id).await?;
     Ok(Json(detail))
+}
+
+pub async fn get_library_track_stream(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let track = tracks::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("track not found".into()))?;
+    let rel = track.path.trim();
+    if rel.is_empty() {
+        return Err(ApiError::bad_request("track has no file path"));
+    }
+    let rel_path = std::path::Path::new(rel);
+    if !is_audio_file(rel_path) {
+        return Err(ApiError::bad_request("not an audio file"));
+    }
+    let path = covers::resolve_library_relative_file(&state.config.library_path, rel)?;
+    let range = headers
+        .get(axum::http::header::RANGE)
+        .and_then(|v| v.to_str().ok());
+    stream::audio_file_response(&path, range).await
 }
 
 pub async fn patch_library_track_tags(

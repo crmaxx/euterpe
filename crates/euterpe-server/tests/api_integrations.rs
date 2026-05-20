@@ -5,8 +5,6 @@ use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-mod support;
-
 async fn json_body(response: axum::response::Response) -> Value {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
@@ -14,7 +12,7 @@ async fn json_body(response: axum::response::Response) -> Value {
 
 #[tokio::test]
 async fn integrations_catalog_lists_tag_sources() {
-    let state = support::test_state().await;
+    let state = app::test_support::test_state().await;
     let app = app(state);
 
     let response = app
@@ -41,7 +39,7 @@ async fn integrations_catalog_lists_tag_sources() {
 
 #[tokio::test]
 async fn create_list_delete_musicbrainz_integration() {
-    let state = support::test_state().await;
+    let state = app::test_support::test_state().await;
     let app = app(state);
 
     let create = app

@@ -4,7 +4,8 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-mod support;
+#[path = "support/schema.rs"]
+mod schema;
 
 #[tokio::test]
 async fn health_returns_ok() {
@@ -25,9 +26,9 @@ async fn health_returns_ok() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    let spec = support::load_spec();
-    support::validate_schema(
-        &support::schema_from_spec(&spec, "HealthResponse"),
+    let spec = schema::load_spec();
+    schema::validate_schema(
+        &schema::schema_from_spec(&spec, "HealthResponse"),
         &json,
     );
     assert_eq!(json["status"], "ok");

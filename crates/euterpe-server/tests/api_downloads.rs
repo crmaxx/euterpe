@@ -1,4 +1,7 @@
-mod support;
+#[path = "support/download_mock.rs"]
+mod download_mock;
+#[path = "support/schema.rs"]
+mod schema;
 
 use std::time::Duration;
 
@@ -15,10 +18,9 @@ use euterpe_server::api::DownloadJobType;
 use euterpe_server::db::download_jobs;
 use euterpe_server::services::download::DownloadJobPayload;
 
-use support::{
-    load_spec, schema_from_spec, state_with_download_mock, test_state, validate_schema,
-    DownloadMockQobuz,
-};
+use download_mock::{state_with_download_mock, DownloadMockQobuz};
+use euterpe_server::app::test_support::test_state;
+use schema::{load_spec, schema_from_spec, validate_schema};
 
 #[tokio::test]
 async fn create_download_rejects_empty_album_api_id() {

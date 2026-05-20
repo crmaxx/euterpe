@@ -4,8 +4,6 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-mod support;
-
 #[tokio::test]
 async fn openapi_json_endpoint_returns_spec() {
     let state = app::test_support::test_state().await;

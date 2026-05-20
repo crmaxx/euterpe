@@ -413,6 +413,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/tracks/{id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream library audio file for a track */
+        get: operations["getLibraryTrackStream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/tracks/{id}": {
         parameters: {
             query?: never;
@@ -1652,6 +1669,54 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
+            };
+        };
+    };
+    getLibraryTrackStream: {
+        parameters: {
+            query?: {
+                /** @description Admin password (alternative to Authorization header for media elements) */
+                access_token?: string;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full audio file (no Range header) */
+            200: {
+                headers: {
+                    /** @example bytes */
+                    "Accept-Ranges"?: string;
+                    "Content-Length"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/flac": string;
+                    "audio/mpeg": string;
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Partial content (Range request) */
+            206: {
+                headers: {
+                    "Content-Range"?: string;
+                    "Content-Length"?: number;
+                    "Accept-Ranges"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["NotFound"];
+            /** @description Range not satisfiable */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
