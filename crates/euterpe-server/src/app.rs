@@ -85,7 +85,7 @@ pub fn app(state: AppState) -> Router {
         .route("/api/v1/library/albums", get(library::list_library_albums))
         .route(
             "/api/v1/library/albums/{id}",
-            get(library::get_library_album),
+            get(library::get_library_album).patch(library::patch_library_album_tags),
         )
         .route(
             "/api/v1/library/albums/{id}/cover",

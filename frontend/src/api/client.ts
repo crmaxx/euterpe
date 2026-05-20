@@ -43,6 +43,8 @@ export type LibraryTrackDetailResponse =
   components["schemas"]["LibraryTrackDetailResponse"];
 export type LibraryTrackTagsPatchRequest =
   components["schemas"]["LibraryTrackTagsPatchRequest"];
+export type LibraryAlbumTagsPatchRequest =
+  components["schemas"]["LibraryAlbumTagsPatchRequest"];
 export type IntegrationListItem = components["schemas"]["IntegrationListItem"];
 export type IntegrationsListResponse =
   components["schemas"]["IntegrationsListResponse"];
@@ -236,6 +238,12 @@ export const api = {
 
   patchTrackTags: (id: number, body: LibraryTrackTagsPatchRequest) =>
     fetchJson<LibraryTrackDetailResponse>(`/library/tracks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  patchAlbumTags: (id: number, body: LibraryAlbumTagsPatchRequest) =>
+    fetchJson<LibraryAlbumDetailResponse>(`/library/albums/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),

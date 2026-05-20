@@ -305,6 +305,23 @@ export function usePatchTrackTags() {
   });
 }
 
+export function usePatchAlbumTags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: number;
+      body: Parameters<typeof api.patchAlbumTags>[1];
+    }) => api.patchAlbumTags(id, body),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.libraryAlbum(vars.id) });
+      void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+    },
+  });
+}
+
 export function useIntegrations(type: "tag_source" = "tag_source") {
   return useQuery({
     queryKey: queryKeys.integrations(type),

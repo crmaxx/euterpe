@@ -80,7 +80,13 @@ describe("LibraryPage", () => {
     renderPage();
     await user.click(await screen.findByRole("button", { name: /Local Album/i }));
     await user.click(
-      await screen.findByRole("button", { name: /repair folder/i }),
+      await screen.findByRole("button", { name: /choose album action/i }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: /repair folder/i }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /run: repair folder/i }),
     );
     await waitFor(() =>
       expect(scanRoot).toBe("Test Artist/Local Album"),

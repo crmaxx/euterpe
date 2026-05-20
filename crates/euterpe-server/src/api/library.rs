@@ -82,7 +82,29 @@ pub struct LibraryAlbumDetailResponse {
     pub year: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_total: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disc_total: Option<i32>,
     pub tracks: Vec<LibraryTrackItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryAlbumTagsPatchRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub album_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_total: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disc_total: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

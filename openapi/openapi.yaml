@@ -647,6 +647,42 @@ paths:
                 $ref: "#/components/schemas/LibraryAlbumDetailResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: patchLibraryAlbumTags
+      tags: [Library]
+      summary: Update album-wide tags on all track files
+      description: |
+        Writes shared metadata (artist, album title, year, genre, total tracks, total discs)
+        to every audio file in the album. Per-track title, track number, and disc number are
+        not changed.
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LibraryAlbumTagsPatchRequest"
+      responses:
+        "200":
+          description: Updated album detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryAlbumDetailResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/library/albums/{id}/cover:
     get:
@@ -1573,10 +1609,37 @@ components:
           type: ["integer", "null"]
         cover_path:
           type: ["string", "null"]
+        genre:
+          type: ["string", "null"]
+        track_total:
+          type: ["integer", "null"]
+          minimum: 1
+        disc_total:
+          type: ["integer", "null"]
+          minimum: 1
         tracks:
           type: array
           items:
             $ref: "#/components/schemas/LibraryTrackItem"
+
+    LibraryAlbumTagsPatchRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        artist_name:
+          type: string
+        album_title:
+          type: string
+        year:
+          type: integer
+        genre:
+          type: string
+        track_total:
+          type: integer
+          minimum: 1
+        disc_total:
+          type: integer
+          minimum: 1
 
     LibraryTrackDetailResponse:
       type: object
