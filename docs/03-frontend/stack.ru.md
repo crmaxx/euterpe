@@ -2,6 +2,10 @@
 
 Phase 4. Разработка — **TDD** (Vitest + Testing Library).
 
+## Node.js
+
+Рекомендуется **Node 24** (`frontend/.nvmrc`: `nvm use`). Транзитивный `@hawk.so/types` объявляет `engines.node: 24.x`; на Node 22/26 `npm ci` выдаёт `EBADENGINE` — это предупреждение, установка не падает. На Node 26 предупреждение останется, пока CodeX не расширит `engines` в пакете типов.
+
 ## Core
 
 | Tool | Версия (ориентир) | Назначение |
@@ -30,6 +34,17 @@ Phase 4. Разработка — **TDD** (Vitest + Testing Library).
 Обзор: [api-client.ru.md](api-client.ru.md). Spec JSON: `GET /api/openapi.json`.
 
 Base URL: relative `/api/v1` (same origin in Docker).
+
+## Hawk (ошибки в браузере)
+
+[`@hawk.so/browser`](https://docs.hawk-tracker.ru/react) — инициализация в `src/lib/hawk.ts`, `initHawk()` в `main.tsx` до рендера React.
+
+| Переменная | Когда |
+|------------|--------|
+| `VITE_HAWK_TOKEN` | build / dev — в корневом `.env` или `frontend/.env` (см. `vite.config` `envDir`) |
+| `VITE_HAWK_RELEASE` | опционально, для source maps |
+
+`HawkErrorBoundary` отправляет ошибки рендера; глобальные ошибки и unhandled rejection — SDK по умолчанию.
 
 ## Dev proxy
 

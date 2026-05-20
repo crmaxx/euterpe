@@ -11,6 +11,7 @@ import { QueuePage } from "@/features/queue/QueuePage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { ToastStateProvider } from "@/hooks/toast-provider";
 import { ADMIN_UNAUTHORIZED_EVENT, getAdminToken } from "@/lib/auth";
+import { syncHawkUser } from "@/lib/hawk";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +29,10 @@ function AppRoutes() {
     return () =>
       window.removeEventListener(ADMIN_UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
+
+  useEffect(() => {
+    syncHawkUser(authed);
+  }, [authed]);
 
   if (isLoading) {
     return (

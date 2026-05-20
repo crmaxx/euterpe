@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/euterpe-qobuz", "crates/euterpe-server"]
+members = [
+    "crates/euterpe-hawk",
+    "crates/euterpe-qobuz",
+    "crates/euterpe-server",
+]
 
 [workspace.package]
 edition = "2021"

@@ -284,6 +284,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         job_tx,
         events: events.clone(),
         scan_events,
+        hawk: None,
     };
 
     seed_active_qobuz_account(&state, 1, "test-token").await;

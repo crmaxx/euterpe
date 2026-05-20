@@ -20,6 +20,7 @@ pub struct AppState {
     pub job_tx: mpsc::Sender<i64>,
     pub events: broadcast::Sender<JobProgressEvent>,
     pub scan_events: broadcast::Sender<ScanProgressEvent>,
+    pub hawk: Option<Arc<euterpe_hawk::Hawk>>,
 }
 
 impl AppState {
@@ -29,6 +30,7 @@ impl AppState {
         job_tx: mpsc::Sender<i64>,
         events: broadcast::Sender<JobProgressEvent>,
         scan_events: broadcast::Sender<ScanProgressEvent>,
+        hawk: Option<Arc<euterpe_hawk::Hawk>>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = if let Some(creds) =
@@ -53,6 +55,7 @@ impl AppState {
             job_tx,
             events,
             scan_events,
+            hawk,
         })
     }
 

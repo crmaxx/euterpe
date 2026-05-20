@@ -35,6 +35,7 @@ use crate::services::qobuz_sync;
 use crate::state::AppState;
 
 pub fn app(state: AppState) -> Router {
+    let hawk = state.hawk.clone();
     let protected = Router::new()
         .route("/api/v1/qobuz/oauth/start", get(qobuz_routes::oauth_start))
         .route(
@@ -134,9 +135,13 @@ pub fn app(state: AppState) -> Router {
 
     router = crate::static_files::apply_fallback(router, &state.config);
 
-    router
-        .with_state(state)
-        .layer(
+    let mut router = router.with_state(state);
+
+    if let Some(hawk) = hawk {
+        router = euterpe_hawk::axum::apply_layers(router, hawk);
+    }
+
+    router.layer(
             TraceLayer::new_for_http()
                 .make_span_with(|req: &Request<Body>| {
                     tracing::info_span!(
@@ -166,7 +171,10 @@ pub fn app(state: AppState) -> Router {
         )
 }
 
-pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn serve(
+    config: AppConfig,
+    hawk: Option<std::sync::Arc<euterpe_hawk::Hawk>>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.ensure_library_root()?;
 
     let pool = db::connect(&config.database_url).await?;
@@ -184,6 +192,7 @@ pub async fn serve(config: AppConfig) -> Result<(), Box<dyn std::error::Error + 
         job_tx,
         events.clone(),
         scan_events,
+        hawk.clone(),
     )
     .await?;
 
@@ -404,6 +413,7 @@ pub mod test_support {
             job_tx,
             events.clone(),
             scan_events,
+            None,
         )
         .await
         .unwrap();

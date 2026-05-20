@@ -5,6 +5,10 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY openapi/openapi.yaml /app/openapi/openapi.yaml
 COPY frontend/ ./
+ARG VITE_HAWK_TOKEN=
+ARG VITE_HAWK_RELEASE=
+ENV VITE_HAWK_TOKEN=$VITE_HAWK_TOKEN
+ENV VITE_HAWK_RELEASE=$VITE_HAWK_RELEASE
 RUN npm run generate:api && npm run build
 
 FROM rust:1-bookworm AS builder
