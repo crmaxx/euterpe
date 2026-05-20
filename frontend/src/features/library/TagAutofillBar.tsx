@@ -8,6 +8,7 @@ import {
 import { MetadataCandidatePicker } from "@/components/metadata-candidate-picker";
 import { SplitButton, type SplitButtonOption } from "@/components/split-button";
 import { useToast } from "@/hooks/use-toast";
+import { usePreferences } from "@/hooks/use-preferences";
 
 const DEFAULT_INTEGRATION_KEY = "euterpe.defaultTagIntegrationId";
 
@@ -17,6 +18,7 @@ type TagAutofillBarProps = {
 };
 
 export function TagAutofillBar({ albumId, onApplied }: TagAutofillBarProps) {
+  const { t } = usePreferences();
   const { toast } = useToast();
   const { data: integrations } = useIntegrations();
   const lookup = useAlbumMetadataLookup();
@@ -66,8 +68,8 @@ export function TagAutofillBar({ albumId, onApplied }: TagAutofillBarProps) {
       setPickerOpen(true);
     } catch (e) {
       toast({
-        title: "Lookup failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("library.lookupFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -84,14 +86,16 @@ export function TagAutofillBar({ albumId, onApplied }: TagAutofillBarProps) {
         candidateId: candidate.id,
       });
       toast({
-        title: "Metadata applied",
-        description: `${result.tracks_updated} track(s) updated${
-          result.cover_applied ? ", cover updated" : ""
-        }`,
+        title: t("library.metadataApplied"),
+        description: result.cover_applied
+          ? t("library.metadataAppliedDescCover", {
+              count: result.tracks_updated,
+            })
+          : t("library.metadataAppliedDesc", { count: result.tracks_updated }),
       });
       if (result.warnings.length > 0) {
         toast({
-          title: "Warnings",
+          title: t("library.warnings"),
           description: result.warnings.slice(0, 3).join("; "),
           variant: "destructive",
         });
@@ -100,8 +104,8 @@ export function TagAutofillBar({ albumId, onApplied }: TagAutofillBarProps) {
       onApplied();
     } catch (e) {
       toast({
-        title: "Apply failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("library.applyFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -110,7 +114,11 @@ export function TagAutofillBar({ albumId, onApplied }: TagAutofillBarProps) {
   return (
     <>
       <SplitButton
-        label={defaultItem ? `Autofill · ${defaultItem.display_name}` : "Autofill"}
+        label={
+          defaultItem
+            ? t("library.autofillWith", { name: defaultItem.display_name })
+            : t("library.autofill")
+        }
         options={options}
         loading={lookup.isPending}
         onPrimaryClick={() => {

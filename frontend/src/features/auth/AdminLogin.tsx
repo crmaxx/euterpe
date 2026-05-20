@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { clearAdminToken, setAdminToken } from "@/lib/auth";
+import { usePreferences } from "@/hooks/use-preferences";
 
 type Props = {
   onSuccess: () => void;
 };
 
 export function AdminLogin({ onSuccess }: Props) {
+  const { t } = usePreferences();
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -26,9 +28,9 @@ export function AdminLogin({ onSuccess }: Props) {
     } catch (e) {
       clearAdminToken();
       if (e instanceof ApiClientError && e.status === 401) {
-        setError("Wrong password. Check EUTERPE_ADMIN_PASSWORD on the server.");
+        setError(t("auth.wrongPassword"));
       } else {
-        setError(e instanceof Error ? e.message : "Could not sign in");
+        setError(e instanceof Error ? e.message : t("auth.signInFailed"));
       }
     } finally {
       setSubmitting(false);
@@ -46,13 +48,11 @@ export function AdminLogin({ onSuccess }: Props) {
       >
         <div className="flex items-center gap-2">
           <Music2 className="size-5 text-muted-foreground" aria-hidden />
-          <h1 className="text-xl font-semibold">Euterpe</h1>
+          <h1 className="text-xl font-semibold">{t("auth.title")}</h1>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Admin password required (EUTERPE_ADMIN_PASSWORD).
-        </p>
+        <p className="text-sm text-muted-foreground">{t("auth.subtitle")}</p>
         <div className="space-y-2">
-          <Label htmlFor="admin-password">Password</Label>
+          <Label htmlFor="admin-password">{t("auth.password")}</Label>
           <Input
             id="admin-password"
             type="password"
@@ -67,7 +67,7 @@ export function AdminLogin({ onSuccess }: Props) {
           </p>
         )}
         <Button type="submit" className="w-full" disabled={submitting}>
-          {submitting ? "Signing in…" : "Sign in"}
+          {submitting ? t("auth.signingIn") : t("auth.signIn")}
         </Button>
       </form>
     </div>

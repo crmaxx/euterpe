@@ -24,13 +24,14 @@ import {
 } from "@/api/hooks";
 import type { QobuzFavoriteItem, SortOrder } from "@/api/client";
 import { FavoriteAlbumCover } from "@/features/favorites/FavoriteAlbumCover";
-import { Heart, Loader2, RefreshCw } from "lucide-react";
+import { ArrowDown, Heart, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { getDefaultQuality } from "@/lib/quality";
+import { usePreferences } from "@/hooks/use-preferences";
 
 const SORT_STORAGE_KEY = "euterpe.favorites.sort";
 const ORDER_STORAGE_KEY = "euterpe.favorites.order";
@@ -145,36 +146,39 @@ function FavoriteRowActions({
   removePending: boolean;
   onRemove: (qobuzId: number) => void;
 }) {
+  const { t } = usePreferences();
   const optimisticBusy = useContext(FavoritesOptimisticBusyContext);
   const activeDownloadIds = useContext(FavoritesActiveDownloadIdsContext);
   const busy =
     activeDownloadIds.has(item.qobuz_id) || optimisticBusy.has(item.qobuz_id);
-  const label = item.in_library ? "Re-download" : "Download";
+  const downloadLabel = item.in_library
+    ? t("favorites.redownloadAction")
+    : t("favorites.downloadAction");
   return (
-    <div className="flex gap-2">
+    <div className="flex items-center gap-1">
       <Button
         size="sm"
         variant="secondary"
+        className="size-8 shrink-0 p-0"
         disabled={busy}
-        aria-label={busy ? "Downloading" : label}
+        aria-label={busy ? t("favorites.downloading") : downloadLabel}
         onClick={() => void onQueue(item)}
       >
         {busy ? (
-          <>
-            <Loader2 className="mr-1 size-3.5 animate-spin" aria-hidden />
-            Downloading…
-          </>
+          <Loader2 className="size-4 animate-spin" aria-hidden />
         ) : (
-          label
+          <ArrowDown className="size-4" aria-hidden />
         )}
       </Button>
       <Button
         size="sm"
         variant="ghost"
+        className="size-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
         disabled={removePending}
+        aria-label={t("favorites.remove")}
         onClick={() => onRemove(item.qobuz_id)}
       >
-        Remove
+        <Trash2 className="size-4" aria-hidden />
       </Button>
     </div>
   );
@@ -221,6 +225,7 @@ export function FavoritesPage() {
 }
 
 const FavoritesPageContent = memo(function FavoritesPageContent() {
+  const { t } = usePreferences();
   const [sort, setSort] = useState<FavoritesSort>(loadStoredSort);
   const [order, setOrder] = useState<SortOrder>(loadStoredOrder);
   const [qInput, setQInput] = useState("");
@@ -231,8 +236,8 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
   const [urlInput, setUrlInput] = useState("");
 
   useEffect(() => {
-    const t = window.setTimeout(() => setQ(qInput.trim()), 300);
-    return () => window.clearTimeout(t);
+    const timerId = window.setTimeout(() => setQ(qInput.trim()), 300);
+    return () => window.clearTimeout(timerId);
   }, [qInput]);
 
   useEffect(() => {
@@ -286,30 +291,30 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
           qobuz_id: item.qobuz_id,
           quality: getDefaultQuality(),
         });
-        toast({ title: "Download queued", description: item.title });
+        toast({ title: t("favorites.toast.downloadQueued"), description: item.title });
       } catch (e) {
         busyApi?.removeOptimisticBusy(item.qobuz_id);
         toast({
-          title: "Queue failed",
-          description: e instanceof Error ? e.message : "Error",
+          title: t("favorites.toast.queueFailed"),
+          description: e instanceof Error ? e.message : t("common.unknownError"),
           variant: "destructive",
         });
       }
     },
-    [busyApi, download, toast],
+    [busyApi, download, toast, t],
   );
 
   const handleRemoveFavorite = useCallback(
     (qobuzId: number) => {
       void remove.mutateAsync([qobuzId]).catch((e) =>
         toast({
-          title: "Remove failed",
+          title: t("favorites.toast.removeFailed"),
           description: String(e),
           variant: "destructive",
         }),
       );
     },
-    [remove, toast],
+    [remove, toast, t],
   );
 
   const columns = useMemo<ColumnDef<QobuzFavoriteItem>[]>(
@@ -320,14 +325,14 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
           <Checkbox
             checked={table.getIsAllPageRowsSelected()}
             onCheckedChange={(v) => table.toggleAllPageRowsSelected(!!v)}
-            aria-label="Select all"
+            aria-label={t("favorites.selectAll")}
           />
         ),
         cell: ({ row }) => (
           <Checkbox
             checked={row.getIsSelected()}
             onCheckedChange={(v) => row.toggleSelected(!!v)}
-            aria-label="Select row"
+            aria-label={t("favorites.selectRow")}
           />
         ),
       },
@@ -336,7 +341,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
         accessorKey: "title",
         header: () => (
           <SortableHeader
-            label="Title"
+            label={t("favorites.colTitle")}
             column="title"
             sort={sort}
             order={order}
@@ -348,7 +353,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
         accessorKey: "artist_name",
         header: () => (
           <SortableHeader
-            label="Artist"
+            label={t("favorites.colArtist")}
             column="artist"
             sort={sort}
             order={order}
@@ -360,18 +365,19 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
         id: "in_library",
         header: () => (
           <SortableHeader
-            label="In library"
+            label={t("favorites.colInLibrary")}
             column="in_library"
             sort={sort}
             order={order}
             onSort={onSort}
           />
         ),
-        cell: ({ row }) => (row.original.in_library ? "Yes" : "No"),
+        cell: ({ row }) =>
+          row.original.in_library ? t("common.yes") : t("common.no"),
       },
       {
         id: "actions",
-        header: "Actions",
+        header: t("favorites.colActions"),
         cell: ({ row }) => (
           <FavoriteRowActions
             item={row.original}
@@ -382,7 +388,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
         ),
       },
     ],
-    [handleRemoveFavorite, onSort, order, queueOne, remove.isPending, sort],
+    [handleRemoveFavorite, onSort, order, queueOne, remove.isPending, sort, t],
   );
 
   // eslint-disable-next-line react-hooks/incompatible-library -- TanStack Table API
@@ -407,7 +413,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Heart className="size-5 shrink-0 text-muted-foreground" aria-hidden />
-          <h2 className="text-2xl font-semibold">Favorites</h2>
+          <h2 className="text-2xl font-semibold">{t("favorites.title")}</h2>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -415,27 +421,31 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
             onClick={() =>
               void sync.mutateAsync().then((r) =>
                 toast({
-                  title: "Sync complete",
-                  description: `+${r.added} / -${r.removed} (${r.albums_total} total)`,
+                  title: t("favorites.toast.syncComplete"),
+                  description: t("favorites.toast.syncCompleteDesc", {
+                    added: r.added,
+                    removed: r.removed,
+                    total: r.albums_total,
+                  }),
                 }),
               )
             }
           >
             <RefreshCw className="size-4" aria-hidden />
-            Sync now
+            {t("favorites.syncNow")}
           </Button>
           <Button
             variant="outline"
             onClick={() => setShowDownloadUrl((v) => !v)}
           >
-            Download by URL
+            {t("favorites.downloadByUrl")}
           </Button>
           <Button
             variant="secondary"
             disabled={!table.getSelectedRowModel().rows.length}
             onClick={() => void bulkDownload()}
           >
-            Bulk download
+            {t("favorites.bulkDownload")}
           </Button>
         </div>
       </div>
@@ -443,12 +453,12 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
       {showDownloadUrl ? (
         <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border/60 bg-card/30 p-3">
           <div className="min-w-[16rem] flex-1 space-y-1">
-            <Label htmlFor="fav-download-url">Qobuz album URL</Label>
+            <Label htmlFor="fav-download-url">{t("favorites.qobuzUrl")}</Label>
             <Input
               id="fav-download-url"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="https://play.qobuz.com/album/…"
+              placeholder={t("favorites.urlPlaceholder")}
               disabled={downloadByUrl.isPending}
             />
           </div>
@@ -460,20 +470,22 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
                 .then(() => {
                   setUrlInput("");
                   setShowDownloadUrl(false);
-                  toast({ title: "Download queued" });
+                  toast({ title: t("favorites.toast.downloadQueued") });
                 })
                 .catch((err: unknown) => {
                   const message =
-                    err instanceof Error ? err.message : "Could not queue download";
+                    err instanceof Error
+                      ? err.message
+                      : t("favorites.toast.queueFailed");
                   toast({
-                    title: "Queue failed",
+                    title: t("favorites.toast.queueFailed"),
                     description: message,
                     variant: "destructive",
                   });
                 })
             }
           >
-            Download
+            {t("favorites.download")}
           </Button>
           <Button
             variant="ghost"
@@ -483,19 +495,19 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
               setUrlInput("");
             }}
           >
-            Cancel
+            {t("common.cancel")}
           </Button>
         </div>
       ) : null}
 
       <div className="flex flex-wrap items-end gap-4">
         <div className="min-w-[12rem] flex-1 space-y-1">
-          <Label htmlFor="fav-search">Search</Label>
+          <Label htmlFor="fav-search">{t("favorites.search")}</Label>
           <Input
             id="fav-search"
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
-            placeholder="Title or artist"
+            placeholder={t("favorites.searchPlaceholder")}
           />
         </div>
         <div className="flex flex-wrap gap-2">
@@ -505,7 +517,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
             variant={inLibrary === undefined ? "secondary" : "outline"}
             onClick={() => setInLibrary(undefined)}
           >
-            All
+            {t("favorites.filterAll")}
           </Button>
           <Button
             type="button"
@@ -513,7 +525,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
             variant={inLibrary === true ? "secondary" : "outline"}
             onClick={() => setInLibrary(true)}
           >
-            In library
+            {t("favorites.filterInLibrary")}
           </Button>
           <Button
             type="button"
@@ -521,17 +533,17 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
             variant={inLibrary === false ? "secondary" : "outline"}
             onClick={() => setInLibrary(false)}
           >
-            Not in library
+            {t("favorites.filterNotInLibrary")}
           </Button>
         </div>
       </div>
 
       {initialLoading ? (
-        <p className="text-muted-foreground">Loading…</p>
+        <p className="text-muted-foreground">{t("common.loading")}</p>
       ) : (
         <>
           {showSearching ? (
-            <p className="text-sm text-muted-foreground">Searching…</p>
+            <p className="text-sm text-muted-foreground">{t("common.searching")}</p>
           ) : null}
           <div className="overflow-hidden rounded-lg border border-border">
             <table className="w-full text-sm">
@@ -568,7 +580,9 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
               disabled={favoritesQuery.isFetchingNextPage}
               onClick={() => void favoritesQuery.fetchNextPage()}
             >
-              {favoritesQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+              {favoritesQuery.isFetchingNextPage
+                ? t("common.loading")
+                : t("common.loadMore")}
             </Button>
           ) : null}
         </>

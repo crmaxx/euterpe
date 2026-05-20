@@ -1,6 +1,7 @@
 import type { MetadataCandidate } from "@/api/client";
 import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui/button";
+import { usePreferences } from "@/hooks/use-preferences";
 
 type MetadataCandidatePickerProps = {
   open: boolean;
@@ -25,14 +26,15 @@ export function MetadataCandidatePicker({
   onPageChange,
   onApply,
 }: MetadataCandidatePickerProps) {
+  const { t } = usePreferences();
   return (
     <Modal open={open} onClose={onClose}>
-      <h3 className="font-medium">Choose release</h3>
+      <h3 className="font-medium">{t("metadata.chooseRelease")}</h3>
       <p className="text-sm text-muted-foreground">
-        Select a match from the catalog to fill tags and cover.
+        {t("metadata.chooseReleaseDesc")}
       </p>
       {candidates.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No candidates found.</p>
+        <p className="text-sm text-muted-foreground">{t("metadata.noCandidates")}</p>
       ) : (
         <ul className="max-h-64 space-y-2 overflow-y-auto">
           {candidates.map((c) => (
@@ -47,7 +49,9 @@ export function MetadataCandidatePicker({
                   {c.year != null ? ` · ${c.year}` : ""}
                   {" · "}
                   {c.source_label}
-                  {c.track_count != null ? ` · ${c.track_count} tracks` : ""}
+                  {c.track_count != null
+                    ? ` · ${t("metadata.tracks", { count: c.track_count })}`
+                    : ""}
                 </p>
               </div>
               <Button
@@ -56,7 +60,7 @@ export function MetadataCandidatePicker({
                 disabled={applying}
                 onClick={() => onApply(c)}
               >
-                Apply
+                {t("common.apply")}
               </Button>
             </li>
           ))}
@@ -71,7 +75,7 @@ export function MetadataCandidatePicker({
             disabled={page <= 1 || loadingPage}
             onClick={() => onPageChange(page - 1)}
           >
-            Previous
+            {t("metadata.prev")}
           </Button>
           <span className="text-sm text-muted-foreground">Page {page}</span>
           <Button
@@ -81,13 +85,13 @@ export function MetadataCandidatePicker({
             disabled={!hasMore || loadingPage}
             onClick={() => onPageChange(page + 1)}
           >
-            Next
+            {t("metadata.next")}
           </Button>
         </div>
       ) : null}
       <div className="flex justify-end">
         <Button type="button" variant="secondary" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </Button>
       </div>
     </Modal>

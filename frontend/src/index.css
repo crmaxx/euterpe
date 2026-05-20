@@ -1,18 +1,50 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --euterpe-background: #fafafa;
+  --euterpe-foreground: #09090b;
+  --euterpe-card: #ffffff;
+  --euterpe-card-foreground: #09090b;
+  --euterpe-muted: #f4f4f5;
+  --euterpe-muted-foreground: #71717a;
+  --euterpe-border: #e4e4e7;
+  --euterpe-primary: #18181b;
+  --euterpe-primary-foreground: #fafafa;
+  --euterpe-destructive: #dc2626;
+  --euterpe-accent: #f4f4f5;
+  --euterpe-accent-foreground: #18181b;
+}
+
+.dark {
+  --euterpe-background: #0a0a0b;
+  --euterpe-foreground: #fafafa;
+  --euterpe-card: #141416;
+  --euterpe-card-foreground: #fafafa;
+  --euterpe-muted: #27272a;
+  --euterpe-muted-foreground: #a1a1aa;
+  --euterpe-border: #27272a;
+  --euterpe-primary: #e4e4e7;
+  --euterpe-primary-foreground: #18181b;
+  --euterpe-destructive: #ef4444;
+  --euterpe-accent: #1f1f23;
+  --euterpe-accent-foreground: #fafafa;
+}
+
 @theme {
-  --color-background: #0a0a0b;
-  --color-foreground: #fafafa;
-  --color-card: #141416;
-  --color-card-foreground: #fafafa;
-  --color-muted: #27272a;
-  --color-muted-foreground: #a1a1aa;
-  --color-border: #27272a;
-  --color-primary: #e4e4e7;
-  --color-primary-foreground: #18181b;
-  --color-destructive: #ef4444;
-  --color-accent: #1f1f23;
-  --color-accent-foreground: #fafafa;
+  --color-background: var(--euterpe-background);
+  --color-foreground: var(--euterpe-foreground);
+  --color-card: var(--euterpe-card);
+  --color-card-foreground: var(--euterpe-card-foreground);
+  --color-muted: var(--euterpe-muted);
+  --color-muted-foreground: var(--euterpe-muted-foreground);
+  --color-border: var(--euterpe-border);
+  --color-primary: var(--euterpe-primary);
+  --color-primary-foreground: var(--euterpe-primary-foreground);
+  --color-destructive: var(--euterpe-destructive);
+  --color-accent: var(--euterpe-accent);
+  --color-accent-foreground: var(--euterpe-accent-foreground);
   --radius: 0.5rem;
 }
 
