@@ -434,10 +434,10 @@ pub mod test_support {
     use crate::db;
     use crate::services::download::{WorkerDeps, spawn_worker};
 
-    pub async fn test_state() -> AppState {
+    fn test_config() -> AppConfig {
         let library_path =
             std::env::temp_dir().join(format!("euterpe-server-test-{}", std::process::id()));
-        let config = AppConfig {
+        AppConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             database_url: "sqlite::memory:".into(),
             admin_password: None,
@@ -454,7 +454,11 @@ pub mod test_support {
             library_scan: crate::config::LibraryScanConfig::default(),
             debug: false,
             static_dir: std::path::PathBuf::new(),
-        };
+        }
+    }
+
+    async fn test_state_inner(with_worker: bool) -> AppState {
+        let config = test_config();
         let pool = db::connect(&config.database_url).await.unwrap();
         db::migrate(&pool).await.unwrap();
 
@@ -473,23 +477,34 @@ pub mod test_support {
         .await
         .unwrap();
 
-        let job_tx_wake = state.job_tx.clone();
-        spawn_worker(
-            job_rx,
-            WorkerDeps {
-                pool,
-                qobuz: Arc::clone(&state.qobuz),
-                config: Arc::new(config),
-                events,
-                http: Client::new(),
-                torrent: None,
-                torrent_semaphore: None,
-                scan_events: state.scan_events.clone(),
-                job_tx: job_tx_wake.clone(),
-            },
-        );
-        let _ = job_tx_wake.send(0).await;
+        if with_worker {
+            let job_tx_wake = state.job_tx.clone();
+            spawn_worker(
+                job_rx,
+                WorkerDeps {
+                    pool,
+                    qobuz: Arc::clone(&state.qobuz),
+                    config: Arc::new(config),
+                    events,
+                    http: Client::new(),
+                    torrent: None,
+                    torrent_semaphore: None,
+                    scan_events: state.scan_events.clone(),
+                    job_tx: job_tx_wake.clone(),
+                },
+            );
+            let _ = job_tx_wake.send(0).await;
+        }
 
         state
+    }
+
+    pub async fn test_state() -> AppState {
+        test_state_inner(true).await
+    }
+
+    /// App state for API tests that seed `download_jobs` directly (no background scheduler).
+    pub async fn test_state_without_worker() -> AppState {
+        test_state_inner(false).await
     }
 }
