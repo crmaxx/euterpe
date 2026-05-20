@@ -1,5 +1,5 @@
-use axum::extract::State;
 use axum::Json;
+use axum::extract::State;
 
 use crate::api::{TorrentSettingsPatch, TorrentSettingsResponse};
 use crate::error::ApiError;

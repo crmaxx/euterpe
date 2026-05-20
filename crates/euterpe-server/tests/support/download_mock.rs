@@ -5,7 +5,7 @@ use euterpe_qobuz::{
     StreamUrl, TrackSummary,
 };
 use euterpe_server::AppState;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 
 #[path = "qobuz_account.rs"]
 mod qobuz_account;
@@ -61,10 +61,7 @@ impl DownloadMockQobuz {
 
 #[async_trait::async_trait]
 impl QobuzApi for DownloadMockQobuz {
-    async fn favorites_albums(
-        &self,
-        _page: PageRequest,
-    ) -> Result<Page<AlbumSummary>, QobuzError> {
+    async fn favorites_albums(&self, _page: PageRequest) -> Result<Page<AlbumSummary>, QobuzError> {
         unimplemented!()
     }
 
@@ -109,7 +106,11 @@ impl QobuzApi for DownloadMockQobuz {
         Ok(self.album.clone())
     }
 
-    async fn album_search(&self, _query: &str, _limit: u32) -> Result<Vec<AlbumSummary>, QobuzError> {
+    async fn album_search(
+        &self,
+        _query: &str,
+        _limit: u32,
+    ) -> Result<Vec<AlbumSummary>, QobuzError> {
         Ok(vec![])
     }
 
@@ -122,11 +123,10 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     use euterpe_server::config::AppConfig;
     use euterpe_server::crypto::MasterKey;
     use euterpe_server::db;
-    use euterpe_server::services::download::{spawn_worker, WorkerDeps};
+    use euterpe_server::services::download::{WorkerDeps, spawn_worker};
     use reqwest::Client;
 
-    let library_path =
-        std::env::temp_dir().join(format!("euterpe-dl-test-{}", std::process::id()));
+    let library_path = std::env::temp_dir().join(format!("euterpe-dl-test-{}", std::process::id()));
     let config = AppConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
         database_url: "sqlite::memory:".into(),

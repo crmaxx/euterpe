@@ -130,25 +130,13 @@ async fn oauth_callback_exchanges_code_and_stores_account() {
     .unwrap();
 
     let app = app::app(state.clone());
-    let uri = format!(
-        "/api/v1/qobuz/oauth/callback?code=auth-code-xyz&state={oauth_state}"
-    );
+    let uri = format!("/api/v1/qobuz/oauth/callback?code=auth-code-xyz&state={oauth_state}");
     let resp = app
-        .oneshot(
-            Request::builder()
-                .uri(&uri)
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(Request::builder().uri(&uri).body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
-    let loc = resp
-        .headers()
-        .get("location")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let loc = resp.headers().get("location").unwrap().to_str().unwrap();
     assert!(loc.contains("/settings?qobuz=connected"));
 
     let creds = euterpe_server::credentials::load_active(&state.config, &state.db)
@@ -247,7 +235,8 @@ async fn logout_clears_active_account() {
     qobuz_account::seed_active_qobuz_account(&state, 4242, "uat-final").await;
 
     let app = app::app(state.clone());
-    let resp = app.clone()
+    let resp = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")

@@ -4,14 +4,14 @@ use euterpe_qobuz::QobuzApi;
 use euterpe_torrent::TorrentEngine;
 use reqwest::Client;
 use sqlx::SqlitePool;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 
 use crate::api::{JobProgressEvent, ScanProgressEvent};
 use crate::config::AppConfig;
-use crate::services::torrent_staging::TorrentStaging;
 use crate::credentials::{self, QobuzCredentials};
 use crate::crypto::MasterKey;
 use crate::error::ApiError;
+use crate::services::torrent_staging::TorrentStaging;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -37,14 +37,13 @@ impl AppState {
         hawk: Option<Arc<euterpe_hawk::Hawk>>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
-        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = if let Some(creds) =
-            credentials::load_active(&config, &db).await?
-        {
-            let client = credentials::build_client(&creds, &config).await?;
-            Arc::new(Mutex::new(Box::new(client)))
-        } else {
-            Arc::new(Mutex::new(Box::new(NoopQobuz)))
-        };
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
+            if let Some(creds) = credentials::load_active(&config, &db).await? {
+                let client = credentials::build_client(&creds, &config).await?;
+                Arc::new(Mutex::new(Box::new(client)))
+            } else {
+                Arc::new(Mutex::new(Box::new(NoopQobuz)))
+            };
 
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(120))
@@ -56,12 +55,13 @@ impl AppState {
             let mut session_settings =
                 crate::services::torrent_settings::to_session_settings(&settings);
             session_settings.enable_upnp_port_forwarding = config.torrent_enable_upnp;
-            let engine = euterpe_torrent::LibrqbitEngine::new(euterpe_torrent::TorrentEngineConfig {
-                incoming_dir: dir.clone(),
-                session_settings,
-            })
-            .await
-            .map_err(|e| ApiError::Message(e.to_string()))?;
+            let engine =
+                euterpe_torrent::LibrqbitEngine::new(euterpe_torrent::TorrentEngineConfig {
+                    incoming_dir: dir.clone(),
+                    session_settings,
+                })
+                .await
+                .map_err(|e| ApiError::Message(e.to_string()))?;
             Some(Arc::new(engine) as Arc<dyn TorrentEngine>)
         } else {
             None
@@ -85,20 +85,17 @@ impl AppState {
         credentials::load_active(&self.config, &self.db)
             .await?
             .ok_or_else(|| {
-                ApiError::Message(
-                    "Qobuz not connected — complete OAuth in Settings".into(),
-                )
+                ApiError::Message("Qobuz not connected — complete OAuth in Settings".into())
             })
     }
 
     pub async fn reload_qobuz_from_db(&self) -> Result<(), ApiError> {
-        let new_client: Box<dyn QobuzApi + Send + Sync> = if let Some(creds) =
-            credentials::load_active(&self.config, &self.db).await?
-        {
-            Box::new(credentials::build_client(&creds, &self.config).await?)
-        } else {
-            Box::new(NoopQobuz)
-        };
+        let new_client: Box<dyn QobuzApi + Send + Sync> =
+            if let Some(creds) = credentials::load_active(&self.config, &self.db).await? {
+                Box::new(credentials::build_client(&creds, &self.config).await?)
+            } else {
+                Box::new(NoopQobuz)
+            };
         *self.qobuz.lock().await = new_client;
         Ok(())
     }
@@ -117,8 +114,7 @@ impl QobuzApi for NoopQobuz {
     async fn favorites_albums(
         &self,
         _page: euterpe_qobuz::PageRequest,
-    ) -> Result<euterpe_qobuz::Page<euterpe_qobuz::AlbumSummary>, euterpe_qobuz::QobuzError>
-    {
+    ) -> Result<euterpe_qobuz::Page<euterpe_qobuz::AlbumSummary>, euterpe_qobuz::QobuzError> {
         Err(euterpe_qobuz::QobuzError::Config(
             "qobuz not configured".into(),
         ))

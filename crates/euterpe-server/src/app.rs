@@ -32,7 +32,7 @@ use crate::openapi;
 use crate::routes::{
     downloads, events, integrations, library, qobuz as qobuz_routes, settings, torrent,
 };
-use crate::services::download::{spawn_worker, WorkerDeps};
+use crate::services::download::{WorkerDeps, spawn_worker};
 use crate::services::qobuz_sync;
 use crate::state::AppState;
 
@@ -40,10 +40,7 @@ pub fn app(state: AppState) -> Router {
     let hawk = state.hawk.clone();
     let protected = Router::new()
         .route("/api/v1/qobuz/oauth/start", get(qobuz_routes::oauth_start))
-        .route(
-            "/api/v1/qobuz/accounts",
-            get(qobuz_routes::list_accounts),
-        )
+        .route("/api/v1/qobuz/accounts", get(qobuz_routes::list_accounts))
         .route(
             "/api/v1/qobuz/connection",
             get(qobuz_routes::connection_status),
@@ -60,8 +57,7 @@ pub fn app(state: AppState) -> Router {
         )
         .route(
             "/api/v1/downloads",
-            post(downloads::create_download)
-                .get(downloads::list_downloads),
+            post(downloads::create_download).get(downloads::list_downloads),
         )
         .route(
             "/api/v1/downloads/by-url",
@@ -180,44 +176,39 @@ pub fn app(state: AppState) -> Router {
     }
 
     router.layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|req: &Request<Body>| {
-                    tracing::info_span!(
-                        "http",
-                        method = %req.method(),
-                        uri = %req.uri(),
-                    )
-                })
-                .on_request(|req: &Request<Body>, _span: &tracing::Span| {
-                    tracing::event!(
-                        Level::DEBUG,
-                        method = %req.method(),
-                        uri = %req.uri(),
-                        "request started"
-                    );
-                })
-                .on_response(
-                    |res: &Response<Body>, latency: Duration, _span: &tracing::Span| {
-                        let status = res.status().as_u16();
-                        let latency_ms = latency.as_millis() as u64;
-                        if status >= 400 {
-                            tracing::event!(
-                                Level::WARN,
-                                status,
-                                latency_ms,
-                                "response failed — error JSON is in the response body"
-                            );
-                        } else {
-                            tracing::event!(
-                                Level::DEBUG,
-                                status,
-                                latency_ms,
-                                "response"
-                            );
-                        }
-                    },
-                ),
-        )
+        TraceLayer::new_for_http()
+            .make_span_with(|req: &Request<Body>| {
+                tracing::info_span!(
+                    "http",
+                    method = %req.method(),
+                    uri = %req.uri(),
+                )
+            })
+            .on_request(|req: &Request<Body>, _span: &tracing::Span| {
+                tracing::event!(
+                    Level::DEBUG,
+                    method = %req.method(),
+                    uri = %req.uri(),
+                    "request started"
+                );
+            })
+            .on_response(
+                |res: &Response<Body>, latency: Duration, _span: &tracing::Span| {
+                    let status = res.status().as_u16();
+                    let latency_ms = latency.as_millis() as u64;
+                    if status >= 400 {
+                        tracing::event!(
+                            Level::WARN,
+                            status,
+                            latency_ms,
+                            "response failed — error JSON is in the response body"
+                        );
+                    } else {
+                        tracing::event!(Level::DEBUG, status, latency_ms, "response");
+                    }
+                },
+            ),
+    )
 }
 
 pub async fn serve(
@@ -256,9 +247,10 @@ pub async fn serve(
             .redirect(reqwest::redirect::Policy::limited(10))
             .build()?,
         torrent: state.torrent.clone(),
-        torrent_semaphore: state.torrent.as_ref().map(|_| {
-            Arc::new(tokio::sync::Semaphore::new(state.config.torrent_max_active))
-        }),
+        torrent_semaphore: state
+            .torrent
+            .as_ref()
+            .map(|_| Arc::new(tokio::sync::Semaphore::new(state.config.torrent_max_active))),
         scan_events: state.scan_events.clone(),
         job_tx: job_tx.clone(),
     };
@@ -287,10 +279,9 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoResponse>, ApiError> {
-    let credentials_configured =
-        credentials::load_active(&state.config, &state.db)
-            .await?
-            .is_some();
+    let credentials_configured = credentials::load_active(&state.config, &state.db)
+        .await?
+        .is_some();
     Ok(Json(ServerInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
         library_path: state.config.library_path.display().to_string(),
@@ -312,7 +303,9 @@ async fn qobuz_sync_latest(
 }
 
 async fn openapi_json() -> Result<Json<serde_json::Value>, ApiError> {
-    Ok(Json(openapi::spec_json().map_err(|e| ApiError::Config(e.to_string()))?))
+    Ok(Json(
+        openapi::spec_json().map_err(|e| ApiError::Config(e.to_string()))?,
+    ))
 }
 
 async fn qobuz_test_login(
@@ -373,8 +366,8 @@ async fn list_favorites(
     if q.entity_type != "album" {
         return Err(ApiError::bad_request("only type=album is supported"));
     }
-    use crate::api::keyset::parse_limit;
     use crate::api::SortOrder;
+    use crate::api::keyset::parse_limit;
     use crate::db::favorites::{FavoritesListParams, FavoritesSort};
 
     let limit = parse_limit(q.limit, 50, 500)?;
@@ -439,20 +432,16 @@ async fn remove_favorites(
 pub mod test_support {
     use super::*;
     use crate::db;
-    use crate::services::download::{spawn_worker, WorkerDeps};
+    use crate::services::download::{WorkerDeps, spawn_worker};
 
     pub async fn test_state() -> AppState {
-        let library_path = std::env::temp_dir().join(format!(
-            "euterpe-server-test-{}",
-            std::process::id()
-        ));
+        let library_path =
+            std::env::temp_dir().join(format!("euterpe-server-test-{}", std::process::id()));
         let config = AppConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             database_url: "sqlite::memory:".into(),
             admin_password: None,
-            master_key: Some(
-                crate::crypto::MasterKey::parse(&hex::encode([1u8; 32])).unwrap(),
-            ),
+            master_key: Some(crate::crypto::MasterKey::parse(&hex::encode([1u8; 32])).unwrap()),
             public_base_url: "http://127.0.0.1:0".into(),
             oauth_state_ttl: std::time::Duration::from_secs(600),
             qobuz_api_base: None,

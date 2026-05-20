@@ -21,9 +21,7 @@ pub(crate) struct ClientState {
 impl QobuzClient {
     #[instrument(skip(config), fields(qobuz.bootstrap = true))]
     pub async fn connect(config: QobuzConfig) -> Result<Self, QobuzError> {
-        let http = Client::builder()
-            .timeout(config.request_timeout)
-            .build()?;
+        let http = Client::builder().timeout(config.request_timeout).build()?;
 
         let (app_id, secrets) = bootstrap_app_id_and_secrets(
             &config.play_base,
@@ -94,7 +92,10 @@ impl QobuzClient {
             endpoint.trim_start_matches('/')
         );
 
-        let mut req = self.http.get(&url).header("User-Agent", &self.config.user_agent);
+        let mut req = self
+            .http
+            .get(&url)
+            .header("User-Agent", &self.config.user_agent);
         req = req.header("X-App-Id", &self.state.app_id);
         req = req
             .header("Content-Type", "application/json;charset=UTF-8")
@@ -239,21 +240,24 @@ mod tests {
             .await;
 
         let _probe = server
-            .mock("GET", mockito::Matcher::Regex(r".*/track/getFileUrl.*".into()))
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r".*/track/getFileUrl.*".into()),
+            )
             .with_status(200)
             .with_body(r#"{"url":"https://example.com/track.flac","format_id":5}"#)
             .create_async()
             .await;
 
-        let mut client = QobuzClient::new_for_test(
-            cfg.clone(),
-            "123456789".into(),
-            vec!["secret".into()],
-        );
+        let mut client =
+            QobuzClient::new_for_test(cfg.clone(), "123456789".into(), vec!["secret".into()]);
         client.config.api_base = cfg.api_base;
         let profile = client.login().await.unwrap();
         assert_eq!(profile.id, 99);
-        assert_eq!(client.state.user_auth_token.as_deref(), Some("new-uat-token"));
+        assert_eq!(
+            client.state.user_auth_token.as_deref(),
+            Some("new-uat-token")
+        );
     }
 
     #[tokio::test]
@@ -276,7 +280,8 @@ mod tests {
             .create_async()
             .await;
 
-        let mut client = QobuzClient::new_for_test(cfg.clone(), "123456789".into(), vec!["s".into()]);
+        let mut client =
+            QobuzClient::new_for_test(cfg.clone(), "123456789".into(), vec!["s".into()]);
         client.config.api_base = cfg.api_base;
         let err = client.login().await.unwrap_err();
         assert!(matches!(err, QobuzError::Authentication(_)));
@@ -300,7 +305,8 @@ mod tests {
             .create_async()
             .await;
 
-        let mut client = QobuzClient::new_for_test(cfg.clone(), "123456789".into(), vec!["s".into()]);
+        let mut client =
+            QobuzClient::new_for_test(cfg.clone(), "123456789".into(), vec!["s".into()]);
         client.config.api_base = cfg.api_base;
         let err = client.login().await.unwrap_err();
         assert!(matches!(err, QobuzError::Ineligible));
@@ -316,13 +322,17 @@ mod tests {
 
         let fav_body = include_str!("../tests/fixtures/favorites_albums_page0.json");
         let _fav = server
-            .mock("GET", mockito::Matcher::Regex(r".*/favorite/getUserFavorites.*".into()))
+            .mock(
+                "GET",
+                mockito::Matcher::Regex(r".*/favorite/getUserFavorites.*".into()),
+            )
             .with_status(200)
             .with_body(fav_body)
             .create_async()
             .await;
 
-        let client = QobuzClient::new_for_test(cfg.clone(), "123456789".into(), vec!["secret".into()]);
+        let client =
+            QobuzClient::new_for_test(cfg.clone(), "123456789".into(), vec!["secret".into()]);
         let mut client = client;
         client.config.api_base = cfg.api_base;
         client.verify_session().await.unwrap();

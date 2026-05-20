@@ -69,7 +69,10 @@ impl QobuzClient {
     /// Returns true if `secret` is accepted for signing (streamrip: status 200 or 401, not 400).
     pub(crate) async fn probe_secret(&self, secret: &str) -> bool {
         for &track_id in PROBE_TRACK_IDS {
-            match self.file_url_status(track_id, Quality::Mp3_320, secret).await {
+            match self
+                .file_url_status(track_id, Quality::Mp3_320, secret)
+                .await
+            {
                 Ok(400) => continue,
                 // 200 with restrictions / empty url still proves the secret signature is valid.
                 Ok(200) | Ok(401) | Ok(403) => return true,
@@ -168,7 +171,10 @@ mod tests {
     #[test]
     fn streamrip_level_mapping() {
         assert_eq!(Quality::from_streamrip_level(1), Some(Quality::Mp3_320));
-        assert_eq!(Quality::from_streamrip_level(4), Some(Quality::FlacHiResPlus));
+        assert_eq!(
+            Quality::from_streamrip_level(4),
+            Some(Quality::FlacHiResPlus)
+        );
         assert!(Quality::from_streamrip_level(9).is_none());
     }
 }

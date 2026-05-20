@@ -1,33 +1,32 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
-use axum::Json;
 use bytes::Bytes;
 
 use euterpe_torrent::TorrentEngine;
 
+use crate::api::DownloadJobType;
 use crate::api::{
     CreateDownloadResponse, TorrentConfirmRequest, TorrentInspectMagnetRequest,
     TorrentInspectResponse,
 };
 use crate::db::download_jobs;
-use crate::api::DownloadJobType;
 use crate::error::ApiError;
 use crate::services::download::payload::{DownloadJobPayload, TorrentJobPayload};
 use crate::services::torrent_staging::StagingEntry;
 use crate::state::AppState;
 
-fn require_torrent(state: &AppState) -> Result<(&Arc<dyn TorrentEngine>, &std::path::PathBuf), ApiError> {
-    let engine = state
-        .torrent
-        .as_ref()
-        .ok_or_else(|| ApiError::Message("EUTERPE_TORRENT_INCOMING_DIR is not configured".into()))?;
-    let dir = state
-        .config
-        .torrent_incoming_dir
-        .as_ref()
-        .ok_or_else(|| ApiError::Message("EUTERPE_TORRENT_INCOMING_DIR is not configured".into()))?;
+fn require_torrent(
+    state: &AppState,
+) -> Result<(&Arc<dyn TorrentEngine>, &std::path::PathBuf), ApiError> {
+    let engine = state.torrent.as_ref().ok_or_else(|| {
+        ApiError::Message("EUTERPE_TORRENT_INCOMING_DIR is not configured".into())
+    })?;
+    let dir = state.config.torrent_incoming_dir.as_ref().ok_or_else(|| {
+        ApiError::Message("EUTERPE_TORRENT_INCOMING_DIR is not configured".into())
+    })?;
     Ok((engine, dir))
 }
 
@@ -40,14 +39,10 @@ async fn read_torrent_upload(multipart: &mut Multipart) -> Result<Bytes, ApiErro
     let mut seen_fields: Vec<String> = Vec::new();
     let mut file_bytes: Option<Bytes> = None;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "torrent inspect: invalid multipart");
-            ApiError::bad_request(format!("invalid multipart body: {e}"))
-        })?
-    {
+    while let Some(field) = multipart.next_field().await.map_err(|e| {
+        tracing::warn!(error = %e, "torrent inspect: invalid multipart");
+        ApiError::bad_request(format!("invalid multipart body: {e}"))
+    })? {
         let name = field.name().unwrap_or("").to_string();
         seen_fields.push(name.clone());
         if !is_torrent_upload_field(Some(name.as_str())) {
@@ -83,17 +78,18 @@ async fn read_torrent_upload(multipart: &mut Multipart) -> Result<Bytes, ApiErro
     })
 }
 
-async fn write_staging_torrent(staging_dir: &std::path::Path, bytes: &[u8]) -> Result<(), ApiError> {
-    tokio::fs::create_dir_all(staging_dir)
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                path = %staging_dir.display(),
-                error = %e,
-                "torrent inspect: cannot create staging dir"
-            );
-            ApiError::Message(format!("create staging dir {}: {e}", staging_dir.display()))
-        })?;
+async fn write_staging_torrent(
+    staging_dir: &std::path::Path,
+    bytes: &[u8],
+) -> Result<(), ApiError> {
+    tokio::fs::create_dir_all(staging_dir).await.map_err(|e| {
+        tracing::warn!(
+            path = %staging_dir.display(),
+            error = %e,
+            "torrent inspect: cannot create staging dir"
+        );
+        ApiError::Message(format!("create staging dir {}: {e}", staging_dir.display()))
+    })?;
     tokio::fs::write(staging_dir.join("data.torrent"), bytes)
         .await
         .map_err(|e| {
@@ -120,10 +116,7 @@ pub async fn inspect_torrent_magnet(
         e
     })?;
     let inspect_id = uuid::Uuid::new_v4().to_string();
-    let staging_dir = incoming
-        .join(".staging")
-        .join("inspect")
-        .join(&inspect_id);
+    let staging_dir = incoming.join(".staging").join("inspect").join(&inspect_id);
     let result = engine
         .inspect_magnet(magnet, staging_dir.clone())
         .await
@@ -186,10 +179,7 @@ pub async fn inspect_torrent_file(
     })?;
     let file_bytes = read_torrent_upload(&mut multipart).await?;
     let inspect_id = uuid::Uuid::new_v4().to_string();
-    let staging_dir = incoming
-        .join(".staging")
-        .join("inspect")
-        .join(&inspect_id);
+    let staging_dir = incoming.join(".staging").join("inspect").join(&inspect_id);
     write_staging_torrent(&staging_dir, &file_bytes).await?;
 
     let result = engine

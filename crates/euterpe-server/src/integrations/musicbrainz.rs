@@ -21,7 +21,9 @@ impl MusicBrainzProvider {
     pub fn new(contact: &str) -> Result<Self, ApiError> {
         let contact = contact.trim();
         if contact.is_empty() {
-            return Err(ApiError::bad_request("MusicBrainz contact email is required"));
+            return Err(ApiError::bad_request(
+                "MusicBrainz contact email is required",
+            ));
         }
         let user_agent = format!("Euterpe/0.1 ( {contact} )");
         let client = Client::builder()
@@ -181,9 +183,7 @@ impl TagSourceProvider for MusicBrainzProvider {
         for media in rel.media.unwrap_or_default() {
             for t in media.tracks.unwrap_or_default() {
                 track_num += 1;
-                let tn = t
-                    .position
-                    .or_else(|| t.number.and_then(|n| n.parse().ok()));
+                let tn = t.position.or_else(|| t.number.and_then(|n| n.parse().ok()));
                 tracks.push(AlbumMetadataTrack {
                     title: t.title,
                     track_number: Some(tn.unwrap_or(track_num)),

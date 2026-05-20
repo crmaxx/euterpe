@@ -88,9 +88,7 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
         .read()
         .map_err(|e| ApiError::Message(format!("read tags {}: {e}", path.display())))?;
 
-    let tag = tagged
-        .primary_tag()
-        .or_else(|| tagged.tags().first());
+    let tag = tagged.primary_tag().or_else(|| tagged.tags().first());
 
     let (title, artist, album, track_number, year, disc_number, track_total, disc_total, genre) =
         if let Some(tag) = tag {
@@ -241,7 +239,10 @@ pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
         .map_err(|e| ApiError::Message(format!("read {}: {e}", path.display())))?;
 
     let tag_type = tagged.primary_tag_type();
-    let mut tag = tagged.primary_tag().cloned().unwrap_or_else(|| Tag::new(tag_type));
+    let mut tag = tagged
+        .primary_tag()
+        .cloned()
+        .unwrap_or_else(|| Tag::new(tag_type));
 
     tag.set_title(tags.title.clone());
     tag.set_artist(tags.artist.clone());
@@ -283,20 +284,20 @@ pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
     if !qobuz_comment.is_empty() {
         tag.insert_text(ItemKey::Comment, qobuz_comment);
     }
-    if let Some(label) = &tags.label {
-        if !label.is_empty() {
-            tag.insert_text(ItemKey::Label, label.clone());
-        }
+    if let Some(label) = &tags.label
+        && !label.is_empty()
+    {
+        tag.insert_text(ItemKey::Label, label.clone());
     }
-    if let Some(isrc) = &tags.isrc {
-        if !isrc.is_empty() {
-            tag.insert_text(ItemKey::Isrc, isrc.clone());
-        }
+    if let Some(isrc) = &tags.isrc
+        && !isrc.is_empty()
+    {
+        tag.insert_text(ItemKey::Isrc, isrc.clone());
     }
-    if let Some(composer) = &tags.composer {
-        if !composer.is_empty() {
-            tag.insert_text(ItemKey::Composer, composer.clone());
-        }
+    if let Some(composer) = &tags.composer
+        && !composer.is_empty()
+    {
+        tag.insert_text(ItemKey::Composer, composer.clone());
     }
 
     tagged.insert_tag(tag);
@@ -370,7 +371,11 @@ mod tests {
         assert_eq!(read.composer.as_deref(), Some("Test Composer"));
 
         let flac_path = dir.path().join("tagged.flac");
-        std::fs::write(&flac_path, include_bytes!("../../tests/fixtures/silent.flac")).unwrap();
+        std::fs::write(
+            &flac_path,
+            include_bytes!("../../tests/fixtures/silent.flac"),
+        )
+        .unwrap();
         write_tags(&flac_path, &original).unwrap();
         let flac_read = read_tags(&flac_path).unwrap();
         assert_eq!(flac_read.qobuz_track_id, Some(999));

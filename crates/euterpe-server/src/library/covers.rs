@@ -171,7 +171,10 @@ fn is_album_cover_filename(name: &str) -> bool {
 
 /// Find `cover.<ext>` or legacy `folder.jpg` under an album directory (relative to library root).
 pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Option<String> {
-    let album_rel = album_rel_dir.trim().trim_end_matches('/').replace('\\', "/");
+    let album_rel = album_rel_dir
+        .trim()
+        .trim_end_matches('/')
+        .replace('\\', "/");
     if album_rel.is_empty() {
         return None;
     }
@@ -200,9 +203,7 @@ pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Opt
         .filter(|n| is_album_cover_filename(n))
         .collect();
     names.sort();
-    names
-        .first()
-        .map(|name| format!("{album_rel}/{name}"))
+    names.first().map(|name| format!("{album_rel}/{name}"))
 }
 
 /// If `cover_path` is missing or stale, discover a file on disk and persist it on the album row.
@@ -213,10 +214,10 @@ pub async fn ensure_album_cover_path(
     album_path: Option<&str>,
     current_cover: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
-    if let Some(rel) = current_cover.map(str::trim).filter(|s| !s.is_empty()) {
-        if resolve_library_relative_file(library_root, rel).is_ok() {
-            return Ok(Some(rel.to_string()));
-        }
+    if let Some(rel) = current_cover.map(str::trim).filter(|s| !s.is_empty())
+        && resolve_library_relative_file(library_root, rel).is_ok()
+    {
+        return Ok(Some(rel.to_string()));
     }
     let Some(dir) = album_path.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(current_cover.map(str::to_string));
@@ -515,11 +516,8 @@ mod embed_tests {
     fn optimize_leaves_small_png_unchanged() {
         let img = ImageBuffer::from_fn(32, 32, |x, y| Rgb([x as u8, y as u8, 128]));
         let mut buf = Vec::new();
-        img.write_to(
-            &mut Cursor::new(&mut buf),
-            image::ImageFormat::Png,
-        )
-        .unwrap();
+        img.write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
         assert!(buf.len() <= EMBED_MAX_COVER_BYTES);
         let out = optimize_cover_for_embed(&buf);
         assert!(matches!(out, Cow::Borrowed(_)));
@@ -529,7 +527,11 @@ mod embed_tests {
     fn optimize_shrinks_oversized_jpeg() {
         // High-frequency noise compresses poorly; keeps JPEG >2 MiB at q95.
         let img = ImageBuffer::from_fn(3200, 3200, |x, y| {
-            Rgb([((x * 17 + y * 31) % 256) as u8, ((x + y * 7) % 256) as u8, ((x ^ y) % 256) as u8])
+            Rgb([
+                ((x * 17 + y * 31) % 256) as u8,
+                ((x + y * 7) % 256) as u8,
+                ((x ^ y) % 256) as u8,
+            ])
         });
         let dynamic = DynamicImage::ImageRgb8(img);
         let rgb = dynamic.to_rgb8();

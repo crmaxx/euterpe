@@ -31,9 +31,17 @@ pub struct StreamUrl {
     pub url: Option<String>,
     #[serde(rename = "format_id")]
     pub format_id: Option<u8>,
-    #[serde(rename = "sampling_rate", deserialize_with = "deserialize_opt_f64", default)]
+    #[serde(
+        rename = "sampling_rate",
+        deserialize_with = "deserialize_opt_f64",
+        default
+    )]
     pub sampling_rate: Option<f64>,
-    #[serde(rename = "bit_depth", deserialize_with = "deserialize_opt_f64", default)]
+    #[serde(
+        rename = "bit_depth",
+        deserialize_with = "deserialize_opt_f64",
+        default
+    )]
     pub bit_depth: Option<f64>,
     pub restrictions: Option<Vec<StreamRestriction>>,
 }

@@ -8,12 +8,13 @@ use crate::config::AppConfig;
 use crate::db::integrations::{self, IntegrationInsert, IntegrationRow, IntegrationUpdate};
 use crate::error::ApiError;
 use crate::integrations::catalog::{
-    catalog_entries, default_display_name, IntegrationProvider, IntegrationType,
+    IntegrationProvider, IntegrationType, catalog_entries, default_display_name,
 };
 use crate::integrations::registry::{encrypt_secrets, validate_config};
 
 pub fn row_to_item(row: &IntegrationRow) -> IntegrationListItem {
-    let config: Value = serde_json::from_str(&row.config_json).unwrap_or(Value::Object(Default::default()));
+    let config: Value =
+        serde_json::from_str(&row.config_json).unwrap_or(Value::Object(Default::default()));
     IntegrationListItem {
         id: row.id,
         integration_type: row.type_.clone(),
@@ -74,8 +75,8 @@ pub async fn create_integration(
         None
     };
 
-    let config_json = serde_json::to_string(&body.config)
-        .map_err(|e| ApiError::Message(e.to_string()))?;
+    let config_json =
+        serde_json::to_string(&body.config).map_err(|e| ApiError::Message(e.to_string()))?;
     let display_name = body
         .display_name
         .filter(|s| !s.trim().is_empty())
@@ -130,8 +131,8 @@ pub async fn patch_integration(
         config.master_key.as_ref(),
     )?;
 
-    let config_json = serde_json::to_string(&config_val)
-        .map_err(|e| ApiError::Message(e.to_string()))?;
+    let config_json =
+        serde_json::to_string(&config_val).map_err(|e| ApiError::Message(e.to_string()))?;
 
     let secrets_enc = if let Some(secrets) = secrets_patch {
         let master = config.master_key.as_ref().ok_or_else(|| {

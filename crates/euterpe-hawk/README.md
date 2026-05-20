@@ -32,7 +32,7 @@ Design ideas (batching, flush guard, scope, backtrace trim, tracing layer) are a
 
 ## Requirements
 
-- Rust **1.70+** (2021 edition)
+- Rust **1.85+** (2024 edition)
 - Tokio runtime for async flush and the background sender task
 - A valid Hawk **integration token** (base64-encoded JSON with `integrationId`)
 

@@ -3,8 +3,8 @@
 pub mod api;
 pub mod app;
 pub mod config;
-pub mod crypto;
 pub mod credentials;
+pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod integrations;

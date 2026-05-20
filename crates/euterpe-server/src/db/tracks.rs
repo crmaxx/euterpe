@@ -48,12 +48,11 @@ pub async fn get_fingerprint_by_path(
     pool: &SqlitePool,
     path: &str,
 ) -> Result<Option<(Option<String>, Option<i64>)>, ApiError> {
-    let row: Option<(Option<String>, Option<i64>)> = sqlx::query_as(
-        "SELECT file_mtime, file_size FROM tracks WHERE path = ?",
-    )
-    .bind(path)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(Option<String>, Option<i64>)> =
+        sqlx::query_as("SELECT file_mtime, file_size FROM tracks WHERE path = ?")
+            .bind(path)
+            .fetch_optional(pool)
+            .await?;
     Ok(row)
 }
 
@@ -153,9 +152,7 @@ pub async fn list_by_album(pool: &SqlitePool, album_id: i64) -> Result<Vec<Track
     .bind(album_id)
     .fetch_all(pool)
     .await?;
-    rows.sort_by(|a, b| {
-        filename_sort_key(&a.path).cmp(&filename_sort_key(&b.path))
-    });
+    rows.sort_by_key(|a| filename_sort_key(&a.path));
     Ok(rows)
 }
 

@@ -8,12 +8,12 @@ use librqbit::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::TorrentEngine;
 use crate::error::TorrentError;
 use crate::types::{
     InspectFile, InspectResult, JobHandle, JobStats, LibrqbitState, SessionSettings,
     StartJobRequest,
 };
-use crate::TorrentEngine;
 
 pub struct TorrentEngineConfig {
     pub incoming_dir: PathBuf,

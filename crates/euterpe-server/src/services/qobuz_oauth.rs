@@ -1,12 +1,12 @@
+use crate::credentials;
+use crate::db::qobuz_accounts;
+use crate::error::ApiError;
+use crate::state::AppState;
 use chrono::{Duration as ChronoDuration, Utc};
 use euterpe_qobuz::{
     authorize_url, fetch_oauth_bootstrap, login_with_oauth_code, redirect_uri_with_state,
 };
 use reqwest::Client;
-use crate::credentials;
-use crate::db::qobuz_accounts;
-use crate::error::ApiError;
-use crate::state::AppState;
 
 pub struct OAuthStart {
     pub authorize_url: String,
@@ -17,19 +17,18 @@ pub async fn oauth_start(state: &AppState) -> Result<OAuthStart, ApiError> {
     state.master_key()?;
     let http = Client::new();
     let bootstrap = fetch_oauth_bootstrap(state.config.qobuz_play_base(), &http)
-    .await
-    .map_err(ApiError::from)?;
+        .await
+        .map_err(ApiError::from)?;
 
     let oauth_state = new_oauth_state();
-    let expires = Utc::now() + ChronoDuration::from_std(state.config.oauth_state_ttl).map_err(|e| {
-        ApiError::Config(format!("invalid oauth state ttl: {e}"))
-    })?;
+    let expires = Utc::now()
+        + ChronoDuration::from_std(state.config.oauth_state_ttl)
+            .map_err(|e| ApiError::Config(format!("invalid oauth state ttl: {e}")))?;
 
     qobuz_accounts::purge_expired_oauth_states(&state.db).await?;
     qobuz_accounts::insert_oauth_state(&state.db, &oauth_state, expires).await?;
 
-    let redirect_uri =
-        redirect_uri_with_state(&state.config.oauth_callback_url(), &oauth_state);
+    let redirect_uri = redirect_uri_with_state(&state.config.oauth_callback_url(), &oauth_state);
     let url = authorize_url(&bootstrap.app_id, &redirect_uri);
 
     Ok(OAuthStart {
@@ -47,11 +46,9 @@ pub async fn oauth_callback(
 
     let state_ok = match oauth_state.filter(|s| !s.is_empty()) {
         Some(s) => qobuz_accounts::consume_oauth_state(&state.db, s).await?,
-        None => {
-            qobuz_accounts::consume_sole_pending_oauth_state(&state.db)
-                .await?
-                .is_some()
-        }
+        None => qobuz_accounts::consume_sole_pending_oauth_state(&state.db)
+            .await?
+            .is_some(),
     };
     if !state_ok {
         return Err(ApiError::bad_request(
@@ -61,8 +58,8 @@ pub async fn oauth_callback(
 
     let http = Client::new();
     let bootstrap = fetch_oauth_bootstrap(state.config.qobuz_play_base(), &http)
-    .await
-    .map_err(ApiError::from)?;
+        .await
+        .map_err(ApiError::from)?;
 
     let login = login_with_oauth_code(
         &http,

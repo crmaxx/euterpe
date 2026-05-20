@@ -26,7 +26,10 @@ pub fn safe_folder_name(name: &str) -> String {
     }
 }
 
-pub async fn unique_library_dest(library_path: &Path, base_name: &str) -> Result<PathBuf, ApiError> {
+pub async fn unique_library_dest(
+    library_path: &Path,
+    base_name: &str,
+) -> Result<PathBuf, ApiError> {
     let safe = safe_folder_name(base_name);
     let mut dest = library_path.join(&safe);
     if !dest.exists() {
@@ -38,7 +41,9 @@ pub async fn unique_library_dest(library_path: &Path, base_name: &str) -> Result
             return Ok(dest);
         }
     }
-    Err(ApiError::Message("could not allocate library folder name".into()))
+    Err(ApiError::Message(
+        "could not allocate library folder name".into(),
+    ))
 }
 
 pub async fn copy_dir_contents(src: &Path, dest: &Path) -> Result<(), ApiError> {

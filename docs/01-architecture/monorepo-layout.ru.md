@@ -34,7 +34,8 @@ resolver = "2"
 members = ["crates/euterpe-qobuz", "crates/euterpe-server"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 license = "Apache-2.0"
 ```
 

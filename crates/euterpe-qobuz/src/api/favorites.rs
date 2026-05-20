@@ -4,16 +4,14 @@ use crate::models::deser::{parse_album_ref_value, parse_id_value};
 use crate::models::{
     AlbumSummary, FavoriteType, FavoritesAlbumsResponse, FavoritesTracksResponse, TrackSummary,
 };
-use crate::pagination::{fetch_all_pages, Page, PageRequest};
-use crate::signing::{sign_favorites, FavoritesSignMode};
+use crate::pagination::{Page, PageRequest, fetch_all_pages};
+use crate::signing::{FavoritesSignMode, sign_favorites};
 
 fn favorite_item_matches_catalog(item: &serde_json::Value, catalog_id: u64) -> bool {
     if let Some(v) = item.get("qobuz_id") {
         return parse_id_value(v).ok() == Some(catalog_id);
     }
-    item.get("id")
-        .and_then(|v| parse_id_value(v).ok())
-        == Some(catalog_id)
+    item.get("id").and_then(|v| parse_id_value(v).ok()) == Some(catalog_id)
 }
 
 fn favorite_item_album_api_id(item: &serde_json::Value) -> Option<String> {
@@ -21,10 +19,10 @@ fn favorite_item_album_api_id(item: &serde_json::Value) -> Option<String> {
         if let Some(short) = parse_album_ref_value(v) {
             return Some(short);
         }
-        if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-            if s.chars().all(|c| c.is_ascii_digit()) {
-                return Some(s.to_string());
-            }
+        if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty())
+            && s.chars().all(|c| c.is_ascii_digit())
+        {
+            return Some(s.to_string());
         }
     }
     if let Some(upc) = item
@@ -245,9 +243,7 @@ impl QobuzClient {
             }
         }
 
-        let (status, body) = self
-            .get_json("favorite/getUserFavorites", &params)
-            .await?;
+        let (status, body) = self.get_json("favorite/getUserFavorites", &params).await?;
         if status == 400 {
             return Err(QobuzError::InvalidSignature);
         }
@@ -287,10 +283,8 @@ mod tests {
 
     #[test]
     fn favorite_item_does_not_match_wrong_catalog_id() {
-        let item: serde_json::Value = serde_json::from_str(
-            r#"{"id": "abc", "qobuz_id": 1, "title": "X"}"#,
-        )
-        .unwrap();
+        let item: serde_json::Value =
+            serde_json::from_str(r#"{"id": "abc", "qobuz_id": 1, "title": "X"}"#).unwrap();
         assert!(!favorite_item_matches_catalog(&item, 393908828));
     }
 
@@ -332,10 +326,8 @@ mod tests {
 
     #[test]
     fn favorite_item_matches_legacy_id_when_qobuz_id_absent() {
-        let item: serde_json::Value = serde_json::from_str(
-            r#"{"id": 42, "slug": "my-album", "title": "Test"}"#,
-        )
-        .unwrap();
+        let item: serde_json::Value =
+            serde_json::from_str(r#"{"id": 42, "slug": "my-album", "title": "Test"}"#).unwrap();
         assert!(favorite_item_matches_catalog(&item, 42));
     }
 }

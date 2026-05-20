@@ -1,21 +1,23 @@
+use axum::Json;
 use axum::body::{Body, Bytes};
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
-use axum::Json;
 use serde::Deserialize;
 
 use crate::api::{
     AlbumCoverUploadResponse, LibraryAlbumDetailResponse, LibraryAlbumListResponse,
-    LibraryScanLatestResponse, LibraryScanStartResponse, LibraryScanRunSummary,
-    LibraryAlbumTagsPatchRequest, LibraryTrackDetailResponse, LibraryTrackItem,
+    LibraryAlbumTagsPatchRequest, LibraryScanLatestResponse, LibraryScanRunSummary,
+    LibraryScanStartResponse, LibraryTrackDetailResponse, LibraryTrackItem,
     LibraryTrackTagsPatchRequest,
 };
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
 use crate::library::covers;
 use crate::library::stream;
-use crate::library::tags::{self, apply_album_patch, apply_patch, is_audio_file, AlbumTagsPatch, TrackTagsPatch};
+use crate::library::tags::{
+    self, AlbumTagsPatch, TrackTagsPatch, apply_album_patch, apply_patch, is_audio_file,
+};
 use crate::services::library_scan;
 use crate::state::AppState;
 
@@ -94,8 +96,8 @@ pub async fn list_library_albums(
     State(state): State<AppState>,
     Query(q): Query<AlbumListQuery>,
 ) -> Result<Json<LibraryAlbumListResponse>, ApiError> {
-    use crate::api::keyset::parse_limit;
     use crate::api::SortOrder;
+    use crate::api::keyset::parse_limit;
     use crate::db::albums::{AlbumsListParams, AlbumsSort};
 
     let limit = parse_limit(q.limit, 50, 500)?;
@@ -190,9 +192,7 @@ pub async fn get_library_album(
         artist_name,
         year: album.year,
         cover_path,
-        genre: album_tags_from_file
-            .as_ref()
-            .and_then(|t| t.genre.clone()),
+        genre: album_tags_from_file.as_ref().and_then(|t| t.genre.clone()),
         track_total: album_tags_from_file
             .as_ref()
             .and_then(|t| t.track_total.map(|n| n as i32)),

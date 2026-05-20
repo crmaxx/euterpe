@@ -10,7 +10,7 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use download_mock::{state_with_download_mock, DownloadMockQobuz};
+use download_mock::{DownloadMockQobuz, state_with_download_mock};
 
 /// SSE never ends; do not `collect()` the body — read frames until `job_progress` or timeout.
 async fn sse_text_until(mut body: Body, deadline: Duration) -> String {

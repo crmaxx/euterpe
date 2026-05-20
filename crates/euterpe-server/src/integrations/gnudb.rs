@@ -3,7 +3,7 @@ use reqwest::Client;
 use serde::Deserialize;
 
 use crate::error::ApiError;
-use crate::integrations::provider::{lookup_page_result, TagSourceProvider};
+use crate::integrations::provider::{TagSourceProvider, lookup_page_result};
 use crate::integrations::types::{
     AlbumLookupContext, AlbumLookupResult, AlbumMetadataRelease, AlbumMetadataTrack,
     MetadataCandidate,
@@ -111,7 +111,9 @@ impl TagSourceProvider for GnudbProvider {
         }
         let body: FreedbSearchResponse = match resp.json().await {
             Ok(b) => b,
-            Err(_) => return text_search_fallback(&self.client, &self.server_base, ctx, page).await,
+            Err(_) => {
+                return text_search_fallback(&self.client, &self.server_base, ctx, page).await;
+            }
         };
         let mut out = Vec::new();
         for (i, entry) in body.data.into_iter().enumerate() {

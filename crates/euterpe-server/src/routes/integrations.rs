@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Deserialize;
 
 use crate::api::{
@@ -10,7 +10,7 @@ use crate::api::{
 };
 use crate::error::ApiError;
 use crate::integrations::apply::{self, build_lookup_context};
-use crate::integrations::catalog::{catalog_entries, IntegrationType};
+use crate::integrations::catalog::{IntegrationType, catalog_entries};
 use crate::integrations::registry::build_tag_source;
 use crate::services::integrations as svc;
 use crate::state::AppState;
@@ -34,9 +34,9 @@ pub async fn integrations_catalog(
 ) -> Result<Json<IntegrationsCatalogResponse>, ApiError> {
     let t = match q.integration_type.as_deref() {
         None => None,
-        Some(s) => Some(
-            IntegrationType::parse(s).ok_or_else(|| ApiError::bad_request("invalid type"))?,
-        ),
+        Some(s) => {
+            Some(IntegrationType::parse(s).ok_or_else(|| ApiError::bad_request("invalid type"))?)
+        }
     };
     Ok(Json(IntegrationsCatalogResponse {
         items: catalog_entries(t),
@@ -56,7 +56,9 @@ pub async fn patch_integration(
     Path(id): Path<i64>,
     Json(body): Json<IntegrationPatchRequest>,
 ) -> Result<Json<IntegrationResponse>, ApiError> {
-    Ok(Json(svc::patch_integration(&state.config, &state.db, id, body).await?))
+    Ok(Json(
+        svc::patch_integration(&state.config, &state.db, id, body).await?,
+    ))
 }
 
 pub async fn delete_integration(
@@ -102,14 +104,9 @@ pub async fn album_metadata_apply(
     }
     let provider = build_tag_source(&row, state.config.master_key.as_ref())?;
     let release = provider.load_release(&body.candidate_id).await?;
-    let result = apply::apply_release_to_album(
-        &state.config,
-        &state.db,
-        &state.http,
-        album_id,
-        &release,
-    )
-    .await?;
+    let result =
+        apply::apply_release_to_album(&state.config, &state.db, &state.http, album_id, &release)
+            .await?;
     Ok(Json(AlbumMetadataApplyResponse {
         tracks_updated: result.tracks_updated,
         cover_applied: result.cover_applied,

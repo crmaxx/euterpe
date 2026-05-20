@@ -1,5 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::error::Error;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -7,8 +7,9 @@ use std::panic::{self, PanicHookInfo};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
+use crate::VERSION;
 use crate::backtrace::capture_backtrace;
 use crate::config::HawkConfig;
 use crate::contexts::build_base_context;
@@ -19,7 +20,6 @@ use crate::http_addons::panic_mechanism_addon;
 use crate::panic_flag::take_panic_already_reported;
 use crate::scope::{current_http_addons, current_scope_context, current_scope_user};
 use crate::sender::{HawkGuard, SenderHandle};
-use crate::VERSION;
 
 static PANIC_HAWK: OnceLock<Weak<Hawk>> = OnceLock::new();
 static ANON_USER_ID: OnceLock<String> = OnceLock::new();
@@ -99,10 +99,7 @@ impl Hawk {
             }
         };
         hawk.init();
-        let guard = HawkGuard::new(
-            hawk.inner.sender.clone(),
-            hawk.inner.config.flush_timeout,
-        );
+        let guard = HawkGuard::new(hawk.inner.sender.clone(), hawk.inner.config.flush_timeout);
         (Some(hawk), Some(guard))
     }
 
@@ -255,9 +252,7 @@ impl Hawk {
         );
 
         (self.inner.before_send)(&mut report);
-        self.inner
-            .sender
-            .send(report, opts.urgent);
+        self.inner.sender.send(report, opts.urgent);
     }
 
     fn should_send(&self, event_type: &str, title: &str) -> bool {
@@ -275,10 +270,10 @@ impl Hawk {
         let now = Instant::now();
         let mut dedup = self.inner.dedup.lock().expect("hawk dedup lock");
         dedup.retain(|_, t| now.duration_since(*t) < self.inner.config.dedup_window);
-        if let Some(prev) = dedup.get(&key) {
-            if now.duration_since(*prev) < self.inner.config.dedup_window {
-                return false;
-            }
+        if let Some(prev) = dedup.get(&key)
+            && now.duration_since(*prev) < self.inner.config.dedup_window
+        {
+            return false;
         }
         dedup.insert(key, now);
         true

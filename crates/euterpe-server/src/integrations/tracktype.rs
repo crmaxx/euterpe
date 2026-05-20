@@ -26,7 +26,10 @@ impl TrackTypeProvider {
             .unwrap_or(DEFAULT_API_BASE)
             .trim_end_matches('/')
             .to_string();
-        let api_key = api_key.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        let api_key = api_key
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
         let client = Client::builder()
             .user_agent("Euterpe/0.1")
             .build()
@@ -135,9 +138,10 @@ impl TagSourceProvider for TrackTypeProvider {
         if let Some(ref key) = self.api_key {
             req = req.header("X-Api-Key", key);
         }
-        let resp = req.send().await.map_err(|e| {
-            ApiError::Message(format!("PROVIDER_UNAVAILABLE: TrackType {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| ApiError::Message(format!("PROVIDER_UNAVAILABLE: TrackType {e}")))?;
         if !resp.status().is_success() {
             return Err(ApiError::Message(format!(
                 "TrackType release HTTP {}",
@@ -153,9 +157,7 @@ impl TagSourceProvider for TrackTypeProvider {
             .into_iter()
             .enumerate()
             .map(|(i, t)| AlbumMetadataTrack {
-                title: t
-                    .title
-                    .unwrap_or_else(|| format!("Track {}", i + 1)),
+                title: t.title.unwrap_or_else(|| format!("Track {}", i + 1)),
                 track_number: t.track_number.or(Some((i + 1) as u32)),
                 disc_number: Some(1),
                 year: d.year.map(|y| y as u32),

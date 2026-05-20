@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
+use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
 use axum::http::Request;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 
 use crate::api::{ErrorBody, ErrorResponse};
 use crate::config::AppConfig;
@@ -40,10 +40,9 @@ fn check_request_auth(request: &Request<Body>, expected: &str) -> bool {
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
+        && check_auth(h, expected)
     {
-        if check_auth(h, expected) {
-            return true;
-        }
+        return true;
     }
 
     if path_allows_query_token(request.uri().path())
@@ -82,10 +81,10 @@ fn check_auth(header: &str, expected: &str) -> bool {
     }
     if let Some(encoded) = header.strip_prefix("Basic ") {
         use base64::Engine;
-        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded) {
-            if let Ok(s) = String::from_utf8(decoded) {
-                return s == format!("admin:{expected}") || s == expected;
-            }
+        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded)
+            && let Ok(s) = String::from_utf8(decoded)
+        {
+            return s == format!("admin:{expected}") || s == expected;
         }
     }
     false

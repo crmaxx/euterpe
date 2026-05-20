@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::Json;
 use serde::Deserialize;
 
 use crate::db::download_jobs::PriorityDirection;
@@ -14,7 +14,7 @@ use crate::api::{
 use crate::db::{download_jobs, favorites};
 use crate::error::ApiError;
 use crate::services::download::{
-    format_album_display_title, quality_from_format_id, DownloadJobPayload,
+    DownloadJobPayload, format_album_display_title, quality_from_format_id,
 };
 use crate::state::AppState;
 
@@ -135,13 +135,9 @@ pub async fn create_download(
         .ok_or_else(|| ApiError::bad_request("unsupported quality (use 5, 6, 7, or 27)"))?;
 
     let resolved_api_id = if let Some(catalog_id) = body.qobuz_id.filter(|id| *id > 0) {
-        crate::services::download::resolve_album_api_id_for_state(
-            &state,
-            catalog_id,
-            None,
-        )
-        .await?
-        .unwrap_or_else(|| album_api_id.to_string())
+        crate::services::download::resolve_album_api_id_for_state(&state, catalog_id, None)
+            .await?
+            .unwrap_or_else(|| album_api_id.to_string())
     } else {
         album_api_id.to_string()
     };
@@ -215,8 +211,8 @@ pub async fn list_downloads(
     State(state): State<AppState>,
     Query(q): Query<ListDownloadsQuery>,
 ) -> Result<Json<DownloadJobListResponse>, ApiError> {
-    use crate::api::keyset::parse_limit;
     use crate::api::SortOrder;
+    use crate::api::keyset::parse_limit;
     use crate::db::download_jobs::{DownloadsListParams, DownloadsSort};
 
     let limit = parse_limit(q.limit, 100, 500)?;
@@ -316,9 +312,7 @@ pub async fn patch_download_priority(
         "up" => PriorityDirection::Up,
         "down" => PriorityDirection::Down,
         _ => {
-            return Err(ApiError::bad_request(
-                "direction must be up or down",
-            ));
+            return Err(ApiError::bad_request("direction must be up or down"));
         }
     };
 

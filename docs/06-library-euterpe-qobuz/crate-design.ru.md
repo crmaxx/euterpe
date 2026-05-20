@@ -6,7 +6,7 @@
 [package]
 name = "euterpe-qobuz"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 
 [dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "cookies", "stream"] }

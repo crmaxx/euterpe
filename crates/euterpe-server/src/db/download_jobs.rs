@@ -2,11 +2,11 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::api::keyset::{
-    decode_cursor, ensure_cursor_matches, finish_keyset_page, fingerprint_json, keyset_and_clause,
+    decode_cursor, ensure_cursor_matches, fingerprint_json, finish_keyset_page, keyset_and_clause,
 };
 use crate::api::{
-    DownloadJob, DownloadJobStatus, DownloadJobType, KeysetPage, SortKeyKind,
-    SortKeyValue, SortOrder,
+    DownloadJob, DownloadJobStatus, DownloadJobType, KeysetPage, SortKeyKind, SortKeyValue,
+    SortOrder,
 };
 use crate::error::ApiError;
 
@@ -323,12 +323,11 @@ pub async fn adjust_queue_priority(
     id: i64,
     direction: PriorityDirection,
 ) -> Result<(), ApiError> {
-    let row: Option<(String, String, i64)> = sqlx::query_as(
-        "SELECT status, job_type, queue_position FROM download_jobs WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(String, String, i64)> =
+        sqlx::query_as("SELECT status, job_type, queue_position FROM download_jobs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
 
     let Some((status, job_type, pos)) = row else {
         return Err(ApiError::Message(format!("job {id} not found")));
@@ -339,43 +338,50 @@ pub async fn adjust_queue_priority(
     }
 
     let neighbor: Option<(i64, i64)> = match direction {
-        PriorityDirection::Up => sqlx::query_as(
-            r#"
+        PriorityDirection::Up => {
+            sqlx::query_as(
+                r#"
             SELECT id, queue_position FROM download_jobs
             WHERE status = 'queued' AND job_type = ?
               AND (queue_position < ? OR (queue_position = ? AND id < ?))
             ORDER BY queue_position DESC, id DESC
             LIMIT 1
             "#,
-        )
-        .bind(&job_type)
-        .bind(pos)
-        .bind(pos)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?,
-        PriorityDirection::Down => sqlx::query_as(
-            r#"
+            )
+            .bind(&job_type)
+            .bind(pos)
+            .bind(pos)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+        }
+        PriorityDirection::Down => {
+            sqlx::query_as(
+                r#"
             SELECT id, queue_position FROM download_jobs
             WHERE status = 'queued' AND job_type = ?
               AND (queue_position > ? OR (queue_position = ? AND id > ?))
             ORDER BY queue_position ASC, id ASC
             LIMIT 1
             "#,
-        )
-        .bind(&job_type)
-        .bind(pos)
-        .bind(pos)
-        .bind(id)
-        .fetch_optional(pool)
-        .await?,
+            )
+            .bind(&job_type)
+            .bind(pos)
+            .bind(pos)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?
+        }
     };
 
     let Some((neighbor_id, neighbor_pos)) = neighbor else {
         return Ok(());
     };
 
-    let mut tx = pool.begin().await.map_err(|e| ApiError::Message(e.to_string()))?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| ApiError::Message(e.to_string()))?;
     sqlx::query("UPDATE download_jobs SET queue_position = ? WHERE id = ?")
         .bind(neighbor_pos)
         .bind(id)
@@ -388,7 +394,9 @@ pub async fn adjust_queue_priority(
         .execute(&mut *tx)
         .await
         .map_err(|e| ApiError::Message(e.to_string()))?;
-    tx.commit().await.map_err(|e| ApiError::Message(e.to_string()))?;
+    tx.commit()
+        .await
+        .map_err(|e| ApiError::Message(e.to_string()))?;
     Ok(())
 }
 
@@ -420,13 +428,8 @@ pub async fn list_keyset(
             &fingerprint,
             params.sort.key_kind(),
         )?;
-        let (clause, binds) = keyset_and_clause(
-            params.order,
-            params.sort.sort_sql(),
-            "id",
-            &primary,
-            tie,
-        );
+        let (clause, binds) =
+            keyset_and_clause(params.order, params.sort.sort_sql(), "id", &primary, tie);
         keyset_clause = clause;
         keyset_binds = binds;
     }
@@ -489,30 +492,27 @@ pub async fn claim_running(pool: &SqlitePool, id: i64) -> Result<bool, ApiError>
 }
 
 pub async fn is_cancelled(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|(s,)| s == "cancelled").unwrap_or(false))
 }
 
 pub async fn is_paused(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|(s,)| s == "paused").unwrap_or(false))
 }
 
 /// Worker should stop without marking failed/completed (cancelled or paused).
 pub async fn is_stopped(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(String,)> = sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row
         .map(|(s,)| s == "cancelled" || s == "paused")
         .unwrap_or(false))
@@ -541,12 +541,11 @@ pub async fn pause(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
 
 /// Resume a paused job at the end of its type queue.
 pub async fn resume_paused(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT job_type FROM download_jobs WHERE id = ? AND status = 'paused'",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT job_type FROM download_jobs WHERE id = ? AND status = 'paused'")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
 
     let Some((job_type_str,)) = row else {
         return Err(ApiError::bad_request("only paused jobs can be resumed"));
@@ -589,7 +588,11 @@ pub async fn resume_paused(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
     Ok(())
 }
 
-pub async fn update_progress(pool: &SqlitePool, id: i64, progress_pct: f64) -> Result<(), ApiError> {
+pub async fn update_progress(
+    pool: &SqlitePool,
+    id: i64,
+    progress_pct: f64,
+) -> Result<(), ApiError> {
     update_progress_and_speed(pool, id, progress_pct, None).await
 }
 
@@ -688,12 +691,11 @@ pub async fn delete_by_id(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> 
 
 /// Re-queue a failed job at the end of its type group (FIFO).
 pub async fn retry_failed(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT status, job_type FROM download_jobs WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT status, job_type FROM download_jobs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
 
     let Some((status, job_type_str)) = row else {
         return Err(ApiError::Message(format!("job {id} not found")));
@@ -761,7 +763,10 @@ mod tests {
 
     #[test]
     fn state_machine_legal_transitions() {
-        assert!(can_transition(DownloadJobStatus::Queued, DownloadJobStatus::Running));
+        assert!(can_transition(
+            DownloadJobStatus::Queued,
+            DownloadJobStatus::Running
+        ));
         assert!(can_transition(
             DownloadJobStatus::Running,
             DownloadJobStatus::Completed
@@ -901,49 +906,43 @@ mod tests {
             .await
             .unwrap();
 
-        let pos_a = sqlx::query_as::<_, (i64,)>(
-            "SELECT queue_position FROM download_jobs WHERE id = ?",
-        )
-        .bind(a)
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .0;
-        let pos_b = sqlx::query_as::<_, (i64,)>(
-            "SELECT queue_position FROM download_jobs WHERE id = ?",
-        )
-        .bind(b)
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .0;
+        let pos_a =
+            sqlx::query_as::<_, (i64,)>("SELECT queue_position FROM download_jobs WHERE id = ?")
+                .bind(a)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .0;
+        let pos_b =
+            sqlx::query_as::<_, (i64,)>("SELECT queue_position FROM download_jobs WHERE id = ?")
+                .bind(b)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .0;
         assert!(pos_a < pos_b);
 
         adjust_queue_priority(&pool, b, PriorityDirection::Up)
             .await
             .unwrap();
-        let pos_a2 = sqlx::query_as::<_, (i64,)>(
-            "SELECT queue_position FROM download_jobs WHERE id = ?",
-        )
-        .bind(a)
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .0;
-        let pos_b2 = sqlx::query_as::<_, (i64,)>(
-            "SELECT queue_position FROM download_jobs WHERE id = ?",
-        )
-        .bind(b)
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .0;
+        let pos_a2 =
+            sqlx::query_as::<_, (i64,)>("SELECT queue_position FROM download_jobs WHERE id = ?")
+                .bind(a)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .0;
+        let pos_b2 =
+            sqlx::query_as::<_, (i64,)>("SELECT queue_position FROM download_jobs WHERE id = ?")
+                .bind(b)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .0;
         assert_eq!(pos_a, pos_b2);
         assert_eq!(pos_b, pos_a2);
 
-        let next_album = next_queued_id(&pool, DownloadJobType::Album)
-            .await
-            .unwrap();
+        let next_album = next_queued_id(&pool, DownloadJobType::Album).await.unwrap();
         assert_eq!(next_album, Some(b));
 
         let next_torrent = next_queued_id(&pool, DownloadJobType::Torrent)
@@ -963,15 +962,9 @@ mod tests {
             display_title: None,
             torrent: None,
         };
-        let id = insert_queued(
-            &pool,
-            DownloadJobType::Album,
-            0,
-            6,
-            Some(&payload),
-        )
-        .await
-        .unwrap();
+        let id = insert_queued(&pool, DownloadJobType::Album, 0, 6, Some(&payload))
+            .await
+            .unwrap();
         claim_running(&pool, id).await.unwrap();
 
         assert!(

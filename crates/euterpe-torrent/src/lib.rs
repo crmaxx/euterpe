@@ -5,8 +5,8 @@ mod error;
 mod types;
 
 pub use engine::{LibrqbitEngine, TorrentEngineConfig};
-pub use librqbit::limits::LimitsConfig;
 pub use error::TorrentError;
+pub use librqbit::limits::LimitsConfig;
 pub use types::{
     InspectFile, InspectResult, JobHandle, JobStats, LibrqbitState, SessionSettings,
     StartJobRequest,

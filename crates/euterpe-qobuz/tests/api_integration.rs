@@ -1,6 +1,4 @@
-use euterpe_qobuz::{
-    FavoritesAlbumsResponse, QobuzClient, QobuzConfig, QobuzError, Quality,
-};
+use euterpe_qobuz::{FavoritesAlbumsResponse, QobuzClient, QobuzConfig, QobuzError, Quality};
 
 #[test]
 fn deserialize_favorites_albums_page0() {
@@ -27,7 +25,10 @@ async fn favorites_album_api_id_for_catalog_mock() {
     }"#;
     let mut server = mockito::Server::new_async().await;
     let _m = server
-        .mock("GET", mockito::Matcher::Regex(r".*/favorite/getUserFavorites.*".into()))
+        .mock(
+            "GET",
+            mockito::Matcher::Regex(r".*/favorite/getUserFavorites.*".into()),
+        )
         .with_status(200)
         .with_body(body)
         .create_async()
@@ -49,7 +50,10 @@ async fn favorites_list_mock() {
     let mut server = mockito::Server::new_async().await;
     let body = include_str!("fixtures/favorites_albums_page0.json");
     let _m = server
-        .mock("GET", mockito::Matcher::Regex(r".*/favorite/getUserFavorites.*".into()))
+        .mock(
+            "GET",
+            mockito::Matcher::Regex(r".*/favorite/getUserFavorites.*".into()),
+        )
         .with_status(200)
         .with_body(body)
         .create_async()
@@ -136,7 +140,10 @@ async fn track_stream_url_mock() {
     let mut server = mockito::Server::new_async().await;
     let body = include_str!("fixtures/get_file_url_flac.json");
     let _m = server
-        .mock("GET", mockito::Matcher::Regex(r".*/track/getFileUrl.*".into()))
+        .mock(
+            "GET",
+            mockito::Matcher::Regex(r".*/track/getFileUrl.*".into()),
+        )
         .with_status(200)
         .with_body(body)
         .create_async()
@@ -146,10 +153,7 @@ async fn track_stream_url_mock() {
     cfg.api_base = format!("{}/api.json/0.2", server.url());
     let mut client = QobuzClient::new_for_test(cfg, "123456789".into(), vec!["secret".into()]);
 
-    let stream = client
-        .track_stream_url(123, Quality::FlacCd)
-        .await
-        .unwrap();
+    let stream = client.track_stream_url(123, Quality::FlacCd).await.unwrap();
     assert_eq!(
         stream.url.as_deref(),
         Some("https://stream.qobuz.com/sample.flac")
@@ -161,7 +165,10 @@ async fn track_stream_url_restrictions() {
     let mut server = mockito::Server::new_async().await;
     let body = include_str!("fixtures/get_file_url_restricted.json");
     let _m = server
-        .mock("GET", mockito::Matcher::Regex(r".*/track/getFileUrl.*".into()))
+        .mock(
+            "GET",
+            mockito::Matcher::Regex(r".*/track/getFileUrl.*".into()),
+        )
         .with_status(200)
         .with_body(body)
         .create_async()

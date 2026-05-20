@@ -10,8 +10,8 @@ pub fn track_tags_from_qobuz(
     track: &TrackSummary,
     catalog_album_id: u64,
 ) -> TrackTags {
-    let year = year_from_release_date(album.summary.release_date_original.as_deref())
-        .map(|y| y as u32);
+    let year =
+        year_from_release_date(album.summary.release_date_original.as_deref()).map(|y| y as u32);
 
     TrackTags {
         title: track.title.clone(),
@@ -26,7 +26,11 @@ pub fn track_tags_from_qobuz(
         duration_sec: None,
         qobuz_track_id: Some(track.id),
         qobuz_album_id: Some(catalog_album_id),
-        label: album.summary.label.as_ref().and_then(|l| l.display_name().map(str::to_string)),
+        label: album
+            .summary
+            .label
+            .as_ref()
+            .and_then(|l| l.display_name().map(str::to_string)),
         isrc: track
             .isrc
             .as_ref()
@@ -67,10 +71,7 @@ fn resolve_artist(album: &AlbumDetail, track: &TrackSummary) -> String {
     "Unknown Artist".to_string()
 }
 
-fn resolve_genre(
-    track_genre: Option<&GenreRef>,
-    album_genre: Option<&GenreRef>,
-) -> Option<String> {
+fn resolve_genre(track_genre: Option<&GenreRef>, album_genre: Option<&GenreRef>) -> Option<String> {
     track_genre
         .and_then(|g| g.display_name())
         .or_else(|| album_genre.and_then(|g| g.display_name()))
@@ -79,7 +80,9 @@ fn resolve_genre(
 
 #[cfg(test)]
 mod tests {
-    use euterpe_qobuz::{AlbumDetail, AlbumSummary, AlbumTracks, ArtistRef, GenreRef, LabelRef, TrackSummary};
+    use euterpe_qobuz::{
+        AlbumDetail, AlbumSummary, AlbumTracks, ArtistRef, GenreRef, LabelRef, TrackSummary,
+    };
 
     use super::*;
 

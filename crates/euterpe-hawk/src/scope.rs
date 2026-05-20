@@ -1,12 +1,13 @@
-use std::collections::VecDeque;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::event::AffectedUser;
 use crate::http_addons::build_http_addons;
 
+#[cfg(feature = "tracing-layer")]
 const MAX_BREADCRUMBS: usize = 20;
 
 #[derive(Clone, Debug)]
@@ -27,11 +28,8 @@ pub struct HawkScope {
 }
 
 impl HawkScope {
-    pub fn new_http(
-        method: String,
-        uri: String,
-        headers: serde_json::Map<String, Value>,
-    ) -> Self {
+    #[cfg(feature = "axum")]
+    pub fn new_http(method: String, uri: String, headers: serde_json::Map<String, Value>) -> Self {
         Self {
             request_id: Uuid::new_v4().to_string(),
             method: Some(method),
@@ -80,10 +78,12 @@ thread_local! {
     static BREADCRUMBS: RefCell<VecDeque<Breadcrumb>> = const { RefCell::new(VecDeque::new()) };
 }
 
+#[cfg(feature = "axum")]
 pub fn clear_breadcrumbs() {
     BREADCRUMBS.with(|cell| cell.borrow_mut().clear());
 }
 
+#[cfg(feature = "tracing-layer")]
 pub fn add_breadcrumb(level: &str, message: String, target: String) {
     BREADCRUMBS.with(|cell| {
         let mut crumbs = cell.borrow_mut();
@@ -102,6 +102,7 @@ pub fn take_breadcrumbs() -> Vec<Breadcrumb> {
     BREADCRUMBS.with(|cell| cell.borrow_mut().drain(..).collect())
 }
 
+#[cfg(feature = "axum")]
 pub async fn with_scope<F, R>(scope: HawkScope, f: F) -> R
 where
     F: std::future::Future<Output = R>,

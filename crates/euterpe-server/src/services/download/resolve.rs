@@ -22,15 +22,15 @@ pub async fn resolve_album_api_id(
         }
     }
 
-    if let Some(meta) = favorites::album_meta(pool, catalog_id).await? {
-        if let Some(id) = meta.slug.filter(|s| !s.trim().is_empty()) {
-            let t = id.trim();
-            if t.chars().all(|c| c.is_ascii_digit()) {
-                return Ok(Some(t.to_string()));
-            }
-            if parse_album_ref(t).is_some() {
-                return Ok(Some(t.to_string()));
-            }
+    if let Some(meta) = favorites::album_meta(pool, catalog_id).await?
+        && let Some(id) = meta.slug.filter(|s| !s.trim().is_empty())
+    {
+        let t = id.trim();
+        if t.chars().all(|c| c.is_ascii_digit()) {
+            return Ok(Some(t.to_string()));
+        }
+        if parse_album_ref(t).is_some() {
+            return Ok(Some(t.to_string()));
         }
     }
 
@@ -163,8 +163,8 @@ mod tests {
         let pool = pool().await;
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
-            catalog_lookup: Some((99, "0191018548094".into())),
-        })));
+                catalog_lookup: Some((99, "0191018548094".into())),
+            })));
         let got = resolve_album_api_id(&pool, &qobuz, 99, Some("broken-slug"))
             .await
             .unwrap();
@@ -176,8 +176,8 @@ mod tests {
         let pool = pool().await;
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
-            catalog_lookup: None,
-        })));
+                catalog_lookup: None,
+            })));
         let got = resolve_album_api_id(&pool, &qobuz, 99, Some("from-request"))
             .await
             .unwrap();
@@ -192,11 +192,9 @@ mod tests {
             .unwrap();
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
-            catalog_lookup: Some((42, "0191018548094".into())),
-        })));
-        let got = resolve_album_api_id(&pool, &qobuz, 42, None)
-            .await
-            .unwrap();
+                catalog_lookup: Some((42, "0191018548094".into())),
+            })));
+        let got = resolve_album_api_id(&pool, &qobuz, 42, None).await.unwrap();
         assert_eq!(got.as_deref(), Some("0191018548094"));
     }
 
@@ -208,11 +206,9 @@ mod tests {
             .unwrap();
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
-            catalog_lookup: None,
-        })));
-        let got = resolve_album_api_id(&pool, &qobuz, 42, None)
-            .await
-            .unwrap();
+                catalog_lookup: None,
+            })));
+        let got = resolve_album_api_id(&pool, &qobuz, 42, None).await.unwrap();
         assert_eq!(got.as_deref(), Some("0819224015406"));
     }
 
@@ -221,8 +217,8 @@ mod tests {
         let pool = pool().await;
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
-            catalog_lookup: Some((393908828, "zg7pv28g4mldg".into())),
-        })));
+                catalog_lookup: Some((393908828, "zg7pv28g4mldg".into())),
+            })));
         let got = resolve_album_api_id(&pool, &qobuz, 393908828, None)
             .await
             .unwrap();

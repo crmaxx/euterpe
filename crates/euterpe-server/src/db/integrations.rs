@@ -101,7 +101,11 @@ pub async fn insert(pool: &SqlitePool, row: IntegrationInsert<'_>) -> Result<i64
     Ok(result.last_insert_rowid())
 }
 
-pub async fn update(pool: &SqlitePool, id: i64, patch: IntegrationUpdate<'_>) -> Result<(), ApiError> {
+pub async fn update(
+    pool: &SqlitePool,
+    id: i64,
+    patch: IntegrationUpdate<'_>,
+) -> Result<(), ApiError> {
     let existing = get_by_id(pool, id)
         .await?
         .ok_or_else(|| ApiError::Message("integration not found".into()))?;
@@ -156,8 +160,5 @@ pub async fn max_sort_order(pool: &SqlitePool, type_: IntegrationType) -> Result
             .bind(type_.as_str())
             .fetch_optional(pool)
             .await?;
-    Ok(row
-        .and_then(|(m,)| m)
-        .map(|n| n as i32 + 1)
-        .unwrap_or(0))
+    Ok(row.and_then(|(m,)| m).map(|n| n as i32 + 1).unwrap_or(0))
 }

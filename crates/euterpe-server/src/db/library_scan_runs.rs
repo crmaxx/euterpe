@@ -33,11 +33,10 @@ impl From<ScanRunRow> for LibraryScanRunSummary {
 }
 
 pub async fn has_running(pool: &SqlitePool) -> Result<bool, ApiError> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT id FROM library_scan_runs WHERE status = 'running' LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM library_scan_runs WHERE status = 'running' LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
     Ok(row.is_some())
 }
 
@@ -53,7 +52,10 @@ pub async fn start(pool: &SqlitePool) -> Result<i64, ApiError> {
     Ok(result.last_insert_rowid())
 }
 
-pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<LibraryScanRunSummary>, ApiError> {
+pub async fn get_by_id(
+    pool: &SqlitePool,
+    id: i64,
+) -> Result<Option<LibraryScanRunSummary>, ApiError> {
     let row: Option<ScanRunRow> = sqlx::query_as(
         r#"
         SELECT id, status, files_seen, files_processed, files_indexed, files_total, started_at, finished_at, error_message

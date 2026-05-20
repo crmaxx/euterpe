@@ -25,7 +25,7 @@ pub use catcher::{CatchOpts, Hawk};
 pub use config::HawkConfig;
 pub use event::{AffectedUser, ErrorReport, EventLevel};
 pub use sender::HawkGuard;
-pub use token::{collector_endpoint_from_token, InvalidHawkToken};
+pub use token::{InvalidHawkToken, collector_endpoint_from_token};
 
 #[cfg(feature = "tracing-layer")]
 pub use tracing_layer::HawkLayer;

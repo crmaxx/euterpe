@@ -118,9 +118,8 @@ pub async fn login_with_oauth_code(
         )));
     }
 
-    let parsed: OAuthCallbackResponse = serde_json::from_value(body.clone()).map_err(|e| {
-        QobuzError::Authentication(format!("invalid oauth/callback response: {e}"))
-    })?;
+    let parsed: OAuthCallbackResponse = serde_json::from_value(body.clone())
+        .map_err(|e| QobuzError::Authentication(format!("invalid oauth/callback response: {e}")))?;
     let token = parsed.token.filter(|t| !t.is_empty()).ok_or_else(|| {
         QobuzError::Authentication("oauth/callback response missing token".into())
     })?;

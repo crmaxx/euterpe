@@ -49,26 +49,20 @@ impl HawkConfig {
             Ok(c) => c,
             Err(_) => return None,
         };
-        if let Ok(endpoint) = env::var("HAWK_COLLECTOR_ENDPOINT") {
-            if !endpoint.is_empty() {
-                config.collector_endpoint = endpoint.trim_end_matches('/').to_string();
-            }
+        if let Ok(endpoint) = env::var("HAWK_COLLECTOR_ENDPOINT")
+            && !endpoint.is_empty()
+        {
+            config.collector_endpoint = endpoint.trim_end_matches('/').to_string();
         }
-        config.release = env::var("HAWK_RELEASE")
-            .ok()
-            .filter(|s| !s.is_empty());
-        config.environment = env::var("HAWK_ENVIRONMENT")
-            .ok()
-            .filter(|s| !s.is_empty());
+        config.release = env::var("HAWK_RELEASE").ok().filter(|s| !s.is_empty());
+        config.environment = env::var("HAWK_ENVIRONMENT").ok().filter(|s| !s.is_empty());
         config.backtrace_trim = env_bool("HAWK_BACKTRACE_TRIM", true);
         config.batch_max = env_usize("HAWK_BATCH_MAX", 1).max(1);
         config.batch_interval =
             Duration::from_millis(env_u64("HAWK_BATCH_INTERVAL_MS", 1000).max(1));
         config.sample_rate = env_f32("HAWK_SAMPLE_RATE", 1.0).clamp(0.0, 1.0);
-        config.flush_timeout =
-            Duration::from_secs(env_u64("HAWK_FLUSH_TIMEOUT_SECS", 2).max(1));
-        config.dedup_window =
-            Duration::from_secs(env_u64("HAWK_DEDUP_WINDOW_SECS", 5).max(1));
+        config.flush_timeout = Duration::from_secs(env_u64("HAWK_FLUSH_TIMEOUT_SECS", 2).max(1));
+        config.dedup_window = Duration::from_secs(env_u64("HAWK_DEDUP_WINDOW_SECS", 5).max(1));
         Some(config)
     }
 }

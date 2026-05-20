@@ -31,9 +31,7 @@ pub fn parse_album_url(input: &str) -> Result<String, AlbumUrlError> {
     }
 
     let marker = "/album/";
-    let idx = lower
-        .find(marker)
-        .ok_or(AlbumUrlError::NotAlbum)?;
+    let idx = lower.find(marker).ok_or(AlbumUrlError::NotAlbum)?;
     let rest = &s[idx + marker.len()..];
     let path = rest.split(['?', '#']).next().unwrap_or(rest);
     let segments: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
@@ -54,10 +52,7 @@ mod tests {
 
     #[test]
     fn bare_ref_and_catalog_id() {
-        assert_eq!(
-            parse_album_url("zg7pv28g4mldg").unwrap(),
-            "zg7pv28g4mldg"
-        );
+        assert_eq!(parse_album_url("zg7pv28g4mldg").unwrap(), "zg7pv28g4mldg");
         assert_eq!(parse_album_url("393908828").unwrap(), "393908828");
     }
 

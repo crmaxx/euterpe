@@ -16,6 +16,9 @@ fn decode_secrets_golden() {
     sorted.sort();
     assert_eq!(
         sorted,
-        vec!["test_secret_alpha".to_string(), "test_secret_beta".to_string()]
+        vec![
+            "test_secret_alpha".to_string(),
+            "test_secret_beta".to_string()
+        ]
     );
 }

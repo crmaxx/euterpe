@@ -1,18 +1,15 @@
 use async_trait::async_trait;
 
-use crate::error::QobuzError;
-use crate::models::{AlbumDetail, AlbumSummary, StreamUrl};
-use crate::pagination::PageRequest;
 use crate::api::streaming::Quality;
 use crate::client::QobuzClient;
+use crate::error::QobuzError;
+use crate::models::{AlbumDetail, AlbumSummary, StreamUrl};
 use crate::pagination::Page;
+use crate::pagination::PageRequest;
 
 #[async_trait]
 pub trait QobuzApi: Send + Sync {
-    async fn favorites_albums(
-        &self,
-        page: PageRequest,
-    ) -> Result<Page<AlbumSummary>, QobuzError>;
+    async fn favorites_albums(&self, page: PageRequest) -> Result<Page<AlbumSummary>, QobuzError>;
 
     async fn favorites_all_albums(&self) -> Result<Vec<AlbumSummary>, QobuzError>;
 
@@ -42,10 +39,7 @@ pub trait QobuzApi: Send + Sync {
 
 #[async_trait]
 impl QobuzApi for QobuzClient {
-    async fn favorites_albums(
-        &self,
-        page: PageRequest,
-    ) -> Result<Page<AlbumSummary>, QobuzError> {
+    async fn favorites_albums(&self, page: PageRequest) -> Result<Page<AlbumSummary>, QobuzError> {
         self.favorites_albums(page).await
     }
 

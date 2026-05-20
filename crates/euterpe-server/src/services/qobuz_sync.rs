@@ -75,8 +75,7 @@ pub async fn run(
         let removed = favorites::mark_removed_except(pool, &keep_ids).await?;
 
         let albums_total = albums.len() as i64;
-        sync_runs::finish_success(pool, run_id, albums_total, added as i64, removed as i64)
-            .await?;
+        sync_runs::finish_success(pool, run_id, albums_total, added as i64, removed as i64).await?;
 
         Ok(QobuzSyncResponse {
             run_id,
@@ -101,8 +100,8 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use euterpe_qobuz::{AlbumSummary, Page, PageRequest, QobuzApi, QobuzError, StreamUrl};
     use euterpe_qobuz::Quality;
+    use euterpe_qobuz::{AlbumSummary, Page, PageRequest, QobuzApi, QobuzError, StreamUrl};
 
     use super::*;
     use crate::db;
@@ -159,7 +158,10 @@ mod tests {
             unimplemented!()
         }
 
-        async fn album_ref(&self, _album_id: &str) -> Result<euterpe_qobuz::AlbumDetail, QobuzError> {
+        async fn album_ref(
+            &self,
+            _album_id: &str,
+        ) -> Result<euterpe_qobuz::AlbumDetail, QobuzError> {
             unimplemented!()
         }
 
@@ -171,10 +173,7 @@ mod tests {
             Ok(vec![])
         }
 
-        async fn artist_albums(
-            &self,
-            _artist_id: u64,
-        ) -> Result<Vec<AlbumSummary>, QobuzError> {
+        async fn artist_albums(&self, _artist_id: u64) -> Result<Vec<AlbumSummary>, QobuzError> {
             unimplemented!()
         }
     }
@@ -229,9 +228,10 @@ mod tests {
             genre: None,
             label: None,
         };
-        let mock: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
-            Arc::new(Mutex::new(Box::new(MockQobuz::new(vec![album]))
-                as Box<dyn QobuzApi + Send + Sync>));
+        let mock: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = Arc::new(Mutex::new(Box::new(
+            MockQobuz::new(vec![album]),
+        )
+            as Box<dyn QobuzApi + Send + Sync>));
 
         run(&pool, mock).await.unwrap();
 

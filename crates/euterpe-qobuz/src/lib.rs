@@ -14,22 +14,22 @@ mod pagination;
 pub mod signing;
 mod traits;
 
-pub use album_url::{parse_album_url, AlbumUrlError};
+pub use album_url::{AlbumUrlError, parse_album_url};
 pub use api::streaming::Quality;
 pub use client::QobuzClient;
 pub use config::{AuthConfig, DEFAULT_PLAY_BASE, DEFAULT_USER_AGENT, QobuzConfig};
 pub use error::QobuzError;
-pub use oauth::{
-    authorize_url, fetch_oauth_bootstrap, login_with_oauth_code, redirect_uri_with_state,
-    OAuthBootstrap, OAuthLoginResult,
-};
 pub use models::{
     AlbumDetail, AlbumSummary, AlbumTracks, ArtistRef, FavoriteType, FavoritesAlbumsResponse,
     GenreRef, Image, LabelRef, LoginResponse, StreamUrl, TrackSummary, UserProfile,
 };
-pub use signing::{sign_favorites, sign_track_file_url};
+pub use oauth::{
+    OAuthBootstrap, OAuthLoginResult, authorize_url, fetch_oauth_bootstrap, login_with_oauth_code,
+    redirect_uri_with_state,
+};
 pub use pagination::{Page, PageRequest};
 pub use signing::FavoritesSignMode;
+pub use signing::{sign_favorites, sign_track_file_url};
 pub use traits::QobuzApi;
 
 pub mod prelude {

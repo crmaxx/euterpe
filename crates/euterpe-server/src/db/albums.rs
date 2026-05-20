@@ -2,7 +2,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::api::keyset::{
-    decode_cursor, ensure_cursor_matches, finish_keyset_page, fingerprint_json, keyset_and_clause,
+    decode_cursor, ensure_cursor_matches, fingerprint_json, finish_keyset_page, keyset_and_clause,
 };
 use crate::api::{KeysetPage, SortKeyKind, SortKeyValue, SortOrder};
 use crate::error::ApiError;
@@ -208,27 +208,21 @@ pub async fn list_keyset(
             &fingerprint,
             params.sort.key_kind(),
         )?;
-        let (clause, binds) = keyset_and_clause(
-            params.order,
-            params.sort.sort_sql(),
-            "a.id",
-            &primary,
-            tie,
-        );
+        let (clause, binds) =
+            keyset_and_clause(params.order, params.sort.sort_sql(), "a.id", &primary, tie);
         keyset_clause = clause;
         keyset_binds = binds;
     }
 
     let mut search_clause = String::new();
     let mut search_binds: Vec<String> = Vec::new();
-    if let Some(ref q) = params.q {
-        if !q.trim().is_empty() {
-            search_clause =
-                " AND (a.title LIKE ? OR COALESCE(ar.name, '') LIKE ?)".to_string();
-            let pattern = format!("%{}%", q.trim());
-            search_binds.push(pattern.clone());
-            search_binds.push(pattern);
-        }
+    if let Some(ref q) = params.q
+        && !q.trim().is_empty()
+    {
+        search_clause = " AND (a.title LIKE ? OR COALESCE(ar.name, '') LIKE ?)".to_string();
+        let pattern = format!("%{}%", q.trim());
+        search_binds.push(pattern.clone());
+        search_binds.push(pattern);
     }
 
     let fetch_limit = (params.limit as i64) + 1;
@@ -284,14 +278,13 @@ pub struct AlbumListRow {
 }
 
 pub async fn set_cover_path(pool: &SqlitePool, id: i64, cover_path: &str) -> Result<(), ApiError> {
-    let n = sqlx::query(
-        "UPDATE albums SET cover_path = ?, updated_at = datetime('now') WHERE id = ?",
-    )
-    .bind(cover_path)
-    .bind(id)
-    .execute(pool)
-    .await?
-    .rows_affected();
+    let n =
+        sqlx::query("UPDATE albums SET cover_path = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(cover_path)
+            .bind(id)
+            .execute(pool)
+            .await?
+            .rows_affected();
     if n == 0 {
         return Err(ApiError::Message("album not found".into()));
     }
@@ -302,11 +295,10 @@ pub async fn find_id_by_qobuz_album_id(
     pool: &SqlitePool,
     qobuz_id: i64,
 ) -> Result<Option<i64>, ApiError> {
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT id FROM albums WHERE qobuz_album_id = ?")
-            .bind(qobuz_id)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM albums WHERE qobuz_album_id = ?")
+        .bind(qobuz_id)
+        .fetch_optional(pool)
+        .await?;
     Ok(row.map(|(id,)| id))
 }
 
