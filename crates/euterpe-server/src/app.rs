@@ -30,11 +30,13 @@ use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
 use crate::routes::{
-    downloads, events, integrations, library, qobuz as qobuz_routes, settings, torrent,
+    downloads, events, integrations, library, qobuz as qobuz_routes, settings, settings_ext,
+    torrent,
 };
+use crate::services::convert::{ConvertWorkerDeps, spawn_convert_worker};
 use crate::services::download::{WorkerDeps, spawn_worker};
 use crate::services::qobuz_sync;
-use crate::state::AppState;
+use crate::state::{AppChannels, AppState};
 
 pub fn app(state: AppState) -> Router {
     let hawk = state.hawk.clone();
@@ -103,6 +105,24 @@ pub fn app(state: AppState) -> Router {
             "/api/v1/settings/torrent",
             get(settings::get_torrent_settings).patch(settings::patch_torrent_settings),
         )
+        .route(
+            "/api/v1/settings/ui",
+            get(settings_ext::get_ui_settings).patch(settings_ext::patch_ui_settings),
+        )
+        .route(
+            "/api/v1/settings/converter",
+            get(settings_ext::get_converter_settings)
+                .patch(settings_ext::patch_converter_settings),
+        )
+        .route(
+            "/api/v1/settings/library-scan",
+            get(settings_ext::get_library_scan_settings)
+                .patch(settings_ext::patch_library_scan_settings),
+        )
+        .route(
+            "/api/v1/settings/downloads",
+            get(settings_ext::get_downloads_settings).patch(settings_ext::patch_downloads_settings),
+        )
         .route("/api/v1/library/scan", post(library::start_library_scan))
         .route(
             "/api/v1/library/scan/latest",
@@ -116,6 +136,18 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/library/albums/{id}",
             get(library::get_library_album).patch(library::patch_library_album_tags),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/convert",
+            post(library::post_library_album_convert),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/convert/latest",
+            get(library::get_library_album_convert_latest),
+        )
+        .route(
+            "/api/v1/library/convert/jobs/{id}",
+            get(library::get_convert_job),
         )
         .route(
             "/api/v1/library/albums/{id}/cover",
@@ -222,25 +254,32 @@ pub async fn serve(
     db::migrate(&pool).await?;
 
     let (job_tx, job_rx) = mpsc::channel(32);
+    let (convert_job_tx, convert_job_rx) = mpsc::channel(32);
     let (events, _) = broadcast::channel(64);
     let (scan_events, _) = broadcast::channel(64);
+    let (convert_events, _) = broadcast::channel(64);
 
     let bind = config.bind;
     let config = Arc::new(config);
     let state = AppState::new(
         (*config).clone(),
         pool.clone(),
-        job_tx.clone(),
-        events.clone(),
-        scan_events,
+        AppChannels {
+            job_tx: job_tx.clone(),
+            convert_job_tx: convert_job_tx.clone(),
+            events: events.clone(),
+            scan_events,
+            convert_events: convert_events.clone(),
+        },
         hawk.clone(),
     )
     .await?;
 
     let worker_deps = WorkerDeps {
-        pool,
+        pool: pool.clone(),
         qobuz: Arc::clone(&state.qobuz),
         config: Arc::clone(&state.config),
+        runtime: state.runtime.clone(),
         events,
         http: Client::builder()
             .timeout(std::time::Duration::from_secs(600))
@@ -255,7 +294,19 @@ pub async fn serve(
         job_tx: job_tx.clone(),
     };
     spawn_worker(job_rx, worker_deps);
+
+    let convert_deps = ConvertWorkerDeps {
+        pool: pool.clone(),
+        config: Arc::clone(&state.config),
+        runtime: state.runtime.clone(),
+        events: convert_events,
+        scan_events: state.scan_events.clone(),
+        job_tx: convert_job_tx.clone(),
+    };
+    spawn_convert_worker(convert_job_rx, convert_deps);
+
     let _ = job_tx.send(0).await;
+    let _ = convert_job_tx.send(0).await;
 
     let router = app(state);
 
@@ -282,6 +333,7 @@ async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoRes
     let credentials_configured = credentials::load_active(&state.config, &state.db)
         .await?
         .is_some();
+    let ui = state.runtime.read().await.ui.clone();
     Ok(Json(ServerInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
         library_path: state.config.library_path.display().to_string(),
@@ -292,6 +344,7 @@ async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoRes
             .map(|p| p.display().to_string()),
         credentials_configured,
         admin_auth_required: state.config.admin_password.is_some(),
+        ui,
     }))
 }
 
@@ -463,15 +516,21 @@ pub mod test_support {
         db::migrate(&pool).await.unwrap();
 
         let (job_tx, job_rx) = mpsc::channel(32);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(32);
         let (events, _) = broadcast::channel(16);
         let (scan_events, _) = broadcast::channel(16);
+        let (convert_events, _) = broadcast::channel(16);
 
         let state = AppState::new(
             config.clone(),
             pool.clone(),
-            job_tx,
-            events.clone(),
-            scan_events,
+            AppChannels {
+                job_tx,
+                convert_job_tx,
+                events: events.clone(),
+                scan_events,
+                convert_events,
+            },
             None,
         )
         .await
@@ -485,6 +544,7 @@ pub mod test_support {
                     pool,
                     qobuz: Arc::clone(&state.qobuz),
                     config: Arc::new(config),
+                    runtime: state.runtime.clone(),
                     events,
                     http: Client::new(),
                     torrent: None,

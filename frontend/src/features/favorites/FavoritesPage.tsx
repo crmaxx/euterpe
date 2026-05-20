@@ -29,7 +29,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { getDefaultQuality } from "@/lib/quality";
 import { usePreferences } from "@/hooks/use-preferences";
 
 const SORT_STORAGE_KEY = "euterpe.favorites.sort";
@@ -224,7 +223,7 @@ export function FavoritesPage() {
 }
 
 const FavoritesPageContent = memo(function FavoritesPageContent() {
-  const { t } = usePreferences();
+  const { t, defaultQuality } = usePreferences();
   const [sort, setSort] = useState<FavoritesSort>(loadStoredSort);
   const [order, setOrder] = useState<SortOrder>(loadStoredOrder);
   const [qInput, setQInput] = useState("");
@@ -284,7 +283,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
           job_type: "album",
           album_api_id: item.album_api_id,
           qobuz_id: item.qobuz_id,
-          quality: getDefaultQuality(),
+          quality: defaultQuality,
         });
         toast({ title: t("favorites.toast.downloadQueued"), description: item.title });
       } catch (e) {
@@ -296,7 +295,7 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
         });
       }
     },
-    [busyApi, download, toast, t],
+    [busyApi, download, toast, t, defaultQuality],
   );
 
   const handleRemoveFavorite = useCallback(

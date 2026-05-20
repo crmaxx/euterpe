@@ -149,10 +149,15 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     db::migrate(&pool).await.unwrap();
 
     let (job_tx, job_rx) = mpsc::channel(32);
+    let (convert_job_tx, _) = mpsc::channel(32);
     let (events, _) = broadcast::channel(16);
     let (scan_events, _) = broadcast::channel(16);
+    let (convert_events, _) = broadcast::channel(16);
     let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = Arc::new(Mutex::new(Box::new(mock)));
     let config = Arc::new(config);
+    let runtime = Arc::new(tokio::sync::RwLock::new(
+        euterpe_server::services::app_settings::load_runtime_settings(&pool, &config).await,
+    ));
 
     let state = AppState {
         db: pool.clone(),
@@ -160,8 +165,11 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         http: Client::new(),
         qobuz: Arc::clone(&qobuz),
         job_tx,
+        convert_job_tx,
         events: events.clone(),
         scan_events,
+        convert_events,
+        runtime,
         hawk: None,
         torrent: None,
         torrent_staging: Arc::new(euterpe_server::services::torrent_staging::TorrentStaging::new()),
@@ -176,6 +184,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
             pool,
             qobuz,
             config,
+            runtime: state.runtime.clone(),
             events,
             http: Client::new(),
             torrent: None,

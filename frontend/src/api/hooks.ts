@@ -20,7 +20,6 @@ import {
 import { ApiClientError } from "./errors";
 import type { KeysetListResponse } from "./keyset";
 import { flattenKeysetPages, useKeysetList } from "./hooks/keyset";
-import { getDefaultQuality } from "@/lib/quality";
 import {
   albumCoverCacheKey,
   fetchAlbumCoverBlobUrl,
@@ -63,6 +62,12 @@ export const queryKeys = {
   integrationsCatalog: (type?: string) =>
     ["integrationsCatalog", type ?? "all"] as const,
   torrentSettings: ["torrentSettings"] as const,
+  uiSettings: ["uiSettings"] as const,
+  converterSettings: ["converterSettings"] as const,
+  libraryScanSettings: ["libraryScanSettings"] as const,
+  downloadsSettings: ["downloadsSettings"] as const,
+  albumConvertLatest: (albumId: number) =>
+    ["albumConvertLatest", albumId] as const,
 };
 
 export function useServerInfo() {
@@ -101,6 +106,9 @@ export function useScanLatest() {
 export function useScanProgressSse() {
   const qc = useQueryClient();
   useEffect(() => {
+    if (typeof EventSource === "undefined") {
+      return;
+    }
     const source = subscribeServerEvents({
       onScanProgress: (ev) => {
         qc.setQueryData<LibraryScanLatestResponse>(queryKeys.scanLatest, (old) => {
@@ -122,6 +130,30 @@ export function useScanProgressSse() {
             },
           };
         });
+      },
+    });
+    return () => source.close();
+  }, [qc]);
+}
+
+/** Live convert job progress via SSE (`convert_progress`). */
+export function useConvertProgressSse() {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (typeof EventSource === "undefined") {
+      return;
+    }
+    const source = subscribeServerEvents({
+      onConvertProgress: (ev) => {
+        void qc.invalidateQueries({
+          queryKey: queryKeys.albumConvertLatest(ev.album_id),
+        });
+        void qc.invalidateQueries({
+          queryKey: queryKeys.libraryAlbum(ev.album_id),
+        });
+        if (ev.status === "success" || ev.status === "failed") {
+          void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+        }
       },
     });
     return () => source.close();
@@ -598,11 +630,113 @@ export function useRemoveFavorites() {
   });
 }
 
+export function useUiPreferences() {
+  return useQuery({
+    queryKey: queryKeys.uiSettings,
+    queryFn: async () => (await api.uiSettings()).settings,
+  });
+}
+
+export function usePatchUiPreferences() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchUiSettings,
+    onSuccess: (res) => {
+      qc.setQueryData(queryKeys.uiSettings, res.settings);
+      void qc.invalidateQueries({ queryKey: queryKeys.serverInfo });
+    },
+  });
+}
+
+export function useConverterSettings() {
+  return useQuery({
+    queryKey: queryKeys.converterSettings,
+    queryFn: async () => (await api.converterSettings()).settings,
+  });
+}
+
+export function usePatchConverterSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchConverterSettings,
+    onSuccess: (res) => {
+      qc.setQueryData(queryKeys.converterSettings, res.settings);
+    },
+  });
+}
+
+export function useLibraryScanSettings() {
+  return useQuery({
+    queryKey: queryKeys.libraryScanSettings,
+    queryFn: async () => (await api.libraryScanSettings()).settings,
+  });
+}
+
+export function usePatchLibraryScanSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchLibraryScanSettings,
+    onSuccess: (res) => {
+      qc.setQueryData(queryKeys.libraryScanSettings, res.settings);
+    },
+  });
+}
+
+export function useDownloadsSettings() {
+  return useQuery({
+    queryKey: queryKeys.downloadsSettings,
+    queryFn: async () => (await api.downloadsSettings()).settings,
+  });
+}
+
+export function usePatchDownloadsSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchDownloadsSettings,
+    onSuccess: (res) => {
+      qc.setQueryData(queryKeys.downloadsSettings, res.settings);
+    },
+  });
+}
+
+export function useAlbumConvertLatest(albumId: number | null) {
+  return useQuery({
+    queryKey: queryKeys.albumConvertLatest(albumId ?? 0),
+    queryFn: async () => {
+      try {
+        return (await api.albumConvertLatest(albumId!)).job;
+      } catch (e) {
+        if (e instanceof ApiClientError && e.status === 404) {
+          return null;
+        }
+        throw e;
+      }
+    },
+    enabled: albumId != null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "queued" || status === "running" ? 2_000 : false;
+    },
+  });
+}
+
+export function usePostAlbumConvert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (albumId: number) => api.postAlbumConvert(albumId),
+    onSuccess: (_res, albumId) => {
+      void qc.invalidateQueries({
+        queryKey: queryKeys.albumConvertLatest(albumId),
+      });
+    },
+  });
+}
+
 export function useCreateDownloadByUrl() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (url: string) =>
-      api.createDownloadByUrl(url, getDefaultQuality()),
+    mutationFn: ({ url, quality }: { url: string; quality: number }) =>
+      api.createDownloadByUrl(url, quality),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["downloads"] });
     },

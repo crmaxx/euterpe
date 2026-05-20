@@ -185,6 +185,37 @@ pub async fn update_metadata(
     Ok(())
 }
 
+pub async fn update_path(pool: &SqlitePool, id: i64, path: &str) -> Result<(), ApiError> {
+    let n = sqlx::query(
+        r#"
+        UPDATE tracks SET path = ?, updated_at = datetime('now') WHERE id = ?
+        "#,
+    )
+    .bind(path)
+    .bind(id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Err(ApiError::Message("track not found".into()));
+    }
+    Ok(())
+}
+
+pub fn path_extension_lower(path: &str) -> Option<String> {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+}
+
+pub async fn album_has_convertible_tracks(pool: &SqlitePool, album_id: i64) -> Result<bool, ApiError> {
+    let rows = list_by_album(pool, album_id).await?;
+    Ok(rows
+        .iter()
+        .any(|t| crate::library::tags::is_convertible_path(std::path::Path::new(&t.path))))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

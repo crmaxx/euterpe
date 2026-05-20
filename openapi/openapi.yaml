@@ -536,6 +536,158 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/v1/settings/ui:
+    get:
+      operationId: getUiSettings
+      tags: [Settings]
+      summary: UI preferences (theme, locale, default quality)
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: UI preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UiPreferencesResponse"
+    patch:
+      operationId: patchUiSettings
+      tags: [Settings]
+      summary: Update UI preferences
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UiPreferencesPatch"
+      responses:
+        "200":
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UiPreferencesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/settings/converter:
+    get:
+      operationId: getConverterSettings
+      tags: [Settings]
+      summary: Library convert settings (FLAC encode, auto-convert)
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Converter settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConverterSettingsResponse"
+    patch:
+      operationId: patchConverterSettings
+      tags: [Settings]
+      summary: Update converter settings
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConverterSettingsPatch"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConverterSettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/settings/library-scan:
+    get:
+      operationId: getLibraryScanSettings
+      tags: [Settings]
+      summary: Library scan worker settings
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Scan settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryScanSettingsResponse"
+    patch:
+      operationId: patchLibraryScanSettings
+      tags: [Settings]
+      summary: Update library scan settings
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LibraryScanSettingsPatch"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LibraryScanSettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/settings/downloads:
+    get:
+      operationId: getDownloadsSettings
+      tags: [Settings]
+      summary: Download worker concurrency
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Download settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadsSettingsResponse"
+    patch:
+      operationId: patchDownloadsSettings
+      tags: [Settings]
+      summary: Update download settings
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DownloadsSettingsPatch"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadsSettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /api/v1/downloads/purge:
     post:
       operationId: purgeFinishedDownloads
@@ -1010,6 +1162,88 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/library/albums/{id}/convert:
+    post:
+      operationId: postLibraryAlbumConvert
+      tags: [Library]
+      summary: Convert album tracks to FLAC
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "202":
+          description: Convert job queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConvertAlbumResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/library/albums/{id}/convert/latest:
+    get:
+      operationId: getLibraryAlbumConvertLatest
+      tags: [Library]
+      summary: Latest convert job for album
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Latest job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConvertJobResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/library/convert/jobs/{id}:
+    get:
+      operationId: getConvertJob
+      tags: [Library]
+      summary: Convert job status
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConvertJobResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/library/tracks/{id}/stream:
     get:
@@ -1521,6 +1755,7 @@ components:
         - library_path
         - credentials_configured
         - admin_auth_required
+        - ui
       additionalProperties: false
       properties:
         version:
@@ -1531,6 +1766,8 @@ components:
           type: boolean
         admin_auth_required:
           type: boolean
+        ui:
+          $ref: "#/components/schemas/UiPreferences"
         torrent_incoming_dir:
           type: ["string", "null"]
           description: |
@@ -1974,6 +2211,213 @@ components:
           format: int64
           minimum: 0
 
+    UiPreferences:
+      type: object
+      required: [theme, locale, default_quality]
+      additionalProperties: false
+      properties:
+        theme:
+          type: string
+          enum: [light, dark, system]
+        locale:
+          type: string
+          enum: [en, ru]
+        default_quality:
+          type: integer
+          enum: [5, 6, 7, 27]
+
+    UiPreferencesResponse:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          $ref: "#/components/schemas/UiPreferences"
+
+    UiPreferencesPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        theme:
+          type: string
+          enum: [light, dark, system]
+        locale:
+          type: string
+          enum: [en, ru]
+        default_quality:
+          type: integer
+          enum: [5, 6, 7, 27]
+
+    FlacEncodeSettings:
+      type: object
+      properties:
+        preset:
+          type: string
+          enum: [fast, balanced, best]
+        block_size:
+          type: ["integer", "null"]
+        multithread:
+          type: boolean
+
+    ConverterSettings:
+      type: object
+      properties:
+        auto_enabled:
+          type: boolean
+        file_policy:
+          type: string
+          enum: [replace_in_place, sibling_then_delete]
+        parallelism:
+          type: integer
+          minimum: 1
+          maximum: 32
+        formats:
+          type: array
+          items:
+            type: string
+        flac_encode:
+          $ref: "#/components/schemas/FlacEncodeSettings"
+
+    ConverterSettingsResponse:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          $ref: "#/components/schemas/ConverterSettings"
+
+    ConverterSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        auto_enabled:
+          type: boolean
+        file_policy:
+          type: string
+          enum: [replace_in_place, sibling_then_delete]
+        parallelism:
+          type: integer
+        formats:
+          type: array
+          items:
+            type: string
+        flac_encode:
+          type: object
+          additionalProperties: false
+          properties:
+            preset:
+              type: string
+              enum: [fast, balanced, best]
+            block_size:
+              type: ["integer", "null"]
+            multithread:
+              type: boolean
+
+    LibraryScanSettings:
+      type: object
+      properties:
+        worker_total:
+          type: integer
+        enum_workers:
+          type: integer
+        process_workers:
+          type: integer
+        seed_depth:
+          type: integer
+        index_queue_capacity:
+          type: integer
+        path_queue_capacity:
+          type: integer
+
+    LibraryScanSettingsResponse:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          $ref: "#/components/schemas/LibraryScanSettings"
+
+    LibraryScanSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        worker_total:
+          type: integer
+        enum_workers:
+          type: integer
+        process_workers:
+          type: integer
+        seed_depth:
+          type: integer
+        index_queue_capacity:
+          type: integer
+        path_queue_capacity:
+          type: integer
+
+    DownloadsSettings:
+      type: object
+      properties:
+        concurrency:
+          type: integer
+          minimum: 1
+          maximum: 32
+
+    DownloadsSettingsResponse:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          $ref: "#/components/schemas/DownloadsSettings"
+
+    DownloadsSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        concurrency:
+          type: integer
+
+    ConvertAlbumResponse:
+      type: object
+      required: [job_id]
+      properties:
+        job_id:
+          type: integer
+          format: int64
+
+    ConvertJobSummary:
+      type: object
+      required:
+        [id, album_id, status, trigger, files_total, files_done, progress_pct, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        album_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+        trigger:
+          type: string
+        files_total:
+          type: integer
+        files_done:
+          type: integer
+        progress_pct:
+          type: number
+        error_message:
+          type: ["string", "null"]
+        payload_json:
+          type: ["string", "null"]
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    ConvertJobResponse:
+      type: object
+      required: [job]
+      properties:
+        job:
+          $ref: "#/components/schemas/ConvertJobSummary"
+
     LibraryScanStartResponse:
       type: object
       required: [scan_id]
@@ -2113,7 +2557,7 @@ components:
 
     LibraryAlbumDetailResponse:
       type: object
-      required: [id, title, artist_name, tracks]
+      required: [id, title, artist_name, has_convertible_tracks, tracks]
       additionalProperties: false
       properties:
         id:
@@ -2123,6 +2567,9 @@ components:
           type: string
         artist_name:
           type: string
+        has_convertible_tracks:
+          type: boolean
+          description: True when album has WAV/ALAC/APE (etc.) tracks eligible for FLAC conversion
         year:
           type: ["integer", "null"]
         cover_path:

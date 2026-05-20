@@ -18,6 +18,7 @@ const DEFAULT_INTEGRATION_KEY = "euterpe.defaultTagIntegrationId";
 
 const ACTION_EDIT_TAGS = "edit-tags";
 const ACTION_REPAIR_FOLDER = "repair-folder";
+const ACTION_CONVERT_TO_FLAC = "convert-to-flac";
 const AUTOFILL_PREFIX = "autofill:";
 
 function autofillActionId(integrationId: number) {
@@ -51,21 +52,29 @@ function resolveSelectedId(
 
 type AlbumActionComboProps = {
   albumId: number;
+  hasConvertibleTracks: boolean;
   repairFolder?: string;
   scanRunning: boolean;
   scanPending: boolean;
+  convertRunning: boolean;
+  convertPending: boolean;
   onEditTags: () => void;
   onRepairFolder: (folder: string) => void;
+  onConvertToFlac: () => void;
   onApplied: () => void;
 };
 
 export function AlbumActionCombo({
   albumId,
+  hasConvertibleTracks,
   repairFolder,
   scanRunning,
   scanPending,
+  convertRunning,
+  convertPending,
   onEditTags,
   onRepairFolder,
+  onConvertToFlac,
   onApplied,
 }: AlbumActionComboProps) {
   const { t } = usePreferences();
@@ -95,6 +104,14 @@ export function AlbumActionCombo({
         label: t("library.editAlbumTags"),
       },
     ];
+    if (hasConvertibleTracks) {
+      list.push({
+        id: ACTION_CONVERT_TO_FLAC,
+        label: t("library.convertToFlac"),
+        disabled:
+          convertRunning || convertPending || scanRunning || scanPending,
+      });
+    }
     if (repairFolder) {
       list.push({
         id: ACTION_REPAIR_FOLDER,
@@ -109,7 +126,16 @@ export function AlbumActionCombo({
       });
     }
     return list;
-  }, [t, repairFolder, scanRunning, scanPending, enabledIntegrations]);
+  }, [
+    t,
+    hasConvertibleTracks,
+    repairFolder,
+    scanRunning,
+    scanPending,
+    convertRunning,
+    convertPending,
+    enabledIntegrations,
+  ]);
 
   const selectedId = useMemo(
     () => resolveSelectedId(options, userPick),
@@ -184,6 +210,10 @@ export function AlbumActionCombo({
       onEditTags();
       return;
     }
+    if (selectedId === ACTION_CONVERT_TO_FLAC) {
+      onConvertToFlac();
+      return;
+    }
     if (selectedId === ACTION_REPAIR_FOLDER) {
       if (repairFolder) {
         onRepairFolder(repairFolder);
@@ -210,7 +240,11 @@ export function AlbumActionCombo({
         value={selectedId}
         onValueChange={selectAction}
         onRun={runSelectedAction}
-        loading={lookup.isPending || (selectedId === ACTION_REPAIR_FOLDER && scanPending)}
+        loading={
+          lookup.isPending ||
+          (selectedId === ACTION_REPAIR_FOLDER && scanPending) ||
+          (selectedId === ACTION_CONVERT_TO_FLAC && convertPending)
+        }
         loadingLabel={t("common.loading")}
         menuAriaLabel={t("library.chooseAlbumAction")}
         runAriaLabel={t("library.runAlbumAction", { action: selectedLabel })}

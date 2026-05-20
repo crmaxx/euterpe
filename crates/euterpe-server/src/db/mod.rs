@@ -1,4 +1,5 @@
 pub mod albums;
+pub mod convert_jobs;
 pub mod artists;
 pub mod download_jobs;
 pub mod favorites;

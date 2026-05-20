@@ -4,14 +4,25 @@ use euterpe_qobuz::QobuzApi;
 use euterpe_torrent::TorrentEngine;
 use reqwest::Client;
 use sqlx::SqlitePool;
-use tokio::sync::{Mutex, broadcast, mpsc};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
-use crate::api::{JobProgressEvent, ScanProgressEvent};
+use crate::api::{ConvertProgressEvent, JobProgressEvent, ScanProgressEvent};
+use crate::services::app_settings::{self, RuntimeSettingsHandle};
 use crate::config::AppConfig;
 use crate::credentials::{self, QobuzCredentials};
 use crate::crypto::MasterKey;
 use crate::error::ApiError;
 use crate::services::torrent_staging::TorrentStaging;
+
+/// Channels created at startup and passed into [`AppState::new`].
+#[derive(Clone)]
+pub struct AppChannels {
+    pub job_tx: mpsc::Sender<i64>,
+    pub convert_job_tx: mpsc::Sender<i64>,
+    pub events: broadcast::Sender<JobProgressEvent>,
+    pub scan_events: broadcast::Sender<ScanProgressEvent>,
+    pub convert_events: broadcast::Sender<ConvertProgressEvent>,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -20,8 +31,11 @@ pub struct AppState {
     pub http: Client,
     pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     pub job_tx: mpsc::Sender<i64>,
+    pub convert_job_tx: mpsc::Sender<i64>,
     pub events: broadcast::Sender<JobProgressEvent>,
     pub scan_events: broadcast::Sender<ScanProgressEvent>,
+    pub convert_events: broadcast::Sender<ConvertProgressEvent>,
+    pub runtime: RuntimeSettingsHandle,
     pub hawk: Option<Arc<euterpe_hawk::Hawk>>,
     pub torrent: Option<Arc<dyn TorrentEngine>>,
     pub torrent_staging: Arc<TorrentStaging>,
@@ -31,12 +45,13 @@ impl AppState {
     pub async fn new(
         config: AppConfig,
         db: SqlitePool,
-        job_tx: mpsc::Sender<i64>,
-        events: broadcast::Sender<JobProgressEvent>,
-        scan_events: broadcast::Sender<ScanProgressEvent>,
+        channels: AppChannels,
         hawk: Option<Arc<euterpe_hawk::Hawk>>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
+        let runtime = Arc::new(RwLock::new(
+            app_settings::load_runtime_settings(&db, &config).await,
+        ));
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             if let Some(creds) = credentials::load_active(&config, &db).await? {
                 let client = credentials::build_client(&creds, &config).await?;
@@ -72,9 +87,12 @@ impl AppState {
             config,
             http,
             qobuz,
-            job_tx,
-            events,
-            scan_events,
+            job_tx: channels.job_tx,
+            convert_job_tx: channels.convert_job_tx,
+            events: channels.events,
+            scan_events: channels.scan_events,
+            convert_events: channels.convert_events,
+            runtime,
             hawk,
             torrent,
             torrent_staging: Arc::new(TorrentStaging::new()),

@@ -32,8 +32,94 @@ export const handlers = [
       credentials_configured: true,
       admin_auth_required: false,
       torrent_incoming_dir: "/data/torrent-incoming",
+      ui: { theme: "system", locale: "en", default_quality: 6 },
     }),
   ),
+
+  http.get("/api/v1/settings/ui", () =>
+    HttpResponse.json({
+      settings: { theme: "system", locale: "en", default_quality: 6 },
+    }),
+  ),
+
+  http.patch("/api/v1/settings/ui", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      settings: {
+        theme: (body.theme as string) ?? "system",
+        locale: (body.locale as string) ?? "en",
+        default_quality: (body.default_quality as number) ?? 6,
+      },
+    });
+  }),
+
+  http.get("/api/v1/settings/converter", () =>
+    HttpResponse.json({
+      settings: {
+        auto_enabled: false,
+        file_policy: "sibling_then_delete",
+        parallelism: 5,
+        formats: ["wav", "m4a", "ape"],
+        flac_encode: { preset: "balanced", block_size: null, multithread: false },
+      },
+    }),
+  ),
+
+  http.patch("/api/v1/settings/converter", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      settings: {
+        auto_enabled: (body.auto_enabled as boolean) ?? false,
+        file_policy:
+          (body.file_policy as string) ?? "sibling_then_delete",
+        parallelism: (body.parallelism as number) ?? 5,
+        formats: (body.formats as string[]) ?? ["wav", "m4a", "ape"],
+        flac_encode: (body.flac_encode as object) ?? {
+          preset: "balanced",
+          block_size: null,
+          multithread: false,
+        },
+      },
+    });
+  }),
+
+  http.get("/api/v1/settings/library-scan", () =>
+    HttpResponse.json({
+      settings: {
+        worker_total: 10,
+        enum_workers: 5,
+        process_workers: 5,
+        seed_depth: 0,
+        index_queue_capacity: 256,
+        path_queue_capacity: 256,
+      },
+    }),
+  ),
+
+  http.patch("/api/v1/settings/library-scan", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      settings: {
+        worker_total: (body.worker_total as number) ?? 10,
+        enum_workers: (body.enum_workers as number) ?? 5,
+        process_workers: (body.process_workers as number) ?? 5,
+        seed_depth: (body.seed_depth as number) ?? 0,
+        index_queue_capacity: 256,
+        path_queue_capacity: 256,
+      },
+    });
+  }),
+
+  http.get("/api/v1/settings/downloads", () =>
+    HttpResponse.json({ settings: { concurrency: 3 } }),
+  ),
+
+  http.patch("/api/v1/settings/downloads", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      settings: { concurrency: (body.concurrency as number) ?? 3 },
+    });
+  }),
 
   http.get("/api/v1/settings/torrent", () =>
     HttpResponse.json({
@@ -215,11 +301,20 @@ export const handlers = [
     HttpResponse.json({ cover_path: "album/cover.jpg", tracks_embedded: 2 }),
   ),
 
+  http.get("/api/v1/library/albums/:id/convert/latest", () =>
+    new HttpResponse(null, { status: 404 }),
+  ),
+
+  http.post("/api/v1/library/albums/:id/convert", () =>
+    HttpResponse.json({ job_id: 1 }, { status: 202 }),
+  ),
+
   http.get("/api/v1/library/albums/:id", ({ params }) =>
     HttpResponse.json({
       id: Number(params.id),
       title: "Local Album",
       artist_name: "Test Artist",
+      has_convertible_tracks: false,
       year: 2020,
       cover_path: null,
       genre: "Pop",
@@ -245,6 +340,7 @@ export const handlers = [
       id: Number(params.id),
       title: (body.album_title as string) ?? "Local Album",
       artist_name: (body.artist_name as string) ?? "Test Artist",
+      has_convertible_tracks: false,
       year: (body.year as number) ?? 2020,
       cover_path: null,
       genre: (body.genre as string) ?? "Pop",

@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  useAlbumConvertLatest,
   useLibraryAlbum,
   useLibraryAlbumsKeyset,
   useLibraryTrack,
   usePatchAlbumTags,
   usePatchTrackTags,
   useCancelLibraryScan,
+  usePostAlbumConvert,
   useScanLatest,
   useStartLibraryScan,
   usePrefetchLibraryAlbumCovers,
   useUploadLibraryAlbumCover,
 } from "@/api/hooks";
+import { ApiClientError } from "@/api/errors";
 import type {
   LibraryAlbumDetailResponse,
   LibraryAlbumItem,
@@ -449,12 +452,16 @@ export function LibraryPage() {
   usePrefetchLibraryAlbumCovers(albumItems);
   const isLoading = albumsQuery.isLoading;
   const { data: albumDetail } = useLibraryAlbum(selectedAlbumId);
+  const { data: convertJob } = useAlbumConvertLatest(selectedAlbumId);
+  const postConvert = usePostAlbumConvert();
   const trackQuery = useLibraryTrack(editingTrackId);
   const patchTags = usePatchTrackTags();
   const patchAlbumTags = usePatchAlbumTags();
   const uploadCover = useUploadLibraryAlbumCover();
 
   const scanRunning = scan?.run?.status === "running";
+  const convertRunning =
+    convertJob?.status === "queued" || convertJob?.status === "running";
   const showScanProgress =
     scan?.run != null &&
     (scan.run.status === "running" || scan.run.status === "cancelled");
@@ -551,6 +558,26 @@ export function LibraryPage() {
       toast({
         title: t("library.toast.cancelFailed"),
         description: e instanceof Error ? e.message : t("common.unknownError"),
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleConvertToFlac() {
+    if (selectedAlbumId == null) return;
+    try {
+      await postConvert.mutateAsync(selectedAlbumId);
+      toast({ title: t("library.toast.convertStarted") });
+    } catch (e) {
+      const message =
+        e instanceof ApiClientError && e.status === 409
+          ? t("library.toast.convertAlreadyRunning")
+          : e instanceof Error
+            ? e.message
+            : t("common.unknownError");
+      toast({
+        title: t("library.toast.convertFailed"),
+        description: message,
         variant: "destructive",
       });
     }
@@ -790,11 +817,15 @@ export function LibraryPage() {
                     </Button>
                     <AlbumActionCombo
                       albumId={albumDetail.id}
+                      hasConvertibleTracks={albumDetail.has_convertible_tracks}
                       repairFolder={repairFolder}
                       scanRunning={scanRunning}
                       scanPending={startScan.isPending}
+                      convertRunning={convertRunning}
+                      convertPending={postConvert.isPending}
                       onEditTags={openAlbumTagEditor}
                       onRepairFolder={(folder) => void handleScan(folder)}
+                      onConvertToFlac={() => void handleConvertToFlac()}
                       onApplied={handleAutofillApplied}
                     />
                   </div>

@@ -101,5 +101,14 @@ pub async fn trigger_library_scan(
     library_dest_rel: &str,
 ) -> Result<i64, ApiError> {
     let scan_root = library_scan::resolve_scan_root_query(&library_path, Some(library_dest_rel))?;
-    library_scan::start_scan(pool, library_path, scan_events, scan_cfg, scan_root).await
+    library_scan::start_scan(
+        pool,
+        library_path,
+        scan_events,
+        scan_cfg,
+        scan_root,
+        None,
+        None,
+    )
+    .await
 }

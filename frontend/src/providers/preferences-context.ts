@@ -1,5 +1,6 @@
 import { createContext } from "react";
 import type { Locale } from "@/i18n/translate";
+import type { QualityId } from "@/lib/quality";
 import type { Theme } from "@/lib/theme";
 
 export type PreferencesContextValue = {
@@ -7,6 +8,8 @@ export type PreferencesContextValue = {
   setTheme: (theme: Theme) => void;
   locale: Locale;
   setLocale: (locale: Locale) => void;
+  defaultQuality: QualityId;
+  setDefaultQuality: (quality: QualityId) => void;
   t: (key: string, params?: Record<string, string | number>) => string;
 };
 

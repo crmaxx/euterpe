@@ -34,3 +34,6 @@ wiremock = "0.6"
 default = []
 axum = ["dep:axum", "dep:http", "dep:tower", "dep:tower-http"]
 tracing-layer = ["dep:tracing-subscriber"]
+
+[lib]
+doctest = false

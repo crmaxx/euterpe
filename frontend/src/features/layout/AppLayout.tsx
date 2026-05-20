@@ -15,6 +15,7 @@ import {
   useQobuzConnection,
   useInvalidateLibraryOnDownloadComplete,
   useScanLatest,
+  useConvertProgressSse,
   useScanProgressSse,
   useServerInfo,
   useSyncLatest,
@@ -38,6 +39,7 @@ export function AppLayout() {
   const { data: sync } = useSyncLatest();
   const { data: libraryScan } = useScanLatest();
   useScanProgressSse();
+  useConvertProgressSse();
   useInvalidateLibraryOnDownloadComplete();
 
   const syncLabel = (() => {

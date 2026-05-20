@@ -36,6 +36,8 @@ pub struct ScanDeps {
     pub scan: LibraryScanConfig,
     /// Subtree only (canonical absolute path under `library_path`); `None` = full library.
     pub scan_root: Option<PathBuf>,
+    pub convert_job_tx: Option<tokio::sync::mpsc::Sender<i64>>,
+    pub runtime: Option<std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -261,6 +263,7 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
     let writer_pool = deps.pool.clone();
     let writer_counters = counters.clone();
     let writer_debug = debug;
+    let writer_scan_deps = deps.clone();
     let writer_handle = tokio::spawn(async move {
         run_db_writer(
             scan_id,
@@ -268,6 +271,7 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
             index_rx,
             &writer_counters,
             writer_debug,
+            &writer_scan_deps,
         )
         .await
     });
@@ -705,6 +709,7 @@ async fn run_db_writer(
     mut index_rx: mpsc::Receiver<ScanIndexJob>,
     counters: &ScanProgressCounters,
     debug: bool,
+    deps: &ScanDeps,
 ) -> Result<(), ApiError> {
     scan_debug!(debug, scan_id, "db writer started");
     while let Some(job) = index_rx.recv().await {
@@ -712,7 +717,7 @@ async fn run_db_writer(
             break;
         }
         let path_rel = job.path_rel.clone();
-        match persist_index(pool, job).await {
+        match persist_index(pool, job, deps).await {
             Ok(()) => {
                 let indexed = counters.files_indexed.fetch_add(1, Ordering::Relaxed) + 1;
                 scan_debug!(
@@ -748,7 +753,11 @@ async fn run_db_writer(
     Ok(())
 }
 
-async fn persist_index(pool: &SqlitePool, job: ScanIndexJob) -> Result<(), ApiError> {
+async fn persist_index(
+    pool: &SqlitePool,
+    job: ScanIndexJob,
+    deps: &ScanDeps,
+) -> Result<(), ApiError> {
     let tags = &job.tags;
     let artist_id = artists::upsert_by_name(pool, &tags.artist, None).await?;
     let year = tags.year.map(|y| y as i32);
@@ -786,6 +795,24 @@ async fn persist_index(pool: &SqlitePool, job: ScanIndexJob) -> Result<(), ApiEr
         },
     )
     .await?;
+
+    if let (Some(tx), Some(runtime)) = (&deps.convert_job_tx, &deps.runtime) {
+        let auto = runtime.read().await.converter.auto_enabled;
+        if auto && tags::is_convertible_path(std::path::Path::new(&job.path_rel)) {
+            let convertible = tracks::list_by_album(pool, album_id)
+                .await?
+                .iter()
+                .filter(|t| tags::is_convertible_path(std::path::Path::new(&t.path)))
+                .count() as i64;
+            if convertible > 0
+                && let Some(_id) =
+                    crate::db::convert_jobs::enqueue_album_if_needed(pool, album_id, convertible)
+                        .await?
+            {
+                let _ = tx.try_send(0);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -801,6 +828,8 @@ pub async fn start_scan(
     events: broadcast::Sender<ScanProgressEvent>,
     scan: LibraryScanConfig,
     scan_root: Option<PathBuf>,
+    convert_job_tx: Option<tokio::sync::mpsc::Sender<i64>>,
+    runtime: Option<std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>>,
 ) -> Result<i64, ApiError> {
     if library_scan_runs::has_running(pool).await? {
         return Err(ApiError::Message("SCAN_ALREADY_RUNNING".into()));
@@ -814,6 +843,8 @@ pub async fn start_scan(
             events,
             scan,
             scan_root,
+            convert_job_tx,
+            runtime,
         },
     );
     Ok(scan_id)
@@ -908,6 +939,8 @@ mod tests {
                 events,
                 scan: scan_cfg_1_1(),
                 scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
             },
         )
         .await;
@@ -1006,6 +1039,8 @@ mod tests {
                     debug: false,
                 },
                 scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
             },
         )
         .await;
@@ -1083,6 +1118,8 @@ mod tests {
             events: events.clone(),
             scan: scan_cfg_1_1(),
             scan_root: None,
+            convert_job_tx: None,
+            runtime: None,
         };
 
         let scan_id = library_scan_runs::start(&pool).await.unwrap();
@@ -1155,6 +1192,8 @@ mod tests {
                     debug: false,
                 },
                 scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
             },
         )
         .await;

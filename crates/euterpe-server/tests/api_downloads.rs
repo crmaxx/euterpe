@@ -19,7 +19,7 @@ use euterpe_server::db::download_jobs;
 use euterpe_server::services::download::DownloadJobPayload;
 
 use download_mock::{DownloadMockQobuz, state_with_download_mock};
-use euterpe_server::app::test_support::{test_state, test_state_without_worker};
+use euterpe_server::app::test_support::test_state_without_worker;
 use schema::{load_spec, schema_from_spec, validate_schema};
 
 #[tokio::test]

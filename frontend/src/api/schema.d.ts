@@ -324,6 +324,78 @@ export interface paths {
         patch: operations["patchTorrentSettings"];
         trace?: never;
     };
+    "/api/v1/settings/ui": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** UI preferences (theme, locale, default quality) */
+        get: operations["getUiSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update UI preferences */
+        patch: operations["patchUiSettings"];
+        trace?: never;
+    };
+    "/api/v1/settings/converter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library convert settings (FLAC encode, auto-convert) */
+        get: operations["getConverterSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update converter settings */
+        patch: operations["patchConverterSettings"];
+        trace?: never;
+    };
+    "/api/v1/settings/library-scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library scan worker settings */
+        get: operations["getLibraryScanSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update library scan settings */
+        patch: operations["patchLibraryScanSettings"];
+        trace?: never;
+    };
+    "/api/v1/settings/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download worker concurrency */
+        get: operations["getDownloadsSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update download settings */
+        patch: operations["patchDownloadsSettings"];
+        trace?: never;
+    };
     "/api/v1/downloads/purge": {
         parameters: {
             query?: never;
@@ -561,6 +633,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/albums/{id}/convert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Convert album tracks to FLAC */
+        post: operations["postLibraryAlbumConvert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{id}/convert/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest convert job for album */
+        get: operations["getLibraryAlbumConvertLatest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/convert/jobs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Convert job status */
+        get: operations["getConvertJob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/tracks/{id}/stream": {
         parameters: {
             query?: never;
@@ -766,6 +889,7 @@ export interface components {
             library_path: string;
             credentials_configured: boolean;
             admin_auth_required: boolean;
+            ui: components["schemas"]["UiPreferences"];
             /**
              * @description Absolute path for torrent staging/downloads when `EUTERPE_TORRENT_INCOMING_DIR` is set.
              *     Null when torrent API is disabled.
@@ -966,6 +1090,105 @@ export interface components {
             /** Format: int64 */
             max_upload_kib_per_sec?: number;
         };
+        UiPreferences: {
+            /** @enum {string} */
+            theme: "light" | "dark" | "system";
+            /** @enum {string} */
+            locale: "en" | "ru";
+            /** @enum {integer} */
+            default_quality: 5 | 6 | 7 | 27;
+        };
+        UiPreferencesResponse: {
+            settings: components["schemas"]["UiPreferences"];
+        };
+        UiPreferencesPatch: {
+            /** @enum {string} */
+            theme?: "light" | "dark" | "system";
+            /** @enum {string} */
+            locale?: "en" | "ru";
+            /** @enum {integer} */
+            default_quality?: 5 | 6 | 7 | 27;
+        };
+        FlacEncodeSettings: {
+            /** @enum {string} */
+            preset?: "fast" | "balanced" | "best";
+            block_size?: number | null;
+            multithread?: boolean;
+        };
+        ConverterSettings: {
+            auto_enabled?: boolean;
+            /** @enum {string} */
+            file_policy?: "replace_in_place" | "sibling_then_delete";
+            parallelism?: number;
+            formats?: string[];
+            flac_encode?: components["schemas"]["FlacEncodeSettings"];
+        };
+        ConverterSettingsResponse: {
+            settings: components["schemas"]["ConverterSettings"];
+        };
+        ConverterSettingsPatch: {
+            auto_enabled?: boolean;
+            /** @enum {string} */
+            file_policy?: "replace_in_place" | "sibling_then_delete";
+            parallelism?: number;
+            formats?: string[];
+            flac_encode?: {
+                /** @enum {string} */
+                preset?: "fast" | "balanced" | "best";
+                block_size?: number | null;
+                multithread?: boolean;
+            };
+        };
+        LibraryScanSettings: {
+            worker_total?: number;
+            enum_workers?: number;
+            process_workers?: number;
+            seed_depth?: number;
+            index_queue_capacity?: number;
+            path_queue_capacity?: number;
+        };
+        LibraryScanSettingsResponse: {
+            settings: components["schemas"]["LibraryScanSettings"];
+        };
+        LibraryScanSettingsPatch: {
+            worker_total?: number;
+            enum_workers?: number;
+            process_workers?: number;
+            seed_depth?: number;
+            index_queue_capacity?: number;
+            path_queue_capacity?: number;
+        };
+        DownloadsSettings: {
+            concurrency?: number;
+        };
+        DownloadsSettingsResponse: {
+            settings: components["schemas"]["DownloadsSettings"];
+        };
+        DownloadsSettingsPatch: {
+            concurrency?: number;
+        };
+        ConvertAlbumResponse: {
+            /** Format: int64 */
+            job_id: number;
+        };
+        ConvertJobSummary: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            album_id: number;
+            status: string;
+            trigger: string;
+            files_total: number;
+            files_done: number;
+            progress_pct: number;
+            error_message?: string | null;
+            payload_json?: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        ConvertJobResponse: {
+            job: components["schemas"]["ConvertJobSummary"];
+        };
         LibraryScanStartResponse: {
             /** Format: int64 */
             scan_id: number;
@@ -1024,6 +1247,8 @@ export interface components {
             id: number;
             title: string;
             artist_name: string;
+            /** @description True when album has WAV/ALAC/APE (etc.) tracks eligible for FLAC conversion */
+            has_convertible_tracks: boolean;
             year?: number | null;
             cover_path?: string | null;
             genre?: string | null;
@@ -1750,6 +1975,186 @@ export interface operations {
             400: components["responses"]["BadRequest"];
         };
     };
+    getUiSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description UI preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UiPreferencesResponse"];
+                };
+            };
+        };
+    };
+    patchUiSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UiPreferencesPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UiPreferencesResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getConverterSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Converter settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConverterSettingsResponse"];
+                };
+            };
+        };
+    };
+    patchConverterSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConverterSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConverterSettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getLibraryScanSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Scan settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryScanSettingsResponse"];
+                };
+            };
+        };
+    };
+    patchLibraryScanSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryScanSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryScanSettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getDownloadsSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Download settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadsSettingsResponse"];
+                };
+            };
+        };
+    };
+    patchDownloadsSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DownloadsSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadsSettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
     purgeFinishedDownloads: {
         parameters: {
             query?: never;
@@ -2140,6 +2545,77 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+        };
+    };
+    postLibraryAlbumConvert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Convert job queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConvertAlbumResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getLibraryAlbumConvertLatest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConvertJobResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getConvertJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Job status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConvertJobResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     getLibraryTrackStream: {
