@@ -79,7 +79,7 @@ EUTERPE_STATIC_DIR=frontend/dist cargo run -p euterpe-server
 
 ## Qobuz authentication (2026)
 
-Link Qobuz **in the web UI** (Settings → Connect Qobuz). The server stores an encrypted UAT in SQLite (`qobuz_accounts`); **`EUTERPE_MASTER_KEY`** is required. **`EUTERPE_QOBUZ_USER_ID` / `EUTERPE_QOBUZ_AUTH_TOKEN` env vars are no longer used** (breaking change for older Docker setups).
+Link Qobuz **in the web UI** (Settings → Connect Qobuz). The server stores an encrypted UAT in SQLite (`qobuz_accounts`); **`EUTERPE_MASTER_KEY`** is required.
 
 See [docs/05-qobuz/oauth-and-tokens.ru.md](docs/05-qobuz/oauth-and-tokens.ru.md).
 
