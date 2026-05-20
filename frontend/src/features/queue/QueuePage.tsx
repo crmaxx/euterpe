@@ -461,9 +461,9 @@ function JobRow({
           {canReorder ? (
             <>
               <Button
-                size="icon"
+                size="sm"
                 variant="outline"
-                className="size-8"
+                className="size-8 px-0"
                 disabled={priorityPending}
                 aria-label={t("queue.priorityUp")}
                 onClick={onPriorityUp}
@@ -471,9 +471,9 @@ function JobRow({
                 <ArrowUp className="size-4" aria-hidden />
               </Button>
               <Button
-                size="icon"
+                size="sm"
                 variant="outline"
-                className="size-8"
+                className="size-8 px-0"
                 disabled={priorityPending}
                 aria-label={t("queue.priorityDown")}
                 onClick={onPriorityDown}
