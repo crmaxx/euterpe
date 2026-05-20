@@ -6,6 +6,7 @@ import {
   scanProgressPercent,
   type ScanProgressSample,
 } from "@/lib/scanProgress";
+import { usePreferences } from "@/hooks/use-preferences";
 
 type Props = {
   filesSeen: number;
@@ -26,6 +27,7 @@ export function LibraryScanProgress({
   startedAt,
   compact = false,
 }: Props) {
+  const { t } = usePreferences();
   const running = status === "running";
   const discovering = running && filesTotal <= 0;
   const [samples, setSamples] = useState<ScanProgressSample[]>([]);
@@ -98,17 +100,19 @@ export function LibraryScanProgress({
       <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm">
         <span className="font-medium">
           {cancelled
-            ? "Scan cancelled"
+            ? t("scan.cancelled")
             : running
               ? discovering
-                ? "Discovering files…"
-                : "Indexing library…"
+                ? t("scan.discovering")
+                : t("scan.indexing")
               : status === "success"
-                ? "Scan complete"
-                : `Scan ${status}`}
+                ? t("scan.complete")
+                : t("scan.status", { status })}
         </span>
         {running && elapsedLabel ? (
-          <span className="text-muted-foreground tabular-nums">Elapsed {elapsedLabel}</span>
+          <span className="text-muted-foreground tabular-nums">
+            {t("scan.elapsed", { time: elapsedLabel })}
+          </span>
         ) : null}
       </div>
 
@@ -130,27 +134,27 @@ export function LibraryScanProgress({
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-4">
         <div>
           <dt className="text-muted-foreground">
-            {discovering ? "Found so far" : "Total files"}
+            {discovering ? t("scan.foundSoFar") : t("scan.totalFiles")}
           </dt>
           <dd className="font-medium tabular-nums">
             {discovering ? filesSeen : filesTotal}
           </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Indexed</dt>
+          <dt className="text-muted-foreground">{t("scan.indexed")}</dt>
           <dd className="font-medium tabular-nums">{filesIndexed}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Index queue</dt>
+          <dt className="text-muted-foreground">{t("scan.indexQueue")}</dt>
           <dd className="font-medium tabular-nums">{indexQueue}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">ETA</dt>
+          <dt className="text-muted-foreground">{t("scan.eta")}</dt>
           <dd className="font-medium tabular-nums">
             {running
               ? discovering
                 ? "—"
-                : eta ?? (filesTotal > 0 ? "calculating…" : "—")
+                : eta ?? (filesTotal > 0 ? t("scan.calculating") : "—")
               : "—"}
           </dd>
         </div>
@@ -158,7 +162,7 @@ export function LibraryScanProgress({
 
       {percent != null && running && !discovering ? (
         <p className="text-xs text-muted-foreground">
-          Bar shows indexed vs total files ({percent}% written to the database).
+          {t("scan.barHint", { pct: percent })}
         </p>
       ) : null}
     </div>

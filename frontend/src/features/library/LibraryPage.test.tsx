@@ -1,23 +1,19 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { LibraryPage } from "@/features/library/LibraryPage";
-import { ToastStateProvider } from "@/hooks/toast-provider";
+import { TestProviders } from "@/test/test-providers";
 import { server } from "@/test/msw/server";
 
 function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <ToastStateProvider>
-        <MemoryRouter>
-          <LibraryPage />
-        </MemoryRouter>
-      </ToastStateProvider>
-    </QueryClientProvider>,
+    <TestProviders>
+      <MemoryRouter>
+        <LibraryPage />
+      </MemoryRouter>
+    </TestProviders>,
   );
 }
 

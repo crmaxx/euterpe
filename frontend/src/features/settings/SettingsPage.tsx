@@ -24,21 +24,28 @@ import {
   setDefaultQuality,
   type QualityId,
 } from "@/lib/quality";
+import { usePreferences } from "@/hooks/use-preferences";
+import type { Locale } from "@/i18n/translate";
+import type { Theme } from "@/lib/theme";
 
-function qobuzUserLabel(connection: {
-  display_name?: string | null;
-  qobuz_user_id?: number | null;
-}): string {
+function qobuzUserLabel(
+  connection: {
+    display_name?: string | null;
+    qobuz_user_id?: number | null;
+  },
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string {
   if (connection.display_name?.trim()) {
     return connection.display_name.trim();
   }
   if (connection.qobuz_user_id != null) {
-    return `User #${connection.qobuz_user_id}`;
+    return t("settings.qobuz.user", { id: connection.qobuz_user_id });
   }
-  return "Qobuz account";
+  return t("settings.qobuz.account");
 }
 
 export function SettingsPage() {
+  const { t, theme, setTheme, locale, setLocale } = usePreferences();
   const { data: info } = useServerInfo();
   const { data: connection, refetch: refetchConnection } = useQobuzConnection();
   const oauthStart = useQobuzOAuthStart();
@@ -52,8 +59,8 @@ export function SettingsPage() {
     const qobuz = searchParams.get("qobuz");
     if (qobuz === "connected") {
       toast({
-        title: "Qobuz connected",
-        description: "Your account is linked. You can sync favorites and download.",
+        title: t("settings.toast.connected"),
+        description: t("settings.toast.connectedDesc"),
       });
       void refetchConnection();
       searchParams.delete("qobuz");
@@ -61,21 +68,20 @@ export function SettingsPage() {
       setSearchParams(searchParams, { replace: true });
     } else if (qobuz === "error") {
       toast({
-        title: "Qobuz connection failed",
-        description: "Try connecting again from this page.",
+        title: t("settings.toast.connectFailed"),
+        description: t("settings.toast.connectFailedDesc"),
         variant: "destructive",
       });
       searchParams.delete("qobuz");
       setSearchParams(searchParams, { replace: true });
     }
-  }, [searchParams, setSearchParams, toast, refetchConnection]);
+  }, [searchParams, setSearchParams, toast, refetchConnection, t]);
 
   const connectQobuz = async () => {
     if (!connection?.master_key_configured) {
       toast({
-        title: "Server not ready",
-        description:
-          "EUTERPE_MASTER_KEY must be set on the server before linking Qobuz.",
+        title: t("settings.toast.serverNotReady"),
+        description: t("settings.toast.serverNotReadyDesc"),
         variant: "destructive",
       });
       return;
@@ -85,8 +91,8 @@ export function SettingsPage() {
       window.location.href = authorize_url;
     } catch (e) {
       toast({
-        title: "Could not start OAuth",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("settings.toast.oauthFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -96,13 +102,13 @@ export function SettingsPage() {
     try {
       await logout.mutateAsync();
       toast({
-        title: "Signed out of Qobuz",
-        description: "You can connect another account anytime.",
+        title: t("settings.toast.signedOut"),
+        description: t("settings.toast.signedOutDesc"),
       });
     } catch (e) {
       toast({
-        title: "Could not sign out",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("settings.toast.signOutFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -118,21 +124,59 @@ export function SettingsPage() {
             className="size-5 shrink-0 text-muted-foreground"
             aria-hidden
           />
-          <h2 className="text-2xl font-semibold">Settings</h2>
+          <h2 className="text-2xl font-semibold">{t("settings.title")}</h2>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Link your Qobuz account via OAuth. Credentials stay encrypted on the
-          server.
-        </p>
+        <p className="text-sm text-muted-foreground">{t("settings.subtitle")}</p>
       </div>
 
       <section className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="font-medium">Qobuz account</h3>
+        <h3 className="font-medium">{t("settings.appearance.title")}</h3>
+        <div className="space-y-2">
+          <Label htmlFor="theme-select">{t("settings.appearance.theme")}</Label>
+          <Select
+            value={theme}
+            onValueChange={(v) => setTheme(v as Theme)}
+          >
+            <SelectTrigger id="theme-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="light">{t("settings.appearance.light")}</SelectItem>
+              <SelectItem value="dark">{t("settings.appearance.dark")}</SelectItem>
+              <SelectItem value="system">
+                {t("settings.appearance.system")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </section>
+
+      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
+        <h3 className="font-medium">{t("settings.language.title")}</h3>
+        <div className="space-y-2">
+          <Label htmlFor="locale-select">{t("settings.language.label")}</Label>
+          <Select
+            value={locale}
+            onValueChange={(v) => setLocale(v as Locale)}
+          >
+            <SelectTrigger id="locale-select">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="en">{t("settings.language.en")}</SelectItem>
+              <SelectItem value="ru">{t("settings.language.ru")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </section>
+
+      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
+        <h3 className="font-medium">{t("settings.qobuz.title")}</h3>
         {connected && connection ? (
           <div className="space-y-3">
             <div className="space-y-1">
               <p className="text-sm font-medium text-foreground">
-                {qobuzUserLabel(connection)}
+                {qobuzUserLabel(connection, t)}
               </p>
               {connection.membership_label && (
                 <p className="text-sm text-muted-foreground">
@@ -147,7 +191,7 @@ export function SettingsPage() {
                 disabled={oauthStart.isPending}
                 onClick={() => void connectQobuz()}
               >
-                Switch account
+                {t("settings.qobuz.switchAccount")}
               </Button>
               <Button
                 type="button"
@@ -156,19 +200,21 @@ export function SettingsPage() {
                 onClick={() => void logOutQobuz()}
               >
                 <LogOut className="size-4" aria-hidden />
-                Log out
+                {t("settings.qobuz.logOut")}
               </Button>
             </div>
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">Not signed in</p>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.qobuz.notSignedIn")}
+            </p>
             <Button
               type="button"
               disabled={oauthStart.isPending}
               onClick={() => void connectQobuz()}
             >
-              Connect Qobuz
+              {t("settings.qobuz.connect")}
             </Button>
           </div>
         )}
@@ -177,9 +223,9 @@ export function SettingsPage() {
       <IntegrationsSection />
 
       <section className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="font-medium">Downloads</h3>
+        <h3 className="font-medium">{t("settings.downloads.title")}</h3>
         <div className="space-y-2">
-          <Label>Default quality</Label>
+          <Label>{t("settings.downloads.defaultQuality")}</Label>
           <Select
             value={String(quality)}
             onValueChange={(v) => {
@@ -201,7 +247,7 @@ export function SettingsPage() {
           </Select>
         </div>
         <div className="space-y-1 text-sm">
-          <Label>Library path (read-only)</Label>
+          <Label>{t("settings.downloads.libraryPath")}</Label>
           <p className="rounded-md border border-border bg-background px-3 py-2 font-mono text-xs">
             {info?.library_path ?? "…"}
           </p>

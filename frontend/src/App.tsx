@@ -12,6 +12,8 @@ import { SettingsPage } from "@/features/settings/SettingsPage";
 import { ToastStateProvider } from "@/hooks/toast-provider";
 import { ADMIN_UNAUTHORIZED_EVENT, getAdminToken } from "@/lib/auth";
 import { syncHawkUser } from "@/lib/hawk";
+import { usePreferences } from "@/hooks/use-preferences";
+import { PreferencesProvider } from "@/providers/preferences-provider";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,6 +22,7 @@ const queryClient = new QueryClient({
 });
 
 function AppRoutes() {
+  const { t } = usePreferences();
   const [authed, setAuthed] = useState(() => !!getAdminToken());
   const { data: info, isLoading } = useServerInfo();
 
@@ -37,7 +40,7 @@ function AppRoutes() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-        Loading…
+        {t("common.loading")}
       </div>
     );
   }
@@ -62,10 +65,12 @@ function AppRoutes() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ToastStateProvider>
-        <AppRoutes />
-        <Toaster />
-      </ToastStateProvider>
+      <PreferencesProvider>
+        <ToastStateProvider>
+          <AppRoutes />
+          <Toaster />
+        </ToastStateProvider>
+      </PreferencesProvider>
     </QueryClientProvider>
   );
 }

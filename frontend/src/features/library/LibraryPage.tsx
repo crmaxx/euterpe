@@ -26,9 +26,10 @@ import { TagAutofillBar } from "@/features/library/TagAutofillBar";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
-import { Folder, ScanSearch } from "lucide-react";
+import { Folder, Pencil, ScanSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
+import { usePreferences } from "@/hooks/use-preferences";
 
 function albumFolderFromTracks(
   tracks: { path: string }[],
@@ -67,6 +68,7 @@ function TrackTagsEditorForm({
   patchTags: ReturnType<typeof usePatchTrackTags>;
   toast: ReturnType<typeof useToast>["toast"];
 }) {
+  const { t } = usePreferences();
   const [tagForm, setTagForm] = useState<LibraryTrackTagsPatchRequest>(() =>
     trackToTagForm(track),
   );
@@ -74,16 +76,16 @@ function TrackTagsEditorForm({
   const handleSave = useCallback(async () => {
     try {
       await patchTags.mutateAsync({ id: trackId, body: tagForm });
-      toast({ title: "Tags saved" });
+      toast({ title: t("library.toast.tagsSaved") });
       onClose();
     } catch (e) {
       toast({
-        title: "Save failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("library.toast.saveFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
-  }, [trackId, tagForm, patchTags, onClose, toast]);
+  }, [trackId, tagForm, patchTags, onClose, toast, t]);
 
   useEffect(() => {
     onSaveReady(() => void handleSave());
@@ -92,9 +94,9 @@ function TrackTagsEditorForm({
 
   return (
     <>
-      <h3 className="font-medium">Edit track tags</h3>
+      <h3 className="font-medium">{t("library.editTrackTags")}</h3>
       <div className="space-y-2">
-        <Label htmlFor="tag-title">Title</Label>
+        <Label htmlFor="tag-title">{t("library.tagsForm.title")}</Label>
         <Input
           id="tag-title"
           value={tagForm.title ?? ""}
@@ -102,7 +104,7 @@ function TrackTagsEditorForm({
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="tag-artist">Artist</Label>
+        <Label htmlFor="tag-artist">{t("library.tagsForm.artist")}</Label>
         <Input
           id="tag-artist"
           value={tagForm.artist_name ?? ""}
@@ -112,7 +114,7 @@ function TrackTagsEditorForm({
         />
       </div>
       <div className="space-y-2">
-        <Label htmlFor="tag-album">Album</Label>
+        <Label htmlFor="tag-album">{t("library.tagsForm.album")}</Label>
         <Input
           id="tag-album"
           value={tagForm.album_title ?? ""}
@@ -123,7 +125,7 @@ function TrackTagsEditorForm({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
-          <Label htmlFor="tag-track">Track #</Label>
+          <Label htmlFor="tag-track">{t("library.tagsForm.track")}</Label>
           <Input
             id="tag-track"
             type="number"
@@ -139,7 +141,7 @@ function TrackTagsEditorForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="tag-disc">Disc #</Label>
+          <Label htmlFor="tag-disc">{t("library.tagsForm.disc")}</Label>
           <Input
             id="tag-disc"
             type="number"
@@ -157,7 +159,7 @@ function TrackTagsEditorForm({
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
-          <Label htmlFor="tag-year">Year</Label>
+          <Label htmlFor="tag-year">{t("library.tagsForm.year")}</Label>
           <Input
             id="tag-year"
             type="number"
@@ -172,7 +174,7 @@ function TrackTagsEditorForm({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="tag-genre">Genre</Label>
+          <Label htmlFor="tag-genre">{t("library.tagsForm.genre")}</Label>
           <Input
             id="tag-genre"
             value={tagForm.genre ?? ""}
@@ -183,14 +185,14 @@ function TrackTagsEditorForm({
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        Clear genre field and save to remove genre from the file.
+        {t("library.tagsForm.genreHint")}
       </p>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </Button>
         <Button type="button" disabled={patchTags.isPending} onClick={() => void handleSave()}>
-          Save
+          {t("common.save")}
         </Button>
       </div>
     </>
@@ -201,6 +203,7 @@ const COVER_ACCEPT =
   "image/jpeg,image/png,image/webp,image/bmp";
 
 export function LibraryPage() {
+  const { t } = usePreferences();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
@@ -211,8 +214,8 @@ export function LibraryPage() {
   const coverInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const t = window.setTimeout(() => setQ(searchInput.trim()), 300);
-    return () => window.clearTimeout(t);
+    const timerId = window.setTimeout(() => setQ(searchInput.trim()), 300);
+    return () => window.clearTimeout(timerId);
   }, [searchInput]);
 
   const listParams = useMemo(
@@ -248,8 +251,8 @@ export function LibraryPage() {
     if (!file || selectedAlbumId == null) return;
     if (file.size > MAX_ALBUM_COVER_BYTES) {
       toast({
-        title: "File too large",
-        description: "Cover image must be 20 MiB or smaller.",
+        title: t("library.toast.fileTooLarge"),
+        description: t("library.toast.fileTooLargeDesc"),
         variant: "destructive",
       });
       return;
@@ -260,17 +263,17 @@ export function LibraryPage() {
         file,
       });
       toast({
-        title: "Cover updated",
+        title: t("library.toast.coverUpdated"),
         description:
           result.tracks_embedded > 0
-            ? `Embedded in ${result.tracks_embedded} track(s).`
+            ? t("library.toast.coverEmbedded", { count: result.tracks_embedded })
             : undefined,
       });
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Unknown error";
+        err instanceof Error ? err.message : t("common.unknownError");
       toast({
-        title: "Cover upload failed",
+        title: t("library.toast.coverFailed"),
         description: message,
         variant: "destructive",
       });
@@ -281,12 +284,12 @@ export function LibraryPage() {
     try {
       await startScan.mutateAsync(root);
       toast({
-        title: root ? "Folder repair started" : "Index rebuild started",
+        title: root ? t("library.toast.repairStarted") : t("library.toast.rebuildStarted"),
       });
     } catch (e) {
       toast({
-        title: "Scan failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("library.toast.scanFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -297,11 +300,11 @@ export function LibraryPage() {
     if (id == null) return;
     try {
       await cancelScan.mutateAsync(id);
-      toast({ title: "Scan cancelled" });
+      toast({ title: t("library.toast.scanCancelled") });
     } catch (e) {
       toast({
-        title: "Cancel failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("library.toast.cancelFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -342,13 +345,9 @@ export function LibraryPage() {
               className="size-5 shrink-0 text-muted-foreground"
               aria-hidden
             />
-            <h2 className="text-2xl font-semibold">Library</h2>
+            <h2 className="text-2xl font-semibold">{t("library.title")}</h2>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Qobuz downloads are indexed automatically. Use{" "}
-            <strong className="font-medium text-foreground">Rebuild index</strong> for
-            files added on disk manually, or repair a folder from the album view.
-          </p>
+          <p className="text-sm text-muted-foreground">{t("library.subtitle")}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {scanRunning ? (
@@ -358,7 +357,7 @@ export function LibraryPage() {
               disabled={cancelScan.isPending}
               onClick={() => void handleCancelScan()}
             >
-              {cancelScan.isPending ? "Cancelling…" : "Cancel scan"}
+              {cancelScan.isPending ? t("library.cancelling") : t("library.cancelScan")}
             </Button>
           ) : null}
           <Button
@@ -368,7 +367,7 @@ export function LibraryPage() {
             onClick={() => void handleScan()}
           >
             <ScanSearch className="size-4" aria-hidden />
-            {scanRunning ? "Scanning…" : "Rebuild index"}
+            {scanRunning ? t("library.scanning") : t("library.rebuild")}
           </Button>
         </div>
       </div>
@@ -385,23 +384,23 @@ export function LibraryPage() {
       ) : null}
 
       <div className="max-w-sm">
-        <Label htmlFor="library-search">Search</Label>
+        <Label htmlFor="library-search">{t("library.search")}</Label>
         <Input
           id="library-search"
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="Title or artist"
+          placeholder={t("library.searchPlaceholder")}
         />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-lg border border-border">
           <div className="border-b border-border px-4 py-2 text-sm font-medium">
-            Albums ({albumItems.length}
+            {t("library.albums")} ({albumItems.length}
             {albumsQuery.hasNextPage ? "+" : ""})
           </div>
           {isLoading ? (
-            <p className="p-4 text-sm text-muted-foreground">Loading…</p>
+            <p className="p-4 text-sm text-muted-foreground">{t("common.loading")}</p>
           ) : (
             <ul className="divide-y divide-border">
               {albumItems.map((a) => (
@@ -421,7 +420,7 @@ export function LibraryPage() {
                       <span className="mt-0.5 block text-sm text-muted-foreground">
                         {a.artist_name}
                         {a.year != null ? ` · ${a.year}` : ""} · {a.track_count}{" "}
-                        tracks
+                        {t("library.tracksCount")}
                       </span>
                     </div>
                   </button>
@@ -437,7 +436,9 @@ export function LibraryPage() {
                 disabled={albumsQuery.isFetchingNextPage}
                 onClick={() => void albumsQuery.fetchNextPage()}
               >
-                {albumsQuery.isFetchingNextPage ? "Loading…" : "Load more"}
+                {albumsQuery.isFetchingNextPage
+                  ? t("common.loading")
+                  : t("common.loadMore")}
               </Button>
             </div>
           ) : null}
@@ -447,12 +448,12 @@ export function LibraryPage() {
           <div className="border-b border-border px-4 py-3">
             {!albumDetail ? (
               <div className="text-sm font-medium">
-                {selectedAlbumId ? "Loading…" : "Select an album"}
+                {selectedAlbumId ? t("common.loading") : t("library.selectAlbum")}
               </div>
             ) : (
               <div className="flex items-start gap-4">
                 <label
-                  title="Replace cover"
+                  title={t("library.replaceCover")}
                   className={cn(
                     "relative block shrink-0 cursor-pointer rounded-md transition hover:opacity-90",
                     "focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background",
@@ -496,7 +497,7 @@ export function LibraryPage() {
                         disabled={scanRunning || startScan.isPending}
                         onClick={() => void handleScan(repairFolder)}
                       >
-                        Repair folder
+                        {t("library.repairFolder")}
                       </Button>
                     ) : null}
                     <TagAutofillBar
@@ -510,34 +511,36 @@ export function LibraryPage() {
           </div>
           {!selectedAlbumId ? (
             <p className="p-4 text-sm text-muted-foreground">
-              Choose an album to view tracks and edit tags.
+              {t("library.chooseAlbum")}
             </p>
           ) : !albumDetail ? (
-            <p className="p-4 text-sm text-muted-foreground">Loading…</p>
+            <p className="p-4 text-sm text-muted-foreground">{t("common.loading")}</p>
           ) : (
             <ul className="divide-y divide-border">
-              {albumDetail.tracks.map((t) => (
+              {albumDetail.tracks.map((track) => (
                 <li
-                  key={t.id}
+                  key={track.id}
                   className="flex items-center justify-between gap-2 px-4 py-2"
                 >
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{t.title}</p>
+                    <p className="truncate font-medium">{track.title}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {t.disc_number != null ? `D${t.disc_number} · ` : ""}
-                      {t.track_number != null ? `#${t.track_number} · ` : ""}
-                      {t.year != null ? `${t.year} · ` : ""}
-                      {t.genre ? `${t.genre} · ` : ""}
-                      {t.path}
+                      {track.disc_number != null ? `D${track.disc_number} · ` : ""}
+                      {track.track_number != null ? `#${track.track_number} · ` : ""}
+                      {track.year != null ? `${track.year} · ` : ""}
+                      {track.genre ? `${track.genre} · ` : ""}
+                      {track.path}
                     </p>
                   </div>
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
-                    onClick={() => openTagEditor(t.id)}
+                    className="size-8 shrink-0 p-0"
+                    aria-label={t("library.editTags")}
+                    onClick={() => openTagEditor(track.id)}
                   >
-                    Edit tags
+                    <Pencil className="size-4" aria-hidden />
                   </Button>
                 </li>
               ))}
@@ -556,11 +559,11 @@ export function LibraryPage() {
       >
         {editingTrackId == null ? null : trackQuery.isLoading ? (
           <>
-            <h3 className="font-medium">Edit track tags</h3>
-            <p className="text-sm text-muted-foreground">Loading track…</p>
+            <h3 className="font-medium">{t("library.editTrackTags")}</h3>
+            <p className="text-sm text-muted-foreground">{t("library.loadingTrack")}</p>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="secondary" onClick={closeTagEditor}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </>
@@ -576,11 +579,11 @@ export function LibraryPage() {
           />
         ) : (
           <>
-            <h3 className="font-medium">Edit track tags</h3>
-            <p className="text-sm text-destructive">Could not load track.</p>
+            <h3 className="font-medium">{t("library.editTrackTags")}</h3>
+            <p className="text-sm text-destructive">{t("library.trackLoadFailed")}</p>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="secondary" onClick={closeTagEditor}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </>

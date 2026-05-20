@@ -1,3 +1,4 @@
+import { Power, Settings2, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type {
   IntegrationCatalogEntry,
@@ -15,10 +16,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Modal } from "@/components/modal";
 import { useToast } from "@/hooks/use-toast";
-
-const TYPE_LABEL: Record<string, string> = {
-  tag_source: "Tag source",
-};
+import { cn } from "@/lib/utils";
+import { usePreferences } from "@/hooks/use-preferences";
 
 function IntegrationFormFields({
   entry,
@@ -84,6 +83,7 @@ function buildPayload(
 }
 
 export function IntegrationsSection() {
+  const { t } = usePreferences();
   const { toast } = useToast();
   const { data: list } = useIntegrations();
   const { data: catalog } = useIntegrationsCatalog();
@@ -128,15 +128,15 @@ export function IntegrationsSection() {
         config: c,
         secrets: Object.keys(s).length > 0 ? s : undefined,
       });
-      toast({ title: "Integration added" });
+      toast({ title: t("integrations.toast.added") });
       setAddOpen(false);
       setAddProvider(null);
       setConfig({});
       setSecrets({});
     } catch (e) {
       toast({
-        title: "Could not add integration",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("integrations.toast.addFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -155,12 +155,12 @@ export function IntegrationsSection() {
           ...(Object.keys(s).length > 0 ? { secrets: s } : {}),
         },
       });
-      toast({ title: "Integration updated" });
+      toast({ title: t("integrations.toast.updated") });
       setEditItem(null);
     } catch (e) {
       toast({
-        title: "Update failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("integrations.toast.updateFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -174,24 +174,24 @@ export function IntegrationsSection() {
       });
     } catch (e) {
       toast({
-        title: "Update failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("integrations.toast.updateFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
   }
 
   async function handleDelete(item: IntegrationListItem) {
-    if (!window.confirm(`Remove ${item.display_name}?`)) {
+    if (!window.confirm(t("integrations.removeConfirm", { name: item.display_name }))) {
       return;
     }
     try {
       await deleteIntegration.mutateAsync(item.id);
-      toast({ title: "Integration removed" });
+      toast({ title: t("integrations.toast.removed") });
     } catch (e) {
       toast({
-        title: "Delete failed",
-        description: e instanceof Error ? e.message : "Unknown error",
+        title: t("integrations.toast.deleteFailed"),
+        description: e instanceof Error ? e.message : t("common.unknownError"),
         variant: "destructive",
       });
     }
@@ -217,10 +217,8 @@ export function IntegrationsSection() {
     <section className="space-y-4 rounded-lg border border-border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="font-medium">Integrations</h3>
-          <p className="text-sm text-muted-foreground">
-            Tag sources for autofill in the library.
-          </p>
+          <h3 className="font-medium">{t("integrations.title")}</h3>
+          <p className="text-sm text-muted-foreground">{t("integrations.subtitle")}</p>
         </div>
         <Button
           type="button"
@@ -233,7 +231,7 @@ export function IntegrationsSection() {
             setSecrets({});
           }}
         >
-          Add integration
+          {t("integrations.add")}
         </Button>
       </div>
 
@@ -241,11 +239,11 @@ export function IntegrationsSection() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-muted-foreground">
-              <th className="pb-2 pr-4 font-medium">Name</th>
-              <th className="pb-2 pr-4 font-medium">Type</th>
-              <th className="pb-2 pr-4 font-medium">Provider</th>
-              <th className="pb-2 pr-4 font-medium">Status</th>
-              <th className="pb-2 font-medium">Actions</th>
+              <th className="pb-2 pr-4 font-medium">{t("integrations.name")}</th>
+              <th className="pb-2 pr-4 font-medium">{t("integrations.type")}</th>
+              <th className="pb-2 pr-4 font-medium">{t("integrations.provider")}</th>
+              <th className="pb-2 pr-4 font-medium">{t("integrations.status")}</th>
+              <th className="pb-2 font-medium">{t("integrations.actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -253,37 +251,55 @@ export function IntegrationsSection() {
               <tr key={item.id} className="border-b border-border/60">
                 <td className="py-2 pr-4">{item.display_name}</td>
                 <td className="py-2 pr-4">
-                  {TYPE_LABEL[item.integration_type] ?? item.integration_type}
+                  {item.integration_type === "tag_source"
+                    ? t("integrations.tagSource")
+                    : item.integration_type}
                 </td>
                 <td className="py-2 pr-4">{item.provider}</td>
                 <td className="py-2 pr-4">
-                  {item.enabled ? "Enabled" : "Disabled"}
+                  {item.enabled ? t("integrations.enabled") : t("integrations.disabled")}
                 </td>
                 <td className="py-2">
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex items-center gap-1">
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
+                      className="size-8 shrink-0 p-0"
+                      aria-label={t("integrations.configure")}
                       onClick={() => openEdit(item)}
                     >
-                      Configure
+                      <Settings2 className="size-4" aria-hidden />
                     </Button>
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
+                      className="size-8 shrink-0 p-0"
+                      aria-label={
+                        item.enabled
+                          ? t("integrations.disable")
+                          : t("integrations.enable")
+                      }
                       onClick={() => void toggleEnabled(item)}
                     >
-                      {item.enabled ? "Disable" : "Enable"}
+                      <Power
+                        className={cn(
+                          "size-4",
+                          item.enabled ? "text-foreground" : "text-muted-foreground",
+                        )}
+                        aria-hidden
+                      />
                     </Button>
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
+                      className="size-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                      aria-label={t("common.delete")}
                       onClick={() => void handleDelete(item)}
                     >
-                      Delete
+                      <Trash2 className="size-4" aria-hidden />
                     </Button>
                   </div>
                 </td>
@@ -292,7 +308,7 @@ export function IntegrationsSection() {
             {(list?.items ?? []).length === 0 && (
               <tr>
                 <td colSpan={5} className="py-4 text-muted-foreground">
-                  No integrations configured.
+                  {t("integrations.empty")}
                 </td>
               </tr>
             )}
@@ -301,9 +317,9 @@ export function IntegrationsSection() {
       </div>
 
       <Modal open={addOpen} onClose={() => setAddOpen(false)}>
-        <h3 className="font-medium">Add integration</h3>
+        <h3 className="font-medium">{t("integrations.addTitle")}</h3>
         <div className="space-y-2">
-          <Label>Provider</Label>
+          <Label>{t("integrations.provider")}</Label>
           <select
             className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
             value={addProvider ?? ""}
@@ -331,20 +347,22 @@ export function IntegrationsSection() {
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={() => setAddOpen(false)}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
             disabled={!addEntry || createIntegration.isPending}
             onClick={() => void handleCreate()}
           >
-            Add
+            {t("common.add")}
           </Button>
         </div>
       </Modal>
 
       <Modal open={editItem != null} onClose={() => setEditItem(null)}>
-        <h3 className="font-medium">Configure {editItem?.display_name}</h3>
+        <h3 className="font-medium">
+          {t("integrations.configureTitle", { name: editItem?.display_name ?? "" })}
+        </h3>
         {editEntry && (
           <IntegrationFormFields
             entry={editEntry}
@@ -355,18 +373,18 @@ export function IntegrationsSection() {
           />
         )}
         <p className="text-xs text-muted-foreground">
-          Leave secret fields empty to keep existing values.
+          {t("integrations.secretsHint")}
         </p>
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={() => setEditItem(null)}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
             disabled={patchIntegration.isPending}
             onClick={() => void handlePatch()}
           >
-            Save
+            {t("common.save")}
           </Button>
         </div>
       </Modal>

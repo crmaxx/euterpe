@@ -12,12 +12,14 @@ import { ListMusic, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { formatQualityLabel } from "@/lib/quality";
+import { usePreferences } from "@/hooks/use-preferences";
 
 function isTerminalStatus(status: DownloadJob["status"]) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 export function QueuePage() {
+  const { t } = usePreferences();
   const { data, isLoading } = useDownloads();
   const { items: favoriteItems } = useFavoritesFlat({ limit: 100 });
   const cancel = useCancelDownload();
@@ -47,9 +49,7 @@ export function QueuePage() {
 
   const handleClearHistory = () => {
     if (
-      !window.confirm(
-        "Remove all completed, failed, and cancelled jobs from the list? Active downloads will be kept.",
-      )
+      !window.confirm(t("queue.clearConfirm"))
     ) {
       return;
     }
@@ -64,7 +64,7 @@ export function QueuePage() {
             className="size-5 shrink-0 text-muted-foreground"
             aria-hidden
           />
-          <h2 className="text-2xl font-semibold">Download queue</h2>
+          <h2 className="text-2xl font-semibold">{t("queue.title")}</h2>
         </div>
         {hasTerminalJobs ? (
           <Button
@@ -74,26 +74,30 @@ export function QueuePage() {
             onClick={handleClearHistory}
           >
             <Trash2 className="size-4" aria-hidden />
-            Clear history
+            {t("queue.clearHistory")}
           </Button>
         ) : null}
       </div>
       {isLoading ? (
-        <p className="text-muted-foreground">Loading…</p>
+        <p className="text-muted-foreground">{t("common.loading")}</p>
       ) : jobs.length === 0 ? (
-        <p className="text-muted-foreground">No jobs.</p>
+        <p className="text-muted-foreground">{t("queue.noJobs")}</p>
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => (
             <JobRow
               key={job.id}
               job={job}
-              title={titleByQobuzId.get(job.qobuz_id) ?? `Album #${job.qobuz_id}`}
+              title={
+                titleByQobuzId.get(job.qobuz_id) ??
+                t("queue.album", { id: job.qobuz_id })
+              }
               liveProgress={progress[job.id]}
               onCancel={() => void cancel.mutateAsync(job.id)}
               onDelete={() => void purgeOne.mutateAsync(job.id)}
               cancelPending={cancel.isPending}
               deletePending={purgeOne.isPending}
+              t={t}
             />
           ))}
         </div>
@@ -110,6 +114,7 @@ function JobRow({
   onDelete,
   cancelPending,
   deletePending,
+  t,
 }: {
   job: DownloadJob;
   title: string;
@@ -118,6 +123,7 @@ function JobRow({
   onDelete: () => void;
   cancelPending: boolean;
   deletePending: boolean;
+  t: (key: string, params?: Record<string, string | number>) => string;
 }) {
   const pct = liveProgress ?? job.progress_pct;
   const canCancel = job.status === "queued" || job.status === "running";
@@ -140,7 +146,7 @@ function JobRow({
               disabled={cancelPending}
               onClick={onCancel}
             >
-              Cancel
+              {t("queue.cancel")}
             </Button>
           ) : null}
           {canDelete ? (
@@ -150,12 +156,12 @@ function JobRow({
               disabled={deletePending}
               onClick={onDelete}
             >
-              Delete
+              {t("common.delete")}
             </Button>
           ) : null}
         </div>
       </div>
-      <Progress value={pct} aria-label={`Progress ${pct}%`} />
+      <Progress value={pct} aria-label={t("queue.progress", { pct })} />
       <p className="mt-1 text-xs text-muted-foreground">{pct.toFixed(0)}%</p>
       {job.error_message ? (
         <p className="mt-2 text-xs text-destructive">{job.error_message}</p>

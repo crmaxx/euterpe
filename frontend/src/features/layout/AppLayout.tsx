@@ -20,15 +20,17 @@ import {
 } from "@/api/hooks";
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
 import { cn } from "@/lib/utils";
+import { usePreferences } from "@/hooks/use-preferences";
 
-const nav: { to: string; label: string; icon: LucideIcon }[] = [
-  { to: "/favorites", label: "Favorites", icon: Heart },
-  { to: "/queue", label: "Queue", icon: ListMusic },
-  { to: "/library", label: "Library", icon: Folder },
-  { to: "/settings", label: "Settings", icon: Settings },
+const nav: { to: string; labelKey: string; icon: LucideIcon }[] = [
+  { to: "/favorites", labelKey: "nav.favorites", icon: Heart },
+  { to: "/queue", labelKey: "nav.queue", icon: ListMusic },
+  { to: "/library", labelKey: "nav.library", icon: Folder },
+  { to: "/settings", labelKey: "nav.settings", icon: Settings },
 ];
 
 export function AppLayout() {
+  const { t } = usePreferences();
   const { data: info } = useServerInfo();
   const { data: qobuz } = useQobuzConnection();
   const { data: sync } = useSyncLatest();
@@ -38,12 +40,12 @@ export function AppLayout() {
 
   const syncLabel = (() => {
     const run = sync?.run;
-    if (!run) return "No sync yet";
-    if (run.status === "running") return "Sync running…";
+    if (!run) return t("layout.syncNone");
+    if (run.status === "running") return t("layout.syncRunning");
     if (run.finished_at) {
-      return `Last sync: ${run.finished_at} (${run.status})`;
+      return t("layout.syncLast", { time: run.finished_at, status: run.status });
     }
-    return `Sync ${run.status}`;
+    return t("layout.syncStatus", { status: run.status });
   })();
 
   return (
@@ -76,7 +78,7 @@ export function AppLayout() {
               }
             >
               <item.icon className="size-4 shrink-0 opacity-80" aria-hidden />
-              {item.label}
+              {t(item.labelKey)}
             </NavLink>
           ))}
         </nav>
@@ -89,7 +91,7 @@ export function AppLayout() {
             {libraryScan?.run && (
               <>
                 {" · "}
-                Library scan: {libraryScan.run.status}
+                {t("layout.libraryScan", { status: libraryScan.run.status })}
                 {libraryScan.run.status === "running" ? (
                   <>
                     {" "}
@@ -112,8 +114,8 @@ export function AppLayout() {
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs",
               qobuz?.connected
-                ? "bg-emerald-950 text-emerald-300"
-                : "bg-amber-950 text-amber-300",
+                ? "border border-emerald-500/25 bg-emerald-500/10 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                : "border border-amber-500/25 bg-amber-500/10 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300",
             )}
           >
             {qobuz?.connected ? (
@@ -123,9 +125,9 @@ export function AppLayout() {
             )}
             {qobuz?.connected
               ? qobuz.display_name
-                ? `Qobuz: ${qobuz.display_name}`
-                : "Qobuz connected"
-              : "Qobuz not signed in"}
+                ? t("layout.qobuzConnectedAs", { name: qobuz.display_name })
+                : t("layout.qobuzConnected")
+              : t("layout.qobuzNotSignedIn")}
           </span>
         </header>
         <main className="flex-1 p-6">

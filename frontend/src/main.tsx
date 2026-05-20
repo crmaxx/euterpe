@@ -5,7 +5,9 @@ import App from "./App.tsx";
 import { HawkErrorBoundary } from "@/components/HawkErrorBoundary";
 import { initHawk } from "@/lib/hawk";
 import "./index.css";
+import { initTheme } from "@/lib/theme";
 
+initTheme();
 initHawk();
 
 createRoot(document.getElementById("root")!).render(
