@@ -1,6 +1,6 @@
 use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Nonce};
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 
 use crate::error::ApiError;
 
@@ -12,11 +12,11 @@ pub struct MasterKey([u8; 32]);
 impl MasterKey {
     pub fn parse(s: &str) -> Result<Self, ApiError> {
         let bytes = if s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-            hex::decode(s).map_err(|e| ApiError::Config(format!("invalid EUTERPE_MASTER_KEY hex: {e}")))?
+            hex::decode(s)
+                .map_err(|e| ApiError::Config(format!("invalid EUTERPE_MASTER_KEY hex: {e}")))?
         } else {
-            B64.decode(s).map_err(|e| {
-                ApiError::Config(format!("invalid EUTERPE_MASTER_KEY base64: {e}"))
-            })?
+            B64.decode(s)
+                .map_err(|e| ApiError::Config(format!("invalid EUTERPE_MASTER_KEY base64: {e}")))?
         };
         if bytes.len() != 32 {
             return Err(ApiError::Config(

@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use euterpe_qobuz::{
     AlbumDetail, AlbumSummary, Page, PageRequest, QobuzApi, QobuzError, Quality, StreamUrl,
 };
-use euterpe_server::app::test_support::test_state;
 use euterpe_server::AppState;
+use euterpe_server::app::test_support::test_state;
 use tokio::sync::Mutex;
 
 #[path = "qobuz_account.rs"]
@@ -52,10 +52,7 @@ impl MockQobuz {
 
 #[async_trait]
 impl QobuzApi for MockQobuz {
-    async fn favorites_albums(
-        &self,
-        _page: PageRequest,
-    ) -> Result<Page<AlbumSummary>, QobuzError> {
+    async fn favorites_albums(&self, _page: PageRequest) -> Result<Page<AlbumSummary>, QobuzError> {
         unimplemented!()
     }
 
@@ -94,13 +91,19 @@ impl QobuzApi for MockQobuz {
     }
 
     async fn album_ref(&self, _album_id: &str) -> Result<AlbumDetail, QobuzError> {
-        self.album_ref_detail.clone().ok_or_else(|| QobuzError::NotFound {
-            endpoint: "album/get".into(),
-            message: "album_ref not configured in mock".into(),
-        })
+        self.album_ref_detail
+            .clone()
+            .ok_or_else(|| QobuzError::NotFound {
+                endpoint: "album/get".into(),
+                message: "album_ref not configured in mock".into(),
+            })
     }
 
-    async fn album_search(&self, _query: &str, _limit: u32) -> Result<Vec<AlbumSummary>, QobuzError> {
+    async fn album_search(
+        &self,
+        _query: &str,
+        _limit: u32,
+    ) -> Result<Vec<AlbumSummary>, QobuzError> {
         Ok(vec![])
     }
 
@@ -112,8 +115,6 @@ impl QobuzApi for MockQobuz {
 pub async fn state_with_mock(mock: MockQobuz) -> AppState {
     let mut state = test_state().await;
     qobuz_account::seed_active_qobuz_account(&state, 1, "test-token").await;
-    state.qobuz = Arc::new(Mutex::new(
-        Box::new(mock) as Box<dyn QobuzApi + Send + Sync>,
-    ));
+    state.qobuz = Arc::new(Mutex::new(Box::new(mock) as Box<dyn QobuzApi + Send + Sync>));
     state
 }

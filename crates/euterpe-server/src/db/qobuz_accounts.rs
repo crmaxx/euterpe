@@ -39,7 +39,15 @@ pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<QobuzAccount
     .await?;
 
     Ok(row.map(
-        |(id, qobuz_user_id, uat_encrypted, display_name, membership_label, uat_obtained_at, uat_expires_at)| {
+        |(
+            id,
+            qobuz_user_id,
+            uat_encrypted,
+            display_name,
+            membership_label,
+            uat_obtained_at,
+            uat_expires_at,
+        )| {
             QobuzAccountRecord {
                 id,
                 qobuz_user_id,
@@ -68,7 +76,15 @@ pub async fn find_by_qobuz_user_id(
     .await?;
 
     Ok(row.map(
-        |(id, qobuz_user_id, uat_encrypted, display_name, membership_label, uat_obtained_at, uat_expires_at)| {
+        |(
+            id,
+            qobuz_user_id,
+            uat_encrypted,
+            display_name,
+            membership_label,
+            uat_obtained_at,
+            uat_expires_at,
+        )| {
             QobuzAccountRecord {
                 id,
                 qobuz_user_id,
@@ -224,7 +240,9 @@ pub async fn insert_oauth_state(
 }
 
 /// When Qobuz redirects without `state`, accept the flow only if exactly one pending state exists.
-pub async fn consume_sole_pending_oauth_state(pool: &SqlitePool) -> Result<Option<String>, ApiError> {
+pub async fn consume_sole_pending_oauth_state(
+    pool: &SqlitePool,
+) -> Result<Option<String>, ApiError> {
     let rows: Vec<String> = sqlx::query_scalar(
         r#"
         SELECT state FROM qobuz_oauth_states

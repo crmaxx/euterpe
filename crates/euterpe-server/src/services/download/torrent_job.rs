@@ -7,8 +7,8 @@ use tokio::time::interval;
 use crate::api::{JobProgressEvent, TorrentEuterpePhase};
 use crate::db::download_jobs;
 use crate::error::ApiError;
-use crate::services::download::payload::{DownloadJobPayload, TorrentRuntimeSnapshot};
 use crate::services::download::WorkerDeps;
+use crate::services::download::payload::{DownloadJobPayload, TorrentRuntimeSnapshot};
 use crate::services::torrent_import;
 use crate::services::torrent_settings;
 
@@ -95,9 +95,9 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
 
     let torrent_bytes = if payload.magnet.is_none() {
         let path = save_dir.join("seed.torrent");
-        let data = tokio::fs::read(&path).await.map_err(|e| {
-            ApiError::Message(format!("read {}: {e}", path.display()))
-        })?;
+        let data = tokio::fs::read(&path)
+            .await
+            .map_err(|e| ApiError::Message(format!("read {}: {e}", path.display())))?;
         Some(bytes::Bytes::from(data))
     } else {
         None
@@ -121,7 +121,10 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         "torrent job: starting librqbit session"
     );
 
-    let handle = torrent.start_job(start_req).await.map_err(map_torrent_err)?;
+    let handle = torrent
+        .start_job(start_req)
+        .await
+        .map_err(map_torrent_err)?;
 
     payload.librqbit_id = Some(handle.librqbit_id);
     let wrapped = DownloadJobPayload {
@@ -165,10 +168,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
     }
 
     if payload.copy_to_library {
-        let finished_stats = torrent
-            .job_stats(&handle)
-            .await
-            .map_err(map_torrent_err)?;
+        let finished_stats = torrent.job_stats(&handle).await.map_err(map_torrent_err)?;
         emit_from_stats(
             deps,
             job_id,

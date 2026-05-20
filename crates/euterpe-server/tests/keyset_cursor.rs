@@ -1,4 +1,6 @@
-use euterpe_server::api::keyset::{decode_cursor, encode_cursor, ensure_cursor_matches, SortKeyKind, SortKeyValue, SortOrder};
+use euterpe_server::api::keyset::{
+    SortKeyKind, SortKeyValue, SortOrder, decode_cursor, encode_cursor, ensure_cursor_matches,
+};
 use serde_json::json;
 
 #[test]

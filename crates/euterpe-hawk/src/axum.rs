@@ -20,12 +20,12 @@ pub async fn request_context_middleware(request: Request, next: Next) -> Respons
     let scope = HawkScope::new_http(
         request.method().to_string(),
         request.uri().to_string(),
-        sanitize_header_map(request.headers().iter().filter_map(|(k, v)| {
-            Some((
-                k.as_str().to_string(),
-                v.to_str().ok()?.to_string(),
-            ))
-        })),
+        sanitize_header_map(
+            request
+                .headers()
+                .iter()
+                .filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string()))),
+        ),
     );
     scope::with_scope(scope, async { next.run(request).await }).await
 }
@@ -75,8 +75,8 @@ pub fn apply_layers(router: axum::Router, hawk: Arc<Hawk>) -> axum::Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::routing::get;
     use axum::Router;
+    use axum::routing::get;
     use tower::ServiceExt;
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};

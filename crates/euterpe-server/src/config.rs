@@ -167,9 +167,8 @@ impl AppConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(600);
 
-        let library_path = PathBuf::from(
-            env::var("EUTERPE_LIBRARY_PATH").unwrap_or_else(|_| "/music".into()),
-        );
+        let library_path =
+            PathBuf::from(env::var("EUTERPE_LIBRARY_PATH").unwrap_or_else(|_| "/music".into()));
 
         let torrent_incoming_dir = env::var("EUTERPE_TORRENT_INCOMING_DIR")
             .ok()
@@ -289,14 +288,19 @@ mod tests {
     #[test]
     fn library_scan_rejects_enum_plus_process_over_total() {
         let _guard = ENV_LOCK.lock().expect("env lock");
-        std::env::set_var("EUTERPE_LIBRARY_SCAN_WORKER_TOTAL", "4");
-        std::env::set_var("EUTERPE_LIBRARY_SCAN_ENUM_WORKERS", "3");
-        std::env::set_var("EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS", "3");
+        // SAFETY: test-only env mutation under ENV_LOCK.
+        unsafe {
+            std::env::set_var("EUTERPE_LIBRARY_SCAN_WORKER_TOTAL", "4");
+            std::env::set_var("EUTERPE_LIBRARY_SCAN_ENUM_WORKERS", "3");
+            std::env::set_var("EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS", "3");
+        }
         let err = LibraryScanConfig::from_env().expect_err("expected config error");
         assert!(matches!(err, ApiError::Config(_)));
-        std::env::remove_var("EUTERPE_LIBRARY_SCAN_WORKER_TOTAL");
-        std::env::remove_var("EUTERPE_LIBRARY_SCAN_ENUM_WORKERS");
-        std::env::remove_var("EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS");
+        unsafe {
+            std::env::remove_var("EUTERPE_LIBRARY_SCAN_WORKER_TOTAL");
+            std::env::remove_var("EUTERPE_LIBRARY_SCAN_ENUM_WORKERS");
+            std::env::remove_var("EUTERPE_LIBRARY_SCAN_PROCESS_WORKERS");
+        }
     }
 
     #[test]
@@ -305,13 +309,17 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join(".env");
         std::fs::write(&path, "EUTERPE_BIND=127.0.0.1:7777\n").expect("write .env");
-        std::env::remove_var("EUTERPE_BIND");
+        unsafe {
+            std::env::remove_var("EUTERPE_BIND");
+        }
         dotenvy::from_path(&path).expect("from_path");
         assert_eq!(
             std::env::var("EUTERPE_BIND").expect("EUTERPE_BIND"),
             "127.0.0.1:7777"
         );
-        std::env::remove_var("EUTERPE_BIND");
+        unsafe {
+            std::env::remove_var("EUTERPE_BIND");
+        }
     }
 
     #[test]
@@ -320,12 +328,16 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join(".env");
         std::fs::write(&path, "EUTERPE_BIND=127.0.0.1:7777\n").expect("write .env");
-        std::env::set_var("EUTERPE_BIND", "127.0.0.1:9999");
+        unsafe {
+            std::env::set_var("EUTERPE_BIND", "127.0.0.1:9999");
+        }
         dotenvy::from_path(&path).expect("from_path");
         assert_eq!(
             std::env::var("EUTERPE_BIND").expect("EUTERPE_BIND"),
             "127.0.0.1:9999"
         );
-        std::env::remove_var("EUTERPE_BIND");
+        unsafe {
+            std::env::remove_var("EUTERPE_BIND");
+        }
     }
 }

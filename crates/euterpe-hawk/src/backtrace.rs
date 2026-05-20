@@ -28,8 +28,7 @@ pub fn capture_backtrace(config: &HawkConfig, skip_frames: usize) -> Vec<Backtra
             }
             let mut source_code = Vec::new();
             if config.source_code_enabled && line > 0 {
-                source_code =
-                    read_near_lines(Path::new(&file), line, config.source_code_lines);
+                source_code = read_near_lines(Path::new(&file), line, config.source_code_lines);
             }
             frames.push(BacktraceFrame {
                 file,

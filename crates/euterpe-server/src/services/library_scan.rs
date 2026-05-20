@@ -16,7 +16,7 @@ use crate::error::ApiError;
 use crate::library::covers::discover_album_cover_rel;
 use crate::library::fs::file_stat_sync;
 use crate::library::paths::resolve_scan_subdirectory;
-use crate::library::tags::{self, is_audio_file, TrackTags};
+use crate::library::tags::{self, TrackTags, is_audio_file};
 
 const PROGRESS_EVERY: usize = 5;
 
@@ -154,7 +154,10 @@ pub async fn request_cancel(pool: &SqlitePool, scan_id: i64) -> Result<(), ApiEr
 }
 
 fn files_total_for_db(files_total_final: &Mutex<Option<i64>>) -> i64 {
-    files_total_final.lock().expect("scan files_total lock poisoned").unwrap_or(0)
+    files_total_final
+        .lock()
+        .expect("scan files_total lock poisoned")
+        .unwrap_or(0)
 }
 
 async fn flush_scan_progress(
@@ -552,14 +555,9 @@ async fn process_worker_loop(
             .await
             .map_err(|e| ApiError::Message(format!("stat task join: {e}")))?;
 
-        if let Some((db_mtime, db_size)) =
-            tracks::get_fingerprint_by_path(pool, &path_rel).await?
-        {
+        if let Some((db_mtime, db_size)) = tracks::get_fingerprint_by_path(pool, &path_rel).await? {
             let size_i64 = i64::try_from(size).ok();
-            if db_mtime.as_deref() == mtime.as_deref()
-                && db_size.is_some()
-                && db_size == size_i64
-            {
+            if db_mtime.as_deref() == mtime.as_deref() && db_size.is_some() && db_size == size_i64 {
                 scan_debug!(
                     debug,
                     scan_id,
@@ -1043,11 +1041,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(track_count.0, 2);
-        let distinct_paths: (i64,) =
-            sqlx::query_as("SELECT COUNT(DISTINCT path) FROM tracks")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
+        let distinct_paths: (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT path) FROM tracks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(distinct_paths.0, 2);
     }
 

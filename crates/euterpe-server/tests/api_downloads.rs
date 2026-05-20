@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use axum::{routing::get, Router};
-use euterpe_qobuz::{AlbumDetail, AlbumSummary, ArtistRef, TrackSummary};
+use axum::{Router, routing::get};
 use euterpe_qobuz::AlbumTracks;
+use euterpe_qobuz::{AlbumDetail, AlbumSummary, ArtistRef, TrackSummary};
 use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -18,7 +18,7 @@ use euterpe_server::api::DownloadJobType;
 use euterpe_server::db::download_jobs;
 use euterpe_server::services::download::DownloadJobPayload;
 
-use download_mock::{state_with_download_mock, DownloadMockQobuz};
+use download_mock::{DownloadMockQobuz, state_with_download_mock};
 use euterpe_server::app::test_support::test_state;
 use schema::{load_spec, schema_from_spec, validate_schema};
 
@@ -69,10 +69,7 @@ async fn create_download_returns_202() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let spec = load_spec();
-    validate_schema(
-        &schema_from_spec(&spec, "CreateDownloadResponse"),
-        &json,
-    );
+    validate_schema(&schema_from_spec(&spec, "CreateDownloadResponse"), &json);
 }
 
 #[tokio::test]
@@ -185,10 +182,9 @@ async fn download_job_completes_via_worker() {
             .await
             .unwrap();
         if get.status() == StatusCode::OK {
-            let job: serde_json::Value = serde_json::from_slice(
-                &get.into_body().collect().await.unwrap().to_bytes(),
-            )
-            .unwrap();
+            let job: serde_json::Value =
+                serde_json::from_slice(&get.into_body().collect().await.unwrap().to_bytes())
+                    .unwrap();
             if job["status"] == "completed" {
                 return;
             }
@@ -219,7 +215,9 @@ async fn purge_finished_deletes_terminal_jobs() {
     let failed = download_jobs::insert_queued(&pool, DownloadJobType::Album, 4, 6, Some(&payload))
         .await
         .unwrap();
-    download_jobs::finish_failed(&pool, failed, "err").await.unwrap();
+    download_jobs::finish_failed(&pool, failed, "err")
+        .await
+        .unwrap();
 
     let app = app::app(state);
     let response = app
@@ -238,10 +236,7 @@ async fn purge_finished_deletes_terminal_jobs() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["deleted"], 2);
     let spec = load_spec();
-    validate_schema(
-        &schema_from_spec(&spec, "DownloadPurgeResponse"),
-        &json,
-    );
+    validate_schema(&schema_from_spec(&spec, "DownloadPurgeResponse"), &json);
 
     assert!(download_jobs::get(&pool, running).await.unwrap().is_some());
     assert!(download_jobs::get(&pool, done).await.unwrap().is_none());
@@ -334,15 +329,10 @@ async fn list_downloads_keyset_by_id_desc() {
         .await
         .unwrap();
     assert_eq!(page1.status(), StatusCode::OK);
-    let b1: serde_json::Value = serde_json::from_slice(
-        &page1.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let b1: serde_json::Value =
+        serde_json::from_slice(&page1.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let spec = load_spec();
-    validate_schema(
-        &schema_from_spec(&spec, "DownloadJobListResponse"),
-        &b1,
-    );
+    validate_schema(&schema_from_spec(&spec, "DownloadJobListResponse"), &b1);
     assert_eq!(b1["items"].as_array().unwrap().len(), 2);
     assert_eq!(b1["has_more"], true);
     let cursor = b1["next_cursor"].as_str().unwrap();
@@ -360,10 +350,8 @@ async fn list_downloads_keyset_by_id_desc() {
         .await
         .unwrap();
     assert_eq!(page2.status(), StatusCode::OK);
-    let b2: serde_json::Value = serde_json::from_slice(
-        &page2.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let b2: serde_json::Value =
+        serde_json::from_slice(&page2.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(b2["items"].as_array().unwrap().len(), 2);
     assert_eq!(b2["has_more"], false);
 }

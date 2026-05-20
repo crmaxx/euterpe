@@ -78,10 +78,9 @@ async fn library_scan_indexes_files() {
 #[tokio::test]
 async fn library_albums_keyset_sort_and_search() {
     let state = app::test_support::test_state().await;
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "Zed", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Zed", None)
+        .await
+        .unwrap();
     for (title, year) in [("Alpha", 2020), ("Beta", 2021), ("Gamma", 2019)] {
         euterpe_server::db::albums::upsert(
             &state.db,
@@ -110,10 +109,8 @@ async fn library_albums_keyset_sort_and_search() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let body: Value = serde_json::from_slice(
-        &res.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let body: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(body["items"].as_array().unwrap().len(), 2);
     assert_eq!(body["has_more"], true);
     let cursor = body["next_cursor"].as_str().unwrap();
@@ -130,10 +127,8 @@ async fn library_albums_keyset_sort_and_search() {
         )
         .await
         .unwrap();
-    let p2: Value = serde_json::from_slice(
-        &page2.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let p2: Value =
+        serde_json::from_slice(&page2.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(p2["items"][0]["title"], "Gamma");
 
     let search = app
@@ -146,10 +141,8 @@ async fn library_albums_keyset_sort_and_search() {
         )
         .await
         .unwrap();
-    let s: Value = serde_json::from_slice(
-        &search.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let s: Value =
+        serde_json::from_slice(&search.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(s["items"].as_array().unwrap().len(), 1);
     assert_eq!(s["items"][0]["title"], "Beta");
 
@@ -247,8 +240,7 @@ async fn library_scan_subtree_root_indexes_only_under_path() {
             .await
             .unwrap();
         let run: Value =
-            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
-                .unwrap();
+            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
         if run["status"] == "success" {
             assert_eq!(run["files_indexed"].as_i64().unwrap(), 1);
             break;
@@ -265,10 +257,8 @@ async fn library_scan_subtree_root_indexes_only_under_path() {
         )
         .await
         .unwrap();
-    let list: Value = serde_json::from_slice(
-        &albums.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let list: Value =
+        serde_json::from_slice(&albums.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let titles: Vec<&str> = list["items"]
         .as_array()
         .unwrap()
@@ -301,9 +291,7 @@ async fn library_scan_cancel_sets_status_and_rejects_repeat() {
     let state = app::test_support::test_state().await;
     let library = state.config.library_path.clone();
     for i in 0..40 {
-        write_minimal_wav(
-            &library.join(format!("Bulk Artist/Album {i:02}/track.wav")),
-        );
+        write_minimal_wav(&library.join(format!("Bulk Artist/Album {i:02}/track.wav")));
     }
 
     let app = app::app(state);
@@ -319,12 +307,11 @@ async fn library_scan_cancel_sets_status_and_rejects_repeat() {
         .await
         .unwrap();
     assert_eq!(start.status(), StatusCode::ACCEPTED);
-    let scan_id = serde_json::from_slice::<Value>(
-        &start.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap()["scan_id"]
-        .as_i64()
-        .unwrap();
+    let scan_id =
+        serde_json::from_slice::<Value>(&start.into_body().collect().await.unwrap().to_bytes())
+            .unwrap()["scan_id"]
+            .as_i64()
+            .unwrap();
 
     let cancel = app
         .clone()
@@ -352,8 +339,7 @@ async fn library_scan_cancel_sets_status_and_rejects_repeat() {
             .await
             .unwrap();
         let run: Value =
-            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
-                .unwrap();
+            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
         if run["status"] == "cancelled" {
             cancelled = true;
             break;
@@ -385,10 +371,9 @@ async fn library_album_cover_get_returns_file_bytes() {
     std::fs::create_dir_all(lib.join("CovArtist/CovAlbum")).unwrap();
     std::fs::write(lib.join("CovArtist/CovAlbum/cover.jpg"), b"cover-bytes").unwrap();
 
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "CovArtist", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "CovArtist", None)
+        .await
+        .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
         &state.db,
         euterpe_server::db::albums::AlbumUpsert {
@@ -451,10 +436,9 @@ async fn library_album_cover_put_writes_file_and_updates_db() {
     let lib = state.config.library_path.clone();
     std::fs::create_dir_all(lib.join("PutArtist/PutAlbum")).unwrap();
 
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "PutArtist", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "PutArtist", None)
+        .await
+        .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
         &state.db,
         euterpe_server::db::albums::AlbumUpsert {
@@ -484,8 +468,13 @@ async fn library_album_cover_put_writes_file_and_updates_db() {
         .await
         .unwrap();
     assert_eq!(put.status(), StatusCode::OK);
-    let json: serde_json::Value =
-        serde_json::from_slice(&http_body_util::BodyExt::collect(put.into_body()).await.unwrap().to_bytes()).unwrap();
+    let json: serde_json::Value = serde_json::from_slice(
+        &http_body_util::BodyExt::collect(put.into_body())
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
     assert_eq!(json["cover_path"], "PutArtist/PutAlbum/cover.png");
 
     assert!(lib.join("PutArtist/PutAlbum/cover.png").is_file());
@@ -493,7 +482,10 @@ async fn library_album_cover_put_writes_file_and_updates_db() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.cover_path.as_deref(), Some("PutArtist/PutAlbum/cover.png"));
+    assert_eq!(
+        row.cover_path.as_deref(),
+        Some("PutArtist/PutAlbum/cover.png")
+    );
 
     let get = app
         .oneshot(
@@ -510,10 +502,9 @@ async fn library_album_cover_put_writes_file_and_updates_db() {
 #[tokio::test]
 async fn library_album_cover_put_rejects_missing_album_path() {
     let state = app::test_support::test_state().await;
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "NoPath", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "NoPath", None)
+        .await
+        .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
         &state.db,
         euterpe_server::db::albums::AlbumUpsert {
@@ -548,10 +539,9 @@ async fn library_album_cover_put_rejects_unsupported_content_type() {
     let state = app::test_support::test_state().await;
     let lib = state.config.library_path.clone();
     std::fs::create_dir_all(lib.join("TxtArtist/TxtAlbum")).unwrap();
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "TxtArtist", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "TxtArtist", None)
+        .await
+        .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
         &state.db,
         euterpe_server::db::albums::AlbumUpsert {
@@ -586,10 +576,9 @@ async fn library_album_cover_put_rejects_oversized_body() {
     let state = app::test_support::test_state().await;
     let lib = state.config.library_path.clone();
     std::fs::create_dir_all(lib.join("BigArtist/BigAlbum")).unwrap();
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "BigArtist", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "BigArtist", None)
+        .await
+        .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
         &state.db,
         euterpe_server::db::albums::AlbumUpsert {
@@ -667,12 +656,11 @@ async fn library_patch_album_tags_updates_all_track_files() {
         .await
         .unwrap();
     assert_eq!(start.status(), StatusCode::ACCEPTED);
-    let scan_id: i64 = serde_json::from_slice::<Value>(
-        &start.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap()["scan_id"]
-        .as_i64()
-        .unwrap();
+    let scan_id: i64 =
+        serde_json::from_slice::<Value>(&start.into_body().collect().await.unwrap().to_bytes())
+            .unwrap()["scan_id"]
+            .as_i64()
+            .unwrap();
 
     for _ in 0..80 {
         let res = app
@@ -686,8 +674,7 @@ async fn library_patch_album_tags_updates_all_track_files() {
             .await
             .unwrap();
         let run: Value =
-            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes())
-                .unwrap();
+            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
         if run["status"] == "success" {
             assert_eq!(run["files_indexed"].as_i64().unwrap(), 2);
             break;
@@ -705,10 +692,8 @@ async fn library_patch_album_tags_updates_all_track_files() {
         )
         .await
         .unwrap();
-    let list: Value = serde_json::from_slice(
-        &albums.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let list: Value =
+        serde_json::from_slice(&albums.into_body().collect().await.unwrap().to_bytes()).unwrap();
     let album_id = list["items"]
         .as_array()
         .and_then(|items| items.first())
@@ -736,19 +721,14 @@ async fn library_patch_album_tags_updates_all_track_files() {
         .await
         .unwrap();
     assert_eq!(patch.status(), StatusCode::OK);
-    let detail: Value = serde_json::from_slice(
-        &patch.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let detail: Value =
+        serde_json::from_slice(&patch.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(detail["artist_name"], "New Artist");
     assert_eq!(detail["title"], "New Album");
     assert_eq!(detail["track_total"], 12);
     assert_eq!(detail["disc_total"], 2);
 
-    for (file, title, num) in [
-        ("01 One.wav", "One", 1u32),
-        ("02 Two.wav", "Two", 2u32),
-    ] {
+    for (file, title, num) in [("01 One.wav", "One", 1u32), ("02 Two.wav", "Two", 2u32)] {
         let read = tags::read_tags(&dir.join(file)).unwrap();
         assert_eq!(read.title, title);
         assert_eq!(read.track_number, Some(num));
@@ -769,10 +749,9 @@ async fn library_track_stream_serves_audio() {
     let path = library.join("Stream Artist/Stream Album/play.wav");
     write_minimal_wav(&path);
 
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "Stream Artist", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Stream Artist", None)
+        .await
+        .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
         &state.db,
         euterpe_server::db::albums::AlbumUpsert {
@@ -849,10 +828,9 @@ async fn library_track_stream_range_returns_partial_content() {
     let path = library.join("Range Artist/Range Album/range.wav");
     write_wav_with_byte_length(&path, 2048);
 
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "Range Artist", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Range Artist", None)
+        .await
+        .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
         &state.db,
         euterpe_server::db::albums::AlbumUpsert {

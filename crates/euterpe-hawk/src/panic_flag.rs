@@ -5,6 +5,7 @@ thread_local! {
 }
 
 /// Mark that the current thread panic was already reported (e.g. by Axum `CatchPanicLayer`).
+#[cfg(feature = "axum")]
 pub fn mark_panic_reported() {
     PANIC_ALREADY_REPORTED.set(true);
 }

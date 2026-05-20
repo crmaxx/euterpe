@@ -13,11 +13,7 @@ pub struct GenreRef {
 impl GenreRef {
     pub fn display_name(&self) -> Option<&str> {
         let t = self.name.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
+        if t.is_empty() { None } else { Some(t) }
     }
 }
 
@@ -32,11 +28,7 @@ pub struct LabelRef {
 impl LabelRef {
     pub fn display_name(&self) -> Option<&str> {
         let t = self.name.trim();
-        if t.is_empty() {
-            None
-        } else {
-            Some(t)
-        }
+        if t.is_empty() { None } else { Some(t) }
     }
 }
 
@@ -47,6 +39,8 @@ where
     let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
     match value {
         None => Ok(None),
-        Some(v) => super::deser::parse_id_value(&v).map(Some).map_err(serde::de::Error::custom),
+        Some(v) => super::deser::parse_id_value(&v)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
     }
 }

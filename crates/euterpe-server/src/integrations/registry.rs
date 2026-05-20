@@ -26,10 +26,7 @@ pub fn build_tag_source(
 
     match provider {
         IntegrationProvider::MusicBrainz => {
-            let contact = config
-                .get("contact")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let contact = config.get("contact").and_then(|v| v.as_str()).unwrap_or("");
             Ok(Arc::new(MusicBrainzProvider::new(contact)?))
         }
         IntegrationProvider::Discogs => {
@@ -83,10 +80,7 @@ pub fn validate_config(
 ) -> Result<(), ApiError> {
     match provider {
         IntegrationProvider::MusicBrainz => {
-            let contact = config
-                .get("contact")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let contact = config.get("contact").and_then(|v| v.as_str()).unwrap_or("");
             MusicBrainzProvider::new(contact)?;
         }
         IntegrationProvider::Discogs => {
@@ -118,10 +112,7 @@ pub fn validate_config(
     Ok(())
 }
 
-pub fn encrypt_secrets(
-    master_key: &MasterKey,
-    secrets: &Value,
-) -> Result<String, ApiError> {
+pub fn encrypt_secrets(master_key: &MasterKey, secrets: &Value) -> Result<String, ApiError> {
     let s = serde_json::to_string(secrets).map_err(|e| ApiError::Message(e.to_string()))?;
     master_key.encrypt(&s)
 }

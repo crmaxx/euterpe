@@ -27,9 +27,6 @@ async fn health_returns_ok() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     let spec = schema::load_spec();
-    schema::validate_schema(
-        &schema::schema_from_spec(&spec, "HealthResponse"),
-        &json,
-    );
+    schema::validate_schema(&schema::schema_from_spec(&spec, "HealthResponse"), &json);
     assert_eq!(json["status"], "ok");
 }

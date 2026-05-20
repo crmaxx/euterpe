@@ -20,15 +20,11 @@ pub fn collector_endpoint_from_token(token: &str) -> Result<String, InvalidHawkT
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(token)
         .map_err(|_| InvalidHawkToken)?;
-    let payload: TokenPayload =
-        serde_json::from_slice(&decoded).map_err(|_| InvalidHawkToken)?;
+    let payload: TokenPayload = serde_json::from_slice(&decoded).map_err(|_| InvalidHawkToken)?;
     if payload.integration_id.is_empty() {
         return Err(InvalidHawkToken);
     }
-    Ok(format!(
-        "https://{}.k1.hawk.so",
-        payload.integration_id
-    ))
+    Ok(format!("https://{}.k1.hawk.so", payload.integration_id))
 }
 
 #[cfg(test)]

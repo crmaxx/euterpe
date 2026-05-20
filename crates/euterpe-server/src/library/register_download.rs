@@ -215,7 +215,9 @@ mod tests {
         let quality = Quality::FlacCd;
         let track = &album.tracks.as_ref().unwrap().items[0];
         let path = track_path(dir.path(), &album, track, quality.format_id());
-        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::create_dir_all(path.parent().unwrap())
+            .await
+            .unwrap();
         tokio::fs::write(&path, b"existing").await.unwrap();
 
         let pool = db::connect("sqlite::memory:").await.unwrap();
@@ -227,7 +229,10 @@ mod tests {
 
         let rows = tracks::list_by_album(&pool, 1).await.unwrap();
         assert_eq!(rows.len(), 2);
-        let first = rows.iter().find(|r| r.qobuz_track_id == Some(1001)).unwrap();
+        let first = rows
+            .iter()
+            .find(|r| r.qobuz_track_id == Some(1001))
+            .unwrap();
         assert_eq!(first.title, "One");
         assert!(dir.path().join(&first.path).is_file());
     }

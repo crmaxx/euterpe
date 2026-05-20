@@ -3,7 +3,7 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::api::keyset::{
-    decode_cursor, ensure_cursor_matches, finish_keyset_page, fingerprint_json, keyset_and_clause,
+    decode_cursor, ensure_cursor_matches, fingerprint_json, finish_keyset_page, keyset_and_clause,
 };
 use crate::api::{KeysetPage, QobuzFavoriteItem, SortKeyKind, SortKeyValue, SortOrder};
 use crate::error::ApiError;
@@ -87,11 +87,7 @@ impl FavoritesSort {
         match self {
             Self::Title => SortKeyValue::Text(row.title.clone().unwrap_or_default()),
             Self::Artist => SortKeyValue::Text(row.artist_name.clone().unwrap_or_default()),
-            Self::InLibrary => SortKeyValue::Bool(if row.local_album_id.is_some() {
-                1
-            } else {
-                0
-            }),
+            Self::InLibrary => SortKeyValue::Bool(if row.local_album_id.is_some() { 1 } else { 0 }),
         }
     }
 }
@@ -186,10 +182,7 @@ pub async fn album_meta(
     }))
 }
 
-pub async fn mark_removed_except(
-    pool: &SqlitePool,
-    keep_ids: &[u64],
-) -> Result<u64, ApiError> {
+pub async fn mark_removed_except(pool: &SqlitePool, keep_ids: &[u64]) -> Result<u64, ApiError> {
     if keep_ids.is_empty() {
         let result = sqlx::query(
             "UPDATE qobuz_favorites SET removed = 1 WHERE entity_type = 'album' AND removed = 0",
@@ -199,11 +192,7 @@ pub async fn mark_removed_except(
         return Ok(result.rows_affected() as u64);
     }
 
-    let placeholders = keep_ids
-        .iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(", ");
+    let placeholders = keep_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
     let sql = format!(
         "UPDATE qobuz_favorites SET removed = 1 WHERE entity_type = 'album' AND removed = 0 AND qobuz_id NOT IN ({placeholders})"
     );
@@ -255,13 +244,13 @@ pub async fn list_albums_keyset(
             filters.push_str(" AND a.id IS NULL");
         }
     }
-    if let Some(ref q) = params.q {
-        if !q.trim().is_empty() {
-            filters.push_str(" AND (f.title LIKE ? OR f.artist_name LIKE ?)");
-            let pattern = format!("%{}%", q.trim());
-            filter_binds.push(pattern.clone());
-            filter_binds.push(pattern);
-        }
+    if let Some(ref q) = params.q
+        && !q.trim().is_empty()
+    {
+        filters.push_str(" AND (f.title LIKE ? OR f.artist_name LIKE ?)");
+        let pattern = format!("%{}%", q.trim());
+        filter_binds.push(pattern.clone());
+        filter_binds.push(pattern);
     }
 
     let fetch_limit = (params.limit as i64) + 1;

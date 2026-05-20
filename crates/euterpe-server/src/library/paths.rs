@@ -127,10 +127,7 @@ pub fn track_path(
 }
 
 /// Resolve `root` query for subtree library scan: relative path under `library_root`, no `..`.
-pub fn resolve_scan_subdirectory(
-    library_root: &Path,
-    root: &str,
-) -> Result<PathBuf, ApiError> {
+pub fn resolve_scan_subdirectory(library_root: &Path, root: &str) -> Result<PathBuf, ApiError> {
     let trimmed = root.trim();
     if trimmed.is_empty() {
         return Err(ApiError::Message("root must not be empty".into()));

@@ -9,7 +9,7 @@ mod qobuz_mock;
 #[path = "support/schema.rs"]
 mod schema;
 
-use qobuz_mock::{state_with_mock, MockQobuz};
+use qobuz_mock::{MockQobuz, state_with_mock};
 
 #[tokio::test]
 async fn sync_without_credentials_returns_503() {
@@ -55,10 +55,7 @@ async fn sync_with_mock_populates_db() {
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     let spec = schema::load_spec();
-    schema::validate_schema(
-        &schema::schema_from_spec(&spec, "QobuzSyncResponse"),
-        &json,
-    );
+    schema::validate_schema(&schema::schema_from_spec(&spec, "QobuzSyncResponse"), &json);
     assert_eq!(json["albums_total"], 2);
     assert_eq!(json["added"], 2);
 }
@@ -119,10 +116,8 @@ async fn list_favorites_keyset() {
         )
         .await
         .unwrap();
-    let p2: serde_json::Value = serde_json::from_slice(
-        &page2.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let p2: serde_json::Value =
+        serde_json::from_slice(&page2.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(p2["items"].as_array().unwrap().len(), 1);
 
     let filtered = app
@@ -135,10 +130,8 @@ async fn list_favorites_keyset() {
         )
         .await
         .unwrap();
-    let f: serde_json::Value = serde_json::from_slice(
-        &filtered.into_body().collect().await.unwrap().to_bytes(),
-    )
-    .unwrap();
+    let f: serde_json::Value =
+        serde_json::from_slice(&filtered.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(f["items"].as_array().unwrap().len(), 1);
     assert_eq!(f["items"][0]["title"], "Two");
 

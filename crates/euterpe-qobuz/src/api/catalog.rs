@@ -1,7 +1,7 @@
 use crate::client::QobuzClient;
 use crate::error::QobuzError;
 use crate::models::{AlbumDetail, AlbumSummary};
-use crate::pagination::{fetch_all_pages, PageRequest};
+use crate::pagination::{PageRequest, fetch_all_pages};
 
 #[derive(Debug, serde::Deserialize)]
 struct AlbumSearchResponse {
@@ -38,10 +38,7 @@ impl QobuzClient {
             ("album_id", album_id.to_string()),
             ("limit", "500".to_string()),
             ("offset", "0".to_string()),
-            (
-                "extra",
-                "track_ids,albumsFromSameArtist".to_string(),
-            ),
+            ("extra", "track_ids,albumsFromSameArtist".to_string()),
         ];
         if let Some(uat) = &self.state.user_auth_token {
             params.push(("user_auth_token", uat.clone()));
@@ -59,7 +56,11 @@ impl QobuzClient {
         serde_json::from_value(body).map_err(QobuzError::from)
     }
 
-    pub async fn album_search(&self, query: &str, limit: u32) -> Result<Vec<AlbumSummary>, QobuzError> {
+    pub async fn album_search(
+        &self,
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<AlbumSummary>, QobuzError> {
         let mut params = vec![
             ("app_id", self.state.app_id.clone()),
             ("query", query.to_string()),

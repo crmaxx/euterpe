@@ -105,8 +105,11 @@ mod tests {
 
     #[test]
     fn from_env_requires_user_id_and_token() {
-        std::env::remove_var("EUTERPE_QOBUZ_USER_ID");
-        std::env::remove_var("EUTERPE_QOBUZ_AUTH_TOKEN");
+        // SAFETY: test-only env mutation; serialized by test harness in this module.
+        unsafe {
+            std::env::remove_var("EUTERPE_QOBUZ_USER_ID");
+            std::env::remove_var("EUTERPE_QOBUZ_AUTH_TOKEN");
+        }
         assert!(QobuzConfig::from_env().is_err());
     }
 }

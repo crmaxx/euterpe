@@ -1,6 +1,6 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use euterpe_qobuz::QobuzError;
 
 use crate::api::ErrorBody;
@@ -29,7 +29,9 @@ impl ApiError {
                 "QOBUZ_NOT_CONFIGURED"
             }
             ApiError::Message(msg) if msg.contains("JOB_ALREADY_RUNNING") => "JOB_ALREADY_RUNNING",
-            ApiError::Message(msg) if msg.contains("SCAN_ALREADY_RUNNING") => "SCAN_ALREADY_RUNNING",
+            ApiError::Message(msg) if msg.contains("SCAN_ALREADY_RUNNING") => {
+                "SCAN_ALREADY_RUNNING"
+            }
             ApiError::Message(msg) if msg.contains("not found") => "NOT_FOUND",
             ApiError::Message(msg) if msg.contains("cannot cancel") => "JOB_NOT_CANCELLABLE",
             ApiError::Message(msg) if msg.contains("cannot purge") => "JOB_NOT_PURGEABLE",

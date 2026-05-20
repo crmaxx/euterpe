@@ -24,10 +24,7 @@ pub enum QobuzError {
     Forbidden,
 
     #[error("not found: {endpoint}: {message}")]
-    NotFound {
-        endpoint: String,
-        message: String,
-    },
+    NotFound { endpoint: String, message: String },
 
     #[error("rate limited")]
     RateLimit,

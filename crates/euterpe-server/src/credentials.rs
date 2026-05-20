@@ -29,10 +29,9 @@ pub async fn load_active(
         return Ok(None);
     };
 
-    let master = config
-        .master_key
-        .as_ref()
-        .ok_or_else(|| ApiError::Message("EUTERPE_MASTER_KEY is required for Qobuz accounts".into()))?;
+    let master = config.master_key.as_ref().ok_or_else(|| {
+        ApiError::Message("EUTERPE_MASTER_KEY is required for Qobuz accounts".into())
+    })?;
 
     let auth_token = master.decrypt(&row.uat_encrypted)?;
 

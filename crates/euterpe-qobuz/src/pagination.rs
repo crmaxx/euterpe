@@ -23,9 +23,7 @@ pub struct Page<T> {
     pub offset: u32,
 }
 
-pub async fn fetch_all_pages<T, F, Fut>(
-    mut fetch_page: F,
-) -> Result<Vec<T>, QobuzError>
+pub async fn fetch_all_pages<T, F, Fut>(mut fetch_page: F) -> Result<Vec<T>, QobuzError>
 where
     T: Clone,
     F: FnMut(PageRequest) -> Fut,

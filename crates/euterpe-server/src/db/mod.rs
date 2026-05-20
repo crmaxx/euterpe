@@ -9,8 +9,8 @@ pub mod settings;
 pub mod sync_runs;
 pub mod tracks;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -21,15 +21,15 @@ fn ensure_db_parent_dir(database_url: &str) -> Result<(), ApiError> {
     let Some(path) = sqlite_file_path(database_url) else {
         return Ok(());
     };
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                ApiError::Config(format!(
-                    "cannot create database directory {}: {e}",
-                    parent.display()
-                ))
-            })?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            ApiError::Config(format!(
+                "cannot create database directory {}: {e}",
+                parent.display()
+            ))
+        })?;
     }
     Ok(())
 }

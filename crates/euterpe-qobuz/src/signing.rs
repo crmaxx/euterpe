@@ -18,11 +18,7 @@ pub enum FavoritesSignMode {
 
 impl FavoritesSignMode {
     pub fn fallback_order() -> &'static [Self] {
-        &[
-            Self::TimestampSecret,
-            Self::TimestampOnly,
-            Self::None,
-        ]
+        &[Self::TimestampSecret, Self::TimestampOnly, Self::None]
     }
 }
 

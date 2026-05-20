@@ -134,10 +134,7 @@ impl TagSourceProvider for DiscogsProvider {
             .await
             .map_err(|e| ApiError::Message(format!("Discogs JSON: {e}")))?;
         let page = body.pagination.as_ref().map(|p| p.page).unwrap_or(page);
-        let has_more = body
-            .pagination
-            .as_ref()
-            .is_some_and(|p| p.page < p.pages);
+        let has_more = body.pagination.as_ref().is_some_and(|p| p.page < p.pages);
         let offset = (page.saturating_sub(1)) * DISCOGS_PER_PAGE;
         let mut out = Vec::new();
         for (i, r) in body.results.unwrap_or_default().into_iter().enumerate() {
@@ -234,11 +231,7 @@ fn flatten_discogs_tracklist(items: Vec<DiscogsTrack>) -> Vec<(String, Option<St
 }
 
 fn push_discogs_playable_tracks(out: &mut Vec<(String, Option<String>)>, t: DiscogsTrack) {
-    let ty = t
-        .type_
-        .as_deref()
-        .unwrap_or("track")
-        .to_ascii_lowercase();
+    let ty = t.type_.as_deref().unwrap_or("track").to_ascii_lowercase();
     if ty == "heading" {
         return;
     }
@@ -297,10 +290,7 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let has_more = body
-            .pagination
-            .as_ref()
-            .is_some_and(|p| p.page < p.pages);
+        let has_more = body.pagination.as_ref().is_some_and(|p| p.page < p.pages);
         assert!(has_more);
     }
 

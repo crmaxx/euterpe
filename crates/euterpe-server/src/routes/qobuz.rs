@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::Json;
 use serde::Deserialize;
 
 use crate::api::{
@@ -9,8 +9,8 @@ use crate::api::{
     QobuzOAuthStartResponse,
 };
 use crate::credentials;
-use crate::db::{qobuz_accounts, settings};
 use crate::db::settings::KEY_QOBUZ_ACTIVE_ACCOUNT_ID;
+use crate::db::{qobuz_accounts, settings};
 use crate::error::ApiError;
 use crate::services::qobuz_oauth;
 use crate::state::AppState;
@@ -23,7 +23,9 @@ pub struct OAuthCallbackQuery {
     pub state: Option<String>,
 }
 
-pub async fn oauth_start(State(state): State<AppState>) -> Result<Json<QobuzOAuthStartResponse>, ApiError> {
+pub async fn oauth_start(
+    State(state): State<AppState>,
+) -> Result<Json<QobuzOAuthStartResponse>, ApiError> {
     let start = qobuz_oauth::oauth_start(&state).await?;
     Ok(Json(QobuzOAuthStartResponse {
         authorize_url: start.authorize_url,
@@ -56,12 +58,12 @@ pub async fn connection_status(
     let mut qobuz_user_id = None;
     let mut display_name = None;
     let mut membership_label = None;
-    if let Some(id) = active_account_id {
-        if let Some(row) = qobuz_accounts::get_by_id(&state.db, id).await? {
-            qobuz_user_id = Some(row.qobuz_user_id);
-            display_name = row.display_name;
-            membership_label = row.membership_label;
-        }
+    if let Some(id) = active_account_id
+        && let Some(row) = qobuz_accounts::get_by_id(&state.db, id).await?
+    {
+        qobuz_user_id = Some(row.qobuz_user_id);
+        display_name = row.display_name;
+        membership_label = row.membership_label;
     }
 
     Ok(Json(QobuzConnectionStatusResponse {

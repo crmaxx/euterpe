@@ -39,11 +39,7 @@ pub struct SenderHandle {
 }
 
 impl SenderHandle {
-    pub fn spawn(
-        collector_endpoint: String,
-        batch_max: usize,
-        batch_interval: Duration,
-    ) -> Self {
+    pub fn spawn(collector_endpoint: String, batch_max: usize, batch_interval: Duration) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
@@ -93,9 +89,10 @@ impl SenderHandle {
     }
 
     pub fn send(&self, report: ErrorReport, urgent: bool) {
-        let _ = self
-            .tx
-            .send(SenderCommand::Send(Box::new(QueuedReport { report, urgent })));
+        let _ = self.tx.send(SenderCommand::Send(Box::new(QueuedReport {
+            report,
+            urgent,
+        })));
     }
 
     pub async fn flush(&self, timeout: Duration) {

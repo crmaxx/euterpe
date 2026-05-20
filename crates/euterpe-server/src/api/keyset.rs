@@ -157,7 +157,9 @@ pub fn ensure_cursor_matches(
         return Err(ApiError::invalid_cursor("cursor sort does not match query"));
     }
     if cursor.order != order {
-        return Err(ApiError::invalid_cursor("cursor order does not match query"));
+        return Err(ApiError::invalid_cursor(
+            "cursor order does not match query",
+        ));
     }
     if cursor.fingerprint != fingerprint {
         return Err(ApiError::invalid_cursor(

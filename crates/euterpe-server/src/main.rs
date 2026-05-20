@@ -1,4 +1,4 @@
-use euterpe_server::{serve, AppConfig};
+use euterpe_server::{AppConfig, serve};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 
@@ -7,8 +7,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     euterpe_server::config::load_dotenv();
     let config = AppConfig::from_env()?;
 
-    let (hawk, _hawk_guard) =
-        euterpe_hawk::Hawk::install_from_env(Some(env!("CARGO_PKG_VERSION")));
+    let (hawk, _hawk_guard) = euterpe_hawk::Hawk::install_from_env(Some(env!("CARGO_PKG_VERSION")));
 
     let default_filter = if config.debug {
         "euterpe_server=debug,euterpe_qobuz=debug,tower_http=debug"

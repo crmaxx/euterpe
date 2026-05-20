@@ -1,5 +1,5 @@
-use serde::de::{self, Deserializer};
 use serde::Deserialize;
+use serde::de::{self, Deserializer};
 
 use super::artist::ArtistRef;
 use super::catalog_meta::{GenreRef, LabelRef};
@@ -62,10 +62,20 @@ impl AlbumSummary {
 
     /// Best single id for `album/get` (short ref, UPC string, catalog id; slug is often wrong).
     pub fn preferred_album_get_id(&self) -> String {
-        if let Some(r) = self.album_ref.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(r) = self
+            .album_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             return r.to_string();
         }
-        if let Some(p) = self.product_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(p) = self
+            .product_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             return p.to_string();
         }
         self.id.to_string()
@@ -142,22 +152,13 @@ impl<'de> Deserialize<'de> for AlbumSummary {
     {
         let raw = AlbumSummaryRaw::deserialize(deserializer)?;
         let album_ref = parse_album_ref_value(&raw.id);
-        let explicit_qobuz = raw
-            .qobuz_id
-            .as_ref()
-            .and_then(|v| parse_id_value(v).ok());
+        let explicit_qobuz = raw.qobuz_id.as_ref().and_then(|v| parse_id_value(v).ok());
         let legacy_id = parse_id_value(&raw.id).ok();
         let upc = raw.upc.as_ref().and_then(|v| parse_id_value(v).ok());
 
         let id = explicit_qobuz
-            .or_else(|| {
-                legacy_id.filter(|&n| {
-                    upc != Some(n) && n < MAX_FALLBACK_NUMERIC_ID
-                })
-            })
-            .or_else(|| {
-                legacy_id.filter(|_| album_ref.is_some() || !raw.slug.trim().is_empty())
-            })
+            .or_else(|| legacy_id.filter(|&n| upc != Some(n) && n < MAX_FALLBACK_NUMERIC_ID))
+            .or_else(|| legacy_id.filter(|_| album_ref.is_some() || !raw.slug.trim().is_empty()))
             .ok_or_else(|| {
                 de::Error::custom(format!(
                     "album missing catalog id (id {:?}, qobuz_id {:?}, album_ref {:?}, slug {:?})",
@@ -231,7 +232,10 @@ mod tests {
         assert_eq!(t0.genre.as_ref().unwrap().name, "Orchestral");
         assert_eq!(t0.isrc.as_deref(), Some("XX-XXX-19-00001"));
         assert_eq!(t0.composer.as_ref().unwrap().name, "Composer Name");
-        assert_eq!(album.tracks.as_ref().unwrap().items[1].media_number, Some(2));
+        assert_eq!(
+            album.tracks.as_ref().unwrap().items[1].media_number,
+            Some(2)
+        );
     }
 
     #[test]
@@ -269,10 +273,7 @@ mod tests {
         }"#;
         let a: AlbumSummary = serde_json::from_str(json).unwrap();
         assert_eq!(a.id, 225770297);
-        assert_eq!(
-            a.api_album_id(),
-            "aarab-zaraq-lucid-dreaming-therion"
-        );
+        assert_eq!(a.api_album_id(), "aarab-zaraq-lucid-dreaming-therion");
     }
 
     #[test]
@@ -294,7 +295,10 @@ mod tests {
         assert_eq!(a.product_id.as_deref(), Some("0191018548094"));
         assert_eq!(a.preferred_album_get_id(), "0191018548094");
         let candidates = a.album_get_candidate_ids();
-        assert_eq!(candidates.first().map(String::as_str), Some("0191018548094"));
+        assert_eq!(
+            candidates.first().map(String::as_str),
+            Some("0191018548094")
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
-use serde::de::{self, Deserializer};
 use serde::Deserialize;
+use serde::de::{self, Deserializer};
 
 /// Qobuz API returns numeric ids as JSON numbers or strings (often zero-padded).
 use serde_json::Value;
@@ -22,9 +22,7 @@ pub fn parse_album_ref_value(v: &Value) -> Option<String> {
 pub fn parse_id_value(v: &Value) -> Result<u64, String> {
     match v {
         Value::Null => Err("null id".into()),
-        Value::Number(n) => n
-            .as_u64()
-            .ok_or_else(|| format!("unsupported number {n}")),
+        Value::Number(n) => n.as_u64().ok_or_else(|| format!("unsupported number {n}")),
         Value::String(s) => {
             let t = s.trim();
             if t.is_empty() {

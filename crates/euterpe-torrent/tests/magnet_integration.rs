@@ -1,8 +1,8 @@
 //! Real-network magnet inspect. Run locally with:
 //! `cargo test -p euterpe-torrent --test magnet_integration -- --ignored`
 
-use euterpe_torrent::{LibrqbitEngine, TorrentEngine, TorrentEngineConfig};
 use euterpe_torrent::SessionSettings;
+use euterpe_torrent::{LibrqbitEngine, TorrentEngine, TorrentEngineConfig};
 
 #[tokio::test]
 #[ignore = "requires DHT/network; set EUTERPE_TEST_MAGNET to run"]

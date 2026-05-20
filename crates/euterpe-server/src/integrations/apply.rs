@@ -9,20 +9,19 @@ use crate::error::ApiError;
 use crate::integrations::types::{AlbumLookupContext, AlbumLookupTrack, AlbumMetadataRelease};
 use crate::library::covers;
 use crate::library::paths::library_path_hints;
-use crate::library::tags::{self, apply_patch, TrackTagsPatch};
+use crate::library::tags::{self, TrackTagsPatch, apply_patch};
 
 fn path_hints_for_album(
     album_path: Option<&str>,
     track_paths: &[String],
 ) -> Option<crate::library::paths::LibraryPathHints> {
-    if let Some(ap) = album_path.filter(|s| !s.trim().is_empty()) {
-        if let Some(first) = track_paths.first() {
-            if let Some(name) = Path::new(first).file_name().and_then(|n| n.to_str()) {
-                let synthetic = format!("{ap}/{name}");
-                if let Some(h) = library_path_hints(&synthetic) {
-                    return Some(h);
-                }
-            }
+    if let Some(ap) = album_path.filter(|s| !s.trim().is_empty())
+        && let Some(first) = track_paths.first()
+        && let Some(name) = Path::new(first).file_name().and_then(|n| n.to_str())
+    {
+        let synthetic = format!("{ap}/{name}");
+        if let Some(h) = library_path_hints(&synthetic) {
+            return Some(h);
         }
     }
     for rel in track_paths {
@@ -55,11 +54,7 @@ pub async fn build_lookup_context(
     let path_hints = path_hints_for_album(album.path.as_deref(), &track_paths);
 
     let (artist_name, album_title, year) = if let Some(h) = path_hints {
-        (
-            h.artist_name,
-            h.album_title,
-            h.year.or(album.year),
-        )
+        (h.artist_name, h.album_title, h.year.or(album.year))
     } else {
         (db_artist, album.title.clone(), album.year)
     };
@@ -153,9 +148,7 @@ pub async fn apply_release_to_album(
             artist: Some(release.artist_name.clone()),
             album: Some(release.title.clone()),
             track_number: meta.track_number,
-            year: meta
-                .year
-                .or(release.year.map(|y| y as u32)),
+            year: meta.year.or(release.year.map(|y| y as u32)),
             disc_number: meta.disc_number,
             genre: meta.genre.clone().or_else(|| release.genre.clone()),
         };
@@ -169,10 +162,7 @@ pub async fn apply_release_to_album(
                 track_number: meta.track_number.map(|n| n as i32),
                 year: meta.year.map(|y| y as i32).or(release.year),
                 disc_number: meta.disc_number.map(|d| d as i32),
-                genre: meta
-                    .genre
-                    .as_deref()
-                    .or(release.genre.as_deref()),
+                genre: meta.genre.as_deref().or(release.genre.as_deref()),
                 file_mtime: None,
             },
         )
@@ -236,10 +226,10 @@ fn match_track<'a>(
         {
             return Some(t);
         }
-        if let Ok(idx) = usize::try_from(n) {
-            if (1..=meta_tracks.len()).contains(&idx) {
-                return Some(&meta_tracks[idx - 1]);
-            }
+        if let Ok(idx) = usize::try_from(n)
+            && (1..=meta_tracks.len()).contains(&idx)
+        {
+            return Some(&meta_tracks[idx - 1]);
         }
     }
     let title_l = normalize_track_title(title);

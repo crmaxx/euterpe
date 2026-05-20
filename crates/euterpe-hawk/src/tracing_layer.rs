@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
-use tracing_subscriber::layer::Context;
 use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
 
 use crate::catcher::{CatchOpts, Hawk};
 use crate::event::EventLevel;
@@ -32,9 +32,7 @@ where
         let mut visitor = EventVisitor::default();
         event.record(&mut visitor);
         let target = meta.target().to_string();
-        let message = visitor
-            .message
-            .unwrap_or_else(|| meta.name().to_string());
+        let message = visitor.message.unwrap_or_else(|| meta.name().to_string());
 
         match *meta.level() {
             Level::ERROR => {
@@ -49,11 +47,7 @@ where
                 );
             }
             Level::WARN | Level::INFO => {
-                scope::add_breadcrumb(
-                    meta.level().as_str(),
-                    message,
-                    target,
-                );
+                scope::add_breadcrumb(meta.level().as_str(), message, target);
             }
             _ => {}
         }

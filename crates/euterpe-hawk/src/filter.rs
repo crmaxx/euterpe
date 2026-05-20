@@ -49,9 +49,7 @@ pub fn redact_value(value: &mut serde_json::Value) {
 
 pub fn is_sensitive_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
-    SENSITIVE_KEY_PARTS
-        .iter()
-        .any(|part| lower.contains(part))
+    SENSITIVE_KEY_PARTS.iter().any(|part| lower.contains(part))
 }
 
 #[cfg(feature = "axum")]
