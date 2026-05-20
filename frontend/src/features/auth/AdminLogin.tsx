@@ -1,3 +1,4 @@
+import { Music2 } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/api/client";
 import { ApiClientError } from "@/api/errors";
@@ -43,7 +44,10 @@ export function AdminLogin({ onSuccess }: Props) {
           void submit();
         }}
       >
-        <h1 className="text-xl font-semibold">Euterpe</h1>
+        <div className="flex items-center gap-2">
+          <Music2 className="size-5 text-muted-foreground" aria-hidden />
+          <h1 className="text-xl font-semibold">Euterpe</h1>
+        </div>
         <p className="text-sm text-muted-foreground">
           Admin password required (EUTERPE_ADMIN_PASSWORD).
         </p>

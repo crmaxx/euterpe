@@ -1,3 +1,14 @@
+import {
+  Folder,
+  Heart,
+  Link2,
+  ListMusic,
+  Music2,
+  RefreshCw,
+  Settings,
+  Unlink,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   useQobuzConnection,
@@ -10,12 +21,12 @@ import {
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
 import { cn } from "@/lib/utils";
 
-const nav = [
-  { to: "/favorites", label: "Favorites" },
-  { to: "/queue", label: "Queue" },
-  { to: "/library", label: "Library" },
-  { to: "/settings", label: "Settings" },
-] as const;
+const nav: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: "/favorites", label: "Favorites", icon: Heart },
+  { to: "/queue", label: "Queue", icon: ListMusic },
+  { to: "/library", label: "Library", icon: Folder },
+  { to: "/settings", label: "Settings", icon: Settings },
+];
 
 export function AppLayout() {
   const { data: info } = useServerInfo();
@@ -38,9 +49,17 @@ export function AppLayout() {
   return (
     <div className="flex min-h-screen">
       <aside className="w-52 border-r border-border bg-card p-4">
-        <div className="mb-8">
-          <h1 className="text-lg font-semibold tracking-tight">Euterpe</h1>
-          <p className="text-xs text-muted-foreground">v{info?.version ?? "…"}</p>
+        <div className="mb-8 flex items-start gap-2">
+          <Music2
+            className="mt-0.5 size-5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <div>
+            <h1 className="text-lg font-semibold tracking-tight">Euterpe</h1>
+            <p className="text-xs text-muted-foreground">
+              v{info?.version ?? "…"}
+            </p>
+          </div>
         </div>
         <nav className="flex flex-col gap-1">
           {nav.map((item) => (
@@ -49,13 +68,14 @@ export function AppLayout() {
               to={item.to}
               className={({ isActive }) =>
                 cn(
-                  "rounded-md px-3 py-2 text-sm transition-colors",
+                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
                   isActive
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
                 )
               }
             >
+              <item.icon className="size-4 shrink-0 opacity-80" aria-hidden />
               {item.label}
             </NavLink>
           ))}
@@ -63,7 +83,8 @@ export function AppLayout() {
       </aside>
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border px-6 py-3 text-sm">
-          <span className="text-muted-foreground">
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <RefreshCw className="size-3.5 shrink-0 opacity-70" aria-hidden />
             {syncLabel}
             {libraryScan?.run && (
               <>
@@ -89,12 +110,17 @@ export function AppLayout() {
           </span>
           <span
             className={cn(
-              "rounded-full px-2 py-0.5 text-xs",
+              "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs",
               qobuz?.connected
                 ? "bg-emerald-950 text-emerald-300"
                 : "bg-amber-950 text-amber-300",
             )}
           >
+            {qobuz?.connected ? (
+              <Link2 className="size-3 shrink-0" aria-hidden />
+            ) : (
+              <Unlink className="size-3 shrink-0" aria-hidden />
+            )}
             {qobuz?.connected
               ? qobuz.display_name
                 ? `Qobuz: ${qobuz.display_name}`
