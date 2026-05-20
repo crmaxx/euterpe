@@ -17,7 +17,7 @@ mod traits;
 pub use album_url::{parse_album_url, AlbumUrlError};
 pub use api::streaming::Quality;
 pub use client::QobuzClient;
-pub use config::{AuthConfig, QobuzConfig};
+pub use config::{AuthConfig, DEFAULT_PLAY_BASE, DEFAULT_USER_AGENT, QobuzConfig};
 pub use error::QobuzError;
 pub use oauth::{
     authorize_url, fetch_oauth_bootstrap, login_with_oauth_code, redirect_uri_with_state,

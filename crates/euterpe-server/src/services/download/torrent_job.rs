@@ -143,7 +143,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         let mut ticker = interval(Duration::from_secs(1));
         loop {
             ticker.tick().await;
-            if download_jobs::is_cancelled(&deps.pool, job_id).await? {
+            if download_jobs::is_stopped(&deps.pool, job_id).await? {
                 let _ = torrent.cancel(&handle).await;
                 return Ok(());
             }
@@ -159,7 +159,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         .await
         .map_err(map_torrent_err)?;
 
-    if download_jobs::is_cancelled(&deps.pool, job_id).await? {
+    if download_jobs::is_stopped(&deps.pool, job_id).await? {
         let _ = torrent.cancel(&handle).await;
         return Ok(());
     }
@@ -208,6 +208,10 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         .remove_from_session(&handle)
         .await
         .map_err(map_torrent_err)?;
+
+    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+        return Ok(());
+    }
 
     download_jobs::finish_success(&deps.pool, job_id).await?;
     let _ = deps.events.send(JobProgressEvent {

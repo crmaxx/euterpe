@@ -84,9 +84,13 @@ pub fn can_transition(from: DownloadJobStatus, to: DownloadJobStatus) -> bool {
         (from, to),
         (Queued, Running)
             | (Queued, Cancelled)
+            | (Queued, Paused)
             | (Running, Completed)
             | (Running, Failed)
             | (Running, Cancelled)
+            | (Running, Paused)
+            | (Paused, Queued)
+            | (Paused, Cancelled)
     )
 }
 
@@ -493,6 +497,98 @@ pub async fn is_cancelled(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> 
     Ok(row.map(|(s,)| s == "cancelled").unwrap_or(false))
 }
 
+pub async fn is_paused(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(s,)| s == "paused").unwrap_or(false))
+}
+
+/// Worker should stop without marking failed/completed (cancelled or paused).
+pub async fn is_stopped(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT status FROM download_jobs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row
+        .map(|(s,)| s == "cancelled" || s == "paused")
+        .unwrap_or(false))
+}
+
+/// Pause a queued or running job; frees scheduler slots for the next queued job.
+pub async fn pause(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
+    let result = sqlx::query(
+        r#"
+        UPDATE download_jobs
+        SET status = 'paused', download_speed_bps = 0, updated_at = datetime('now')
+        WHERE id = ? AND status IN ('queued', 'running')
+        "#,
+    )
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::bad_request(
+            "only queued or running jobs can be paused",
+        ));
+    }
+    Ok(())
+}
+
+/// Resume a paused job at the end of its type queue.
+pub async fn resume_paused(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT job_type FROM download_jobs WHERE id = ? AND status = 'paused'",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((job_type_str,)) = row else {
+        return Err(ApiError::bad_request("only paused jobs can be resumed"));
+    };
+
+    let job_type = match job_type_str.as_str() {
+        "album" => DownloadJobType::Album,
+        "track" => DownloadJobType::Track,
+        "artist" => DownloadJobType::Artist,
+        "playlist" => DownloadJobType::Playlist,
+        "torrent" => DownloadJobType::Torrent,
+        other => return Err(ApiError::Config(format!("invalid job_type {other}"))),
+    };
+
+    if let Some(mut payload) = get_payload(pool, id).await? {
+        payload.clear_torrent_session();
+        set_payload(pool, id, &payload).await?;
+    }
+
+    let queue_position = next_queue_position(pool, job_type).await?;
+    let result = sqlx::query(
+        r#"
+        UPDATE download_jobs
+        SET status = 'queued',
+            error_message = NULL,
+            download_speed_bps = 0,
+            queue_position = ?,
+            updated_at = datetime('now')
+        WHERE id = ? AND status = 'paused'
+        "#,
+    )
+    .bind(queue_position)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::Message(format!("job {id} not found")));
+    }
+    Ok(())
+}
+
 pub async fn update_progress(pool: &SqlitePool, id: i64, progress_pct: f64) -> Result<(), ApiError> {
     update_progress_and_speed(pool, id, progress_pct, None).await
 }
@@ -590,12 +686,67 @@ pub async fn delete_by_id(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> 
     Ok(result.rows_affected() > 0)
 }
 
+/// Re-queue a failed job at the end of its type group (FIFO).
+pub async fn retry_failed(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT status, job_type FROM download_jobs WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((status, job_type_str)) = row else {
+        return Err(ApiError::Message(format!("job {id} not found")));
+    };
+
+    if status != "failed" {
+        return Err(ApiError::bad_request("only failed jobs can be retried"));
+    }
+
+    let job_type = match job_type_str.as_str() {
+        "album" => DownloadJobType::Album,
+        "track" => DownloadJobType::Track,
+        "artist" => DownloadJobType::Artist,
+        "playlist" => DownloadJobType::Playlist,
+        "torrent" => DownloadJobType::Torrent,
+        other => return Err(ApiError::Config(format!("invalid job_type {other}"))),
+    };
+
+    if let Some(mut payload) = get_payload(pool, id).await? {
+        payload.clear_torrent_session();
+        set_payload(pool, id, &payload).await?;
+    }
+
+    let queue_position = next_queue_position(pool, job_type).await?;
+    let result = sqlx::query(
+        r#"
+        UPDATE download_jobs
+        SET status = 'queued',
+            error_message = NULL,
+            progress_pct = 0,
+            download_speed_bps = 0,
+            queue_position = ?,
+            updated_at = datetime('now')
+        WHERE id = ? AND status = 'failed'
+        "#,
+    )
+    .bind(queue_position)
+    .bind(id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::Message(format!("job {id} not found")));
+    }
+    Ok(())
+}
+
 pub async fn cancel(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
     let result = sqlx::query(
         r#"
         UPDATE download_jobs
         SET status = 'cancelled', updated_at = datetime('now')
-        WHERE id = ? AND status IN ('queued', 'running')
+        WHERE id = ? AND status IN ('queued', 'running', 'paused')
         "#,
     )
     .bind(id)
@@ -674,6 +825,65 @@ mod tests {
         finish_success(&pool, id).await.unwrap();
         assert!(delete_by_id(&pool, id).await.unwrap());
         assert!(get(&pool, id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn pause_running_allows_next_queued() {
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+
+        let running = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
+            .await
+            .unwrap();
+        claim_running(&pool, running).await.unwrap();
+
+        let queued = insert_queued(&pool, DownloadJobType::Album, 2, 6, None)
+            .await
+            .unwrap();
+
+        pause(&pool, running).await.unwrap();
+
+        let job = get(&pool, running).await.unwrap().expect("job");
+        assert_eq!(job.status, DownloadJobStatus::Paused);
+
+        assert_eq!(
+            next_queued_id(&pool, DownloadJobType::Album).await.unwrap(),
+            Some(queued)
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_failed_requeues_at_end() {
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+
+        let id = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
+            .await
+            .unwrap();
+        claim_running(&pool, id).await.unwrap();
+        finish_failed(&pool, id, "network").await.unwrap();
+
+        let other = insert_queued(&pool, DownloadJobType::Album, 2, 6, None)
+            .await
+            .unwrap();
+
+        retry_failed(&pool, id).await.unwrap();
+
+        let job = get(&pool, id).await.unwrap().expect("job");
+        assert_eq!(job.status, DownloadJobStatus::Queued);
+        assert_eq!(job.progress_pct, 0.0);
+        assert!(job.error_message.is_none());
+        assert!(job.queue_position > 0);
+
+        assert_eq!(
+            next_queued_id(&pool, DownloadJobType::Album).await.unwrap(),
+            Some(other)
+        );
+        claim_running(&pool, other).await.unwrap();
+        assert_eq!(
+            next_queued_id(&pool, DownloadJobType::Album).await.unwrap(),
+            Some(id)
+        );
     }
 
     #[tokio::test]

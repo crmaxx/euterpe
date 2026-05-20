@@ -170,4 +170,12 @@ impl DownloadJobPayload {
             t.runtime = Some(snapshot);
         }
     }
+
+    /// Drop librqbit session so a retried torrent job starts fresh.
+    pub fn clear_torrent_session(&mut self) {
+        if let Some(t) = &mut self.torrent {
+            t.librqbit_id = None;
+            t.runtime = None;
+        }
+    }
 }

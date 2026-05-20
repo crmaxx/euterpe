@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum DownloadJobStatus {
     Queued,
     Running,
+    Paused,
     Completed,
     Failed,
     Cancelled,
@@ -15,6 +16,7 @@ impl DownloadJobStatus {
         match self {
             Self::Queued => "queued",
             Self::Running => "running",
+            Self::Paused => "paused",
             Self::Completed => "completed",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
@@ -25,6 +27,7 @@ impl DownloadJobStatus {
         match s {
             "queued" => Some(Self::Queued),
             "running" => Some(Self::Running),
+            "paused" => Some(Self::Paused),
             "completed" => Some(Self::Completed),
             "failed" => Some(Self::Failed),
             "cancelled" => Some(Self::Cancelled),

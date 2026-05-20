@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use euterpe_qobuz::{AlbumDetail, QobuzApi, QobuzError, Quality, TrackSummary};
+use euterpe_qobuz::{AlbumDetail, DEFAULT_USER_AGENT, QobuzApi, QobuzError, Quality, TrackSummary};
 use euterpe_torrent::TorrentEngine;
 use futures_util::TryStreamExt;
 use reqwest::Client;
@@ -325,7 +325,12 @@ pub async fn execute_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError>
     };
 
     if let Err(e) = result {
-        let _ = download_jobs::finish_failed(&deps.pool, job_id, &e.to_string()).await;
+        if download_jobs::get(&deps.pool, job_id)
+            .await?
+            .is_some_and(|j| j.status == crate::api::DownloadJobStatus::Running)
+        {
+            let _ = download_jobs::finish_failed(&deps.pool, job_id, &e.to_string()).await;
+        }
         return Err(e);
     }
     Ok(())
@@ -397,9 +402,9 @@ async fn run_album_job(
     let mut done = 0usize;
 
     for track in &tracks {
-        if download_jobs::is_cancelled(&deps.pool, job_id).await? {
-            dl_debug!(deps, job_id, "download job stopped (cancelled)");
-            tracing::info!(job_id, "download job stopped (cancelled)");
+        if download_jobs::is_stopped(&deps.pool, job_id).await? {
+            dl_debug!(deps, job_id, "download job stopped");
+            tracing::info!(job_id, "download job stopped (cancelled or paused)");
             return Ok(());
         }
 
@@ -461,6 +466,10 @@ async fn run_album_job(
         tracing::warn!(job_id, error = %e, "album cover download/embed failed");
     }
 
+    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+        return Ok(());
+    }
+
     download_jobs::finish_success(&deps.pool, job_id).await?;
     dl_debug!(deps, job_id, qobuz_id = album_id, tracks = total, "download job finished");
     Ok(())
@@ -471,12 +480,42 @@ pub(crate) fn existing_file_matches_remote_size(local_len: u64, remote_len: Opti
     remote_len.is_some_and(|remote| remote == local_len)
 }
 
-async fn http_content_length(http: &Client, url: &str) -> Result<Option<u64>, ApiError> {
-    let response = http
-        .head(url)
+/// Headers Qobuz CDN expects for signed `getFileUrl` download links.
+struct QobuzCdnHeaders {
+    user_agent: String,
+    referer: String,
+}
+
+impl QobuzCdnHeaders {
+    fn from_config(config: &AppConfig) -> Self {
+        let play = config.qobuz_play_base().trim_end_matches('/');
+        Self {
+            user_agent: DEFAULT_USER_AGENT.to_string(),
+            referer: format!("{play}/"),
+        }
+    }
+}
+
+fn apply_qobuz_cdn_headers(
+    builder: reqwest::RequestBuilder,
+    headers: &QobuzCdnHeaders,
+) -> reqwest::RequestBuilder {
+    builder
+        .header("User-Agent", &headers.user_agent)
+        .header("Referer", &headers.referer)
+        .header("Accept", "*/*")
+        .header("Accept-Encoding", "identity")
+}
+
+async fn http_content_length(
+    http: &Client,
+    url: &str,
+    headers: &QobuzCdnHeaders,
+) -> Result<Option<u64>, ApiError> {
+    let response = apply_qobuz_cdn_headers(http.head(url), headers)
         .send()
         .await
-        .map_err(|e| ApiError::Message(e.to_string()))?;
+        .map_err(|e| ApiError::Message(format!("CDN HEAD failed: {e}")))?;
     if !response.status().is_success() {
         return Ok(None);
     }
@@ -491,15 +530,7 @@ async fn download_track(
     quality: Quality,
     deps: &WorkerDeps,
 ) -> Result<u64, ApiError> {
-    let stream = {
-        let mut guard = deps.qobuz.lock().await;
-        guard.track_stream_url(track.id, quality).await?
-    };
-
-    let url = stream
-        .url
-        .filter(|u| !u.is_empty())
-        .ok_or_else(|| ApiError::Message("empty stream url".into()))?;
+    let cdn_headers = QobuzCdnHeaders::from_config(&deps.config);
 
     let dest = track_path(
         &deps.config.library_path,
@@ -513,7 +544,15 @@ async fn download_track(
             .await
             .map_err(|e| ApiError::Message(format!("stat {}: {e}", dest.display())))?
             .len();
-        let remote_len = http_content_length(&deps.http, &url).await?;
+        let stream = {
+            let mut guard = deps.qobuz.lock().await;
+            guard.track_stream_url(track.id, quality).await?
+        };
+        let url = stream
+            .url
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| ApiError::Message("empty stream url".into()))?;
+        let remote_len = http_content_length(&deps.http, &url, &cdn_headers).await?;
         if existing_file_matches_remote_size(local_len, remote_len) {
             dl_debug!(
                 deps,
@@ -537,14 +576,6 @@ async fn download_track(
         );
     }
 
-    dl_debug!(
-        deps,
-        job_id,
-        track_id = track.id,
-        path = %dest.display(),
-        "fetching stream and writing file"
-    );
-
     if let Some(parent) = dest.parent() {
         tokio::fs::create_dir_all(parent).await.map_err(|e| {
             ApiError::Message(format!("mkdir {}: {e}", parent.display()))
@@ -552,8 +583,59 @@ async fn download_track(
     }
 
     let part = dest.with_extension("part");
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err: Option<ApiError> = None;
     let started = Instant::now();
-    download_url_to_file(&deps.http, &url, &part).await?;
+
+    for attempt in 1..=MAX_ATTEMPTS {
+        if download_jobs::is_stopped(&deps.pool, job_id).await? {
+            return Ok(0);
+        }
+
+        let stream = {
+            let mut guard = deps.qobuz.lock().await;
+            guard.track_stream_url(track.id, quality).await?
+        };
+        let url = stream
+            .url
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| ApiError::Message("empty stream url".into()))?;
+
+        dl_debug!(
+            deps,
+            job_id,
+            track_id = track.id,
+            attempt,
+            path = %dest.display(),
+            "fetching stream and writing file"
+        );
+
+        match download_url_to_file(&deps.http, &url, &part, &cdn_headers).await {
+            Ok(()) => {
+                last_err = None;
+                break;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    job_id,
+                    track_id = track.id,
+                    attempt,
+                    error = %e,
+                    "track CDN download failed"
+                );
+                let _ = tokio::fs::remove_file(&part).await;
+                last_err = Some(e);
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(400 * attempt as u64)).await;
+                }
+            }
+        }
+    }
+
+    if let Some(e) = last_err {
+        return Err(e);
+    }
+
     tokio::fs::rename(&part, &dest).await.map_err(|e| {
         ApiError::Message(format!("rename {}: {e}", dest.display()))
     })?;
@@ -579,27 +661,42 @@ async fn download_track(
     Ok(speed_bps)
 }
 
-pub async fn download_url_to_file(
+async fn download_url_to_file(
     http: &Client,
     url: &str,
-    dest: &PathBuf,
+    dest: &Path,
+    headers: &QobuzCdnHeaders,
 ) -> Result<(), ApiError> {
-    let response = http.get(url).send().await.map_err(|e| ApiError::Message(e.to_string()))?;
-    if !response.status().is_success() {
+    let response = apply_qobuz_cdn_headers(http.get(url), headers)
+        .send()
+        .await
+        .map_err(|e| ApiError::Message(format!("CDN GET {url}: {e}")))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .bytes()
+            .await
+            .unwrap_or_default();
+        let preview = String::from_utf8_lossy(&body[..body.len().min(512)]);
         return Err(ApiError::Message(format!(
-            "download HTTP {}",
-            response.status()
+            "CDN HTTP {status} for {url}: {preview}"
         )));
     }
 
-    let mut file = tokio::fs::File::create(dest).await.map_err(|e| ApiError::Message(e.to_string()))?;
-    let stream = response
-        .bytes_stream()
-        .map_err(std::io::Error::other);
-    let mut reader = StreamReader::new(stream);
-    tokio::io::copy(&mut reader, &mut file)
+    let mut file = tokio::fs::File::create(dest)
         .await
-        .map_err(|e| ApiError::Message(e.to_string()))?;
+        .map_err(|e| ApiError::Message(format!("create {}: {e}", dest.display())))?;
+    let stream = response.bytes_stream().map_err(std::io::Error::other);
+    let mut reader = StreamReader::new(stream);
+    let written = tokio::io::copy(&mut reader, &mut file)
+        .await
+        .map_err(|e| ApiError::Message(format!("CDN read {url}: {e}")))?;
+
+    if written == 0 {
+        return Err(ApiError::Message(format!("CDN returned empty body for {url}")));
+    }
+
     Ok(())
 }
 

@@ -363,6 +363,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/downloads/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause a queued or running download job
+         * @description Sets status to `paused` and wakes the scheduler so the next queued job in the same group can start.
+         *     Running torrent jobs are removed from the librqbit session; progress is kept for resume.
+         */
+        post: operations["pauseDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/downloads/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a paused download job
+         * @description Re-queues the job at the end of its type group and wakes the scheduler.
+         */
+        post: operations["resumeDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/downloads/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-queue a failed download job
+         * @description Resets a `failed` job to `queued` (progress cleared, new queue position at end of its group).
+         *     Torrent jobs drop the previous librqbit session and start fresh.
+         */
+        post: operations["retryDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/downloads/{id}/priority": {
         parameters: {
             query?: never;
@@ -756,7 +818,7 @@ export interface components {
             quality: number;
         };
         /** @enum {string} */
-        DownloadJobStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
+        DownloadJobStatus: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
         /** @enum {string} */
         DownloadJobType: "album" | "track" | "artist" | "playlist" | "torrent";
         /** @enum {string} */
@@ -1754,6 +1816,72 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    pauseDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Job paused */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    resumeDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Job resumed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    retryDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Job re-queued */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
         };
     };
     patchDownloadPriority: {
