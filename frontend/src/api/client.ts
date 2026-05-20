@@ -24,6 +24,7 @@ export type QobuzConnectionStatusResponse =
 export type DownloadJobListResponse =
   components["schemas"]["DownloadJobListResponse"];
 export type DownloadJob = components["schemas"]["DownloadJob"];
+export type TorrentJobDetail = components["schemas"]["TorrentJobDetail"];
 export type CreateDownloadRequest =
   components["schemas"]["CreateDownloadRequest"];
 export type CreateDownloadResponse =

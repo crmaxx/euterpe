@@ -7,16 +7,14 @@ function job(
     Partial<DownloadJob>,
 ): DownloadJob {
   return {
-    id: partial.id,
-    status: partial.status,
-    queue_position: partial.queue_position,
     job_type: "album",
     source: "qobuz",
     qobuz_id: partial.id,
     quality: 6,
     progress_pct: 0,
+    download_speed_bps: 0,
     error_message: null,
-    display_title: null,
+    display_title: "",
     torrent_detail: null,
     created_at: "",
     updated_at: "",
