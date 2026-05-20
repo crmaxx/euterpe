@@ -5,13 +5,19 @@ pub mod keyset;
 mod library;
 mod qobuz;
 mod server;
+mod torrent;
 
 pub use keyset::{KeysetPage, SortOrder, SortKeyKind, SortKeyValue};
 
 pub use downloads::{
     CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse, DownloadJob,
-    DownloadJobListResponse,
-    DownloadJobStatus, DownloadJobType, DownloadPurgeResponse, JobProgressEvent,
+    DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
+    DownloadSource, JobProgressEvent, PatchDownloadPriorityRequest, TorrentEuterpePhase,
+    TorrentJobDetail, TorrentLibrqbitState,
+};
+pub use torrent::{
+    TorrentConfirmRequest, TorrentInspectFile, TorrentInspectMagnetRequest, TorrentInspectResponse,
+    TorrentSettings, TorrentSettingsPatch, TorrentSettingsResponse,
 };
 pub use health::{ErrorBody, ErrorResponse, HealthResponse};
 pub use integrations::{

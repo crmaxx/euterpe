@@ -31,8 +31,26 @@ export const handlers = [
       library_path: "/music",
       credentials_configured: true,
       admin_auth_required: false,
+      torrent_incoming_dir: "/data/torrent-incoming",
     }),
   ),
+
+  http.get("/api/v1/settings/torrent", () =>
+    HttpResponse.json({
+      seed_ratio_limit: 0,
+      seed_time_limit_sec: 0,
+      max_upload_kib_per_sec: 0,
+    }),
+  ),
+
+  http.patch("/api/v1/settings/torrent", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      seed_ratio_limit: (body.seed_ratio_limit as number) ?? 0,
+      seed_time_limit_sec: (body.seed_time_limit_sec as number) ?? 0,
+      max_upload_kib_per_sec: (body.max_upload_kib_per_sec as number) ?? 0,
+    });
+  }),
 
   http.get("/api/v1/qobuz/sync/latest", () =>
     HttpResponse.json({ run: null }),
@@ -86,9 +104,12 @@ export const handlers = [
           id: 1,
           status: "running",
           job_type: "album",
+          source: "qobuz",
+          display_title: "Artist — Album",
           qobuz_id: 99,
           quality: 6,
           progress_pct: 10,
+          download_speed_bps: 512000,
           created_at: "2026-01-01",
           updated_at: "2026-01-01",
         },
@@ -96,9 +117,12 @@ export const handlers = [
           id: 2,
           status: "completed",
           job_type: "album",
+          source: "qobuz",
+          display_title: "Other — Done",
           qobuz_id: 100,
           quality: 6,
           progress_pct: 100,
+          download_speed_bps: 0,
           created_at: "2026-01-01",
           updated_at: "2026-01-01",
         },

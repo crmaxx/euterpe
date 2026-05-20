@@ -62,6 +62,7 @@ export const queryKeys = {
   integrations: (type?: string) => ["integrations", type ?? "all"] as const,
   integrationsCatalog: (type?: string) =>
     ["integrationsCatalog", type ?? "all"] as const,
+  torrentSettings: ["torrentSettings"] as const,
 };
 
 export function useServerInfo() {
@@ -520,10 +521,15 @@ export function useFavoritesFlat(params: FavoritesListQuery = { limit: 500 }) {
 export function useDownloads(status?: string) {
   const query = useKeysetList<
     DownloadJob,
-    { status?: string; limit: number; sort: string; order: "desc" }
+    { status?: string; limit: number; sort: string; order: "asc" }
   >({
     queryKey: queryKeys.downloads(status),
-    params: { status, limit: 100, sort: "id", order: "desc" as const },
+    params: {
+      status,
+      limit: 100,
+      sort: "queue_position",
+      order: "asc" as const,
+    },
     queryFn: (p) => api.downloads(p),
     refetchInterval: 3_000,
   });
@@ -603,6 +609,45 @@ export function useCreateDownloadByUrl() {
   });
 }
 
+export function useTorrentSettings() {
+  return useQuery({
+    queryKey: queryKeys.torrentSettings,
+    queryFn: api.torrentSettings,
+  });
+}
+
+export function usePatchTorrentSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchTorrentSettings,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.torrentSettings });
+    },
+  });
+}
+
+export function useInspectTorrentMagnet() {
+  return useMutation({
+    mutationFn: (magnet: string) => api.inspectTorrentMagnet(magnet),
+  });
+}
+
+export function useInspectTorrentFile() {
+  return useMutation({
+    mutationFn: (file: File) => api.inspectTorrentFile(file),
+  });
+}
+
+export function useConfirmTorrentDownload() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.confirmTorrentDownload,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}
+
 export function useCreateDownload() {
   const qc = useQueryClient();
   return useMutation({
@@ -637,6 +682,17 @@ export function usePurgeDownload() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.purgeDownload(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}
+
+export function usePatchDownloadPriority() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, direction }: { id: number; direction: "up" | "down" }) =>
+      api.patchDownloadPriority(id, direction),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["downloads"] });
     },

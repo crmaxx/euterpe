@@ -29,6 +29,17 @@ export type CreateDownloadRequest =
 export type CreateDownloadResponse =
   components["schemas"]["CreateDownloadResponse"];
 export type JobProgressEvent = components["schemas"]["JobProgressEvent"];
+export type TorrentInspectResponse =
+  components["schemas"]["TorrentInspectResponse"];
+export type TorrentInspectFile = components["schemas"]["TorrentInspectFile"];
+export type TorrentConfirmRequest =
+  components["schemas"]["TorrentConfirmRequest"];
+export type TorrentSettings = components["schemas"]["TorrentSettings"];
+export type TorrentSettingsPatch =
+  components["schemas"]["TorrentSettingsPatch"];
+export type TorrentSettingsResponse =
+  components["schemas"]["TorrentSettingsResponse"];
+export type DownloadSource = components["schemas"]["DownloadSource"];
 export type ScanProgressEvent = components["schemas"]["ScanProgressEvent"];
 export type LibraryScanLatestResponse =
   components["schemas"]["LibraryScanLatestResponse"];
@@ -90,7 +101,11 @@ export async function fetchJson<T>(
   init?: RequestInit,
 ): Promise<T> {
   const headers = new Headers(init?.headers);
-  if (!headers.has("Content-Type") && init?.body) {
+  if (
+    !headers.has("Content-Type") &&
+    init?.body &&
+    !(init.body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json");
   }
   const token = getAdminToken();
@@ -173,19 +188,55 @@ export const api = {
       body: JSON.stringify({ url, quality }),
     }),
 
+  inspectTorrentMagnet: (magnet: string) =>
+    fetchJson<TorrentInspectResponse>("/downloads/torrent/inspect", {
+      method: "POST",
+      body: JSON.stringify({ magnet }),
+    }),
+
+  inspectTorrentFile: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetchJson<TorrentInspectResponse>("/downloads/torrent/inspect/file", {
+      method: "POST",
+      body: form,
+    });
+  },
+
+  confirmTorrentDownload: (body: TorrentConfirmRequest) =>
+    fetchJson<CreateDownloadResponse>("/downloads/torrent/confirm", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  torrentSettings: () =>
+    fetchJson<TorrentSettingsResponse>("/settings/torrent"),
+
+  patchTorrentSettings: (body: TorrentSettingsPatch) =>
+    fetchJson<TorrentSettingsResponse>("/settings/torrent", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
   downloads: (
     params: KeysetListParams & { status?: string } = {},
   ) => {
     const search = new URLSearchParams();
     appendKeysetParams(search, {
       limit: params.limit ?? 100,
-      sort: params.sort ?? "id",
-      order: params.order ?? "desc",
+      sort: params.sort ?? "queue_position",
+      order: params.order ?? "asc",
       cursor: params.cursor ?? undefined,
       status: params.status,
     });
     return fetchJson<DownloadJobListResponse>(`/downloads?${search}`);
   },
+
+  patchDownloadPriority: (id: number, direction: "up" | "down") =>
+    fetchJson<void>(`/downloads/${id}/priority`, {
+      method: "PATCH",
+      body: JSON.stringify({ direction }),
+    }),
 
   createDownload: (body: CreateDownloadRequest) =>
     fetchJson<CreateDownloadResponse>("/downloads", {
@@ -301,7 +352,12 @@ export function subscribeServerEvents(handlers: {
   onJobProgress?: (event: JobProgressEvent) => void;
   onScanProgress?: (event: ScanProgressEvent) => void;
 }): EventSource {
-  const source = new EventSource("/api/v1/events");
+  const token = getAdminToken();
+  const eventsUrl =
+    token != null && token.length > 0
+      ? `${API_BASE}/events?access_token=${encodeURIComponent(token)}`
+      : `${API_BASE}/events`;
+  const source = new EventSource(eventsUrl);
   if (handlers.onJobProgress) {
     source.addEventListener("job_progress", (ev) => {
       handlers.onJobProgress?.(JSON.parse(ev.data) as JobProgressEvent);

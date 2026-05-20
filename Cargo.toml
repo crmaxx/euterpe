@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/euterpe-hawk",
     "crates/euterpe-qobuz",
+    "crates/euterpe-torrent",
     "crates/euterpe-server",
 ]
 

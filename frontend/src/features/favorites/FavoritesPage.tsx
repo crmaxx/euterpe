@@ -14,7 +14,6 @@ import {
   useState,
 } from "react";
 import {
-  useCreateDownloadByUrl,
   useActiveAlbumDownloadQobuzIds,
   useCreateDownload,
   useFavoritesList,
@@ -232,9 +231,6 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
   const [q, setQ] = useState("");
   const [inLibrary, setInLibrary] = useState<boolean | undefined>(undefined);
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
-  const [showDownloadUrl, setShowDownloadUrl] = useState(false);
-  const [urlInput, setUrlInput] = useState("");
-
   useEffect(() => {
     const timerId = window.setTimeout(() => setQ(qInput.trim()), 300);
     return () => window.clearTimeout(timerId);
@@ -264,7 +260,6 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
     !favoritesQuery.isPending &&
     q.length > 0;
   const sync = useQobuzSync();
-  const downloadByUrl = useCreateDownloadByUrl();
   const remove = useRemoveFavorites();
   const download = useCreateDownload();
   const busyApi = useContext(FavoritesBusyApiContext);
@@ -435,12 +430,6 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
             {t("favorites.syncNow")}
           </Button>
           <Button
-            variant="outline"
-            onClick={() => setShowDownloadUrl((v) => !v)}
-          >
-            {t("favorites.downloadByUrl")}
-          </Button>
-          <Button
             variant="secondary"
             disabled={!table.getSelectedRowModel().rows.length}
             onClick={() => void bulkDownload()}
@@ -449,56 +438,6 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
           </Button>
         </div>
       </div>
-
-      {showDownloadUrl ? (
-        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border/60 bg-card/30 p-3">
-          <div className="min-w-[16rem] flex-1 space-y-1">
-            <Label htmlFor="fav-download-url">{t("favorites.qobuzUrl")}</Label>
-            <Input
-              id="fav-download-url"
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              placeholder={t("favorites.urlPlaceholder")}
-              disabled={downloadByUrl.isPending}
-            />
-          </div>
-          <Button
-            disabled={!urlInput.trim() || downloadByUrl.isPending}
-            onClick={() =>
-              void downloadByUrl
-                .mutateAsync(urlInput.trim())
-                .then(() => {
-                  setUrlInput("");
-                  setShowDownloadUrl(false);
-                  toast({ title: t("favorites.toast.downloadQueued") });
-                })
-                .catch((err: unknown) => {
-                  const message =
-                    err instanceof Error
-                      ? err.message
-                      : t("favorites.toast.queueFailed");
-                  toast({
-                    title: t("favorites.toast.queueFailed"),
-                    description: message,
-                    variant: "destructive",
-                  });
-                })
-            }
-          >
-            {t("favorites.download")}
-          </Button>
-          <Button
-            variant="ghost"
-            disabled={downloadByUrl.isPending}
-            onClick={() => {
-              setShowDownloadUrl(false);
-              setUrlInput("");
-            }}
-          >
-            {t("common.cancel")}
-          </Button>
-        </div>
-      ) : null}
 
       <div className="flex flex-wrap items-end gap-4">
         <div className="min-w-[12rem] flex-1 space-y-1">

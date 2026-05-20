@@ -255,6 +255,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/downloads/torrent/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Inspect torrent metadata from magnet link (list-only, no download) */
+        post: operations["inspectTorrentMagnet"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/downloads/torrent/inspect/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Inspect torrent metadata from .torrent file (multipart upload) */
+        post: operations["inspectTorrentFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/downloads/torrent/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue torrent download job from a prior inspect */
+        post: operations["confirmTorrentDownload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/torrent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Torrent client settings (seed limits, upload cap) */
+        get: operations["getTorrentSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update torrent settings */
+        patch: operations["patchTorrentSettings"];
+        trace?: never;
+    };
     "/api/v1/downloads/purge": {
         parameters: {
             query?: never;
@@ -292,6 +361,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/downloads/{id}/priority": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Move a queued job up or down within its source group */
+        patch: operations["patchDownloadPriority"];
         trace?: never;
     };
     "/api/v1/library/scan": {
@@ -618,6 +704,11 @@ export interface components {
             library_path: string;
             credentials_configured: boolean;
             admin_auth_required: boolean;
+            /**
+             * @description Absolute path for torrent staging/downloads when `EUTERPE_TORRENT_INCOMING_DIR` is set.
+             *     Null when torrent API is disabled.
+             */
+            torrent_incoming_dir?: string | null;
         };
         QobuzSyncRunSummary: {
             /** Format: int64 */
@@ -667,7 +758,9 @@ export interface components {
         /** @enum {string} */
         DownloadJobStatus: "queued" | "running" | "completed" | "failed" | "cancelled";
         /** @enum {string} */
-        DownloadJobType: "album" | "track" | "artist" | "playlist";
+        DownloadJobType: "album" | "track" | "artist" | "playlist" | "torrent";
+        /** @enum {string} */
+        DownloadSource: "qobuz" | "torrent";
         CreateDownloadRequest: {
             job_type: components["schemas"]["DownloadJobType"];
             /** @description Qobuz `album/get` id (short ref e.g. zg7pv28g4mldg). From GET /api/v1/qobuz/favorites. */
@@ -687,15 +780,58 @@ export interface components {
             /** Format: int64 */
             job_id: number;
         };
+        PatchDownloadPriorityRequest: {
+            /** @enum {string} */
+            direction: "up" | "down";
+        };
+        /** @enum {string} */
+        TorrentLibrqbitState: "initializing" | "live" | "paused" | "error";
+        /** @enum {string} */
+        TorrentEuterpePhase: "downloading" | "importing";
+        TorrentJobDetail: {
+            librqbit_state: components["schemas"]["TorrentLibrqbitState"];
+            euterpe_phase?: components["schemas"]["TorrentEuterpePhase"] | null;
+            /** Format: int64 */
+            progress_bytes: number;
+            /** Format: int64 */
+            total_bytes: number;
+            /** Format: int64 */
+            download_speed_bps: number;
+            /** Format: int64 */
+            upload_speed_bps: number;
+            /** Format: int64 */
+            eta_secs?: number | null;
+            peers_live: number;
+            peers_connecting: number;
+            error?: string | null;
+        };
         DownloadJob: {
             /** Format: int64 */
             id: number;
             status: components["schemas"]["DownloadJobStatus"];
             job_type: components["schemas"]["DownloadJobType"];
-            /** Format: int64 */
+            source: components["schemas"]["DownloadSource"];
+            /** @description Human-readable job title (album name or torrent name) */
+            display_title: string;
+            /**
+             * Format: int64
+             * @description Qobuz catalog id for album jobs; 0 for torrent
+             */
             qobuz_id: number;
+            /** @description Qobuz format_id for album jobs; 0 for torrent */
             quality: number;
             progress_pct: number;
+            /**
+             * Format: int64
+             * @description Instantaneous download speed in bytes per second
+             */
+            download_speed_bps: number;
+            /**
+             * Format: int64
+             * @description Order within the same job_type group (lower = higher priority)
+             */
+            queue_position: number;
+            torrent_detail?: components["schemas"]["TorrentJobDetail"] | null;
             error_message?: string | null;
             created_at: string;
             updated_at: string;
@@ -713,6 +849,60 @@ export interface components {
             /** Format: int64 */
             id: number;
             progress_pct: number;
+            /** Format: int64 */
+            download_speed_bps: number;
+            torrent_detail?: components["schemas"]["TorrentJobDetail"] | null;
+        };
+        TorrentInspectFile: {
+            index: number;
+            path: string;
+            /** Format: int64 */
+            size_bytes: number;
+            selected: boolean;
+        };
+        TorrentInspectResponse: {
+            inspect_id: string;
+            name: string;
+            /** Format: int64 */
+            total_size_bytes: number;
+            info_hash_v1: string;
+            info_hash_v2?: string | null;
+            comment?: string | null;
+            /** Format: int64 */
+            free_space_bytes?: number | null;
+            files: components["schemas"]["TorrentInspectFile"][];
+        };
+        TorrentInspectMagnetRequest: {
+            magnet: string;
+        };
+        TorrentConfirmFile: {
+            index: number;
+            selected: boolean;
+        };
+        TorrentConfirmRequest: {
+            inspect_id: string;
+            files: components["schemas"]["TorrentConfirmFile"][];
+            copy_to_library: boolean;
+            auto_index_after_import: boolean;
+        };
+        TorrentSettings: {
+            /** @description 0 = download-only (disable upload). Values > 0 are rejected in v1. */
+            seed_ratio_limit: number;
+            /**
+             * Format: int64
+             * @description 0 = download-only. Values > 0 are rejected in v1.
+             */
+            seed_time_limit_sec: number;
+            /** Format: int64 */
+            max_upload_kib_per_sec: number;
+        };
+        TorrentSettingsResponse: components["schemas"]["TorrentSettings"];
+        TorrentSettingsPatch: {
+            seed_ratio_limit?: number;
+            /** Format: int64 */
+            seed_time_limit_sec?: number;
+            /** Format: int64 */
+            max_upload_kib_per_sec?: number;
         };
         LibraryScanStartResponse: {
             /** Format: int64 */
@@ -1296,7 +1486,7 @@ export interface operations {
             query?: {
                 status?: components["schemas"]["DownloadJobStatus"];
                 limit?: number;
-                sort?: "id" | "created_at" | "status";
+                sort?: "id" | "created_at" | "status" | "queue_position";
                 order?: "asc" | "desc";
                 cursor?: string;
             };
@@ -1372,6 +1562,132 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    inspectTorrentMagnet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TorrentInspectMagnetRequest"];
+            };
+        };
+        responses: {
+            /** @description Torrent file list and staging inspect_id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TorrentInspectResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    inspectTorrentFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Torrent file list and staging inspect_id */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TorrentInspectResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    confirmTorrentDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TorrentConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Job queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateDownloadResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getTorrentSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current torrent settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TorrentSettingsResponse"];
+                };
+            };
+        };
+    };
+    patchTorrentSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TorrentSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TorrentSettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
     purgeFinishedDownloads: {
         parameters: {
             query?: never;
@@ -1438,6 +1754,32 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    patchDownloadPriority: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchDownloadPriorityRequest"];
+            };
+        };
+        responses: {
+            /** @description Priority updated */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
         };
     };
     startLibraryScan: {

@@ -29,7 +29,9 @@ use crate::db::{self, favorites, sync_runs};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
-use crate::routes::{downloads, events, integrations, library, qobuz as qobuz_routes};
+use crate::routes::{
+    downloads, events, integrations, library, qobuz as qobuz_routes, settings, torrent,
+};
 use crate::services::download::{spawn_worker, WorkerDeps};
 use crate::services::qobuz_sync;
 use crate::state::AppState;
@@ -72,6 +74,26 @@ pub fn app(state: AppState) -> Router {
         .route(
             "/api/v1/downloads/{id}",
             get(downloads::get_download).delete(downloads::delete_download),
+        )
+        .route(
+            "/api/v1/downloads/{id}/priority",
+            axum::routing::patch(downloads::patch_download_priority),
+        )
+        .route(
+            "/api/v1/downloads/torrent/inspect",
+            post(torrent::inspect_torrent_magnet),
+        )
+        .route(
+            "/api/v1/downloads/torrent/inspect/file",
+            post(torrent::inspect_torrent_file),
+        )
+        .route(
+            "/api/v1/downloads/torrent/confirm",
+            post(torrent::confirm_torrent),
+        )
+        .route(
+            "/api/v1/settings/torrent",
+            get(settings::get_torrent_settings).patch(settings::patch_torrent_settings),
         )
         .route("/api/v1/library/scan", post(library::start_library_scan))
         .route(
@@ -164,12 +186,23 @@ pub fn app(state: AppState) -> Router {
                 })
                 .on_response(
                     |res: &Response<Body>, latency: Duration, _span: &tracing::Span| {
-                        tracing::event!(
-                            Level::DEBUG,
-                            status = res.status().as_u16(),
-                            latency_ms = latency.as_millis() as u64,
-                            "response"
-                        );
+                        let status = res.status().as_u16();
+                        let latency_ms = latency.as_millis() as u64;
+                        if status >= 400 {
+                            tracing::event!(
+                                Level::WARN,
+                                status,
+                                latency_ms,
+                                "response failed — error JSON is in the response body"
+                            );
+                        } else {
+                            tracing::event!(
+                                Level::DEBUG,
+                                status,
+                                latency_ms,
+                                "response"
+                            );
+                        }
                     },
                 ),
         )
@@ -180,6 +213,7 @@ pub async fn serve(
     hawk: Option<std::sync::Arc<euterpe_hawk::Hawk>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.ensure_library_root()?;
+    config.ensure_torrent_incoming_dir()?;
 
     let pool = db::connect(&config.database_url).await?;
     db::migrate(&pool).await?;
@@ -193,7 +227,7 @@ pub async fn serve(
     let state = AppState::new(
         (*config).clone(),
         pool.clone(),
-        job_tx,
+        job_tx.clone(),
         events.clone(),
         scan_events,
         hawk.clone(),
@@ -208,8 +242,15 @@ pub async fn serve(
         http: Client::builder()
             .timeout(std::time::Duration::from_secs(600))
             .build()?,
+        torrent: state.torrent.clone(),
+        torrent_semaphore: state.torrent.as_ref().map(|_| {
+            Arc::new(tokio::sync::Semaphore::new(state.config.torrent_max_active))
+        }),
+        scan_events: state.scan_events.clone(),
+        job_tx: job_tx.clone(),
     };
     spawn_worker(job_rx, worker_deps);
+    let _ = job_tx.send(0).await;
 
     let router = app(state);
 
@@ -240,6 +281,11 @@ async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoRes
     Ok(Json(ServerInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
         library_path: state.config.library_path.display().to_string(),
+        torrent_incoming_dir: state
+            .config
+            .torrent_incoming_dir
+            .as_ref()
+            .map(|p| p.display().to_string()),
         credentials_configured,
         admin_auth_required: state.config.admin_password.is_some(),
     }))
@@ -399,6 +445,9 @@ pub mod test_support {
             qobuz_api_base: None,
             qobuz_play_base: None,
             library_path,
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
             debug: false,
@@ -422,6 +471,7 @@ pub mod test_support {
         .await
         .unwrap();
 
+        let job_tx_wake = state.job_tx.clone();
         spawn_worker(
             job_rx,
             WorkerDeps {
@@ -430,8 +480,13 @@ pub mod test_support {
                 config: Arc::new(config),
                 events,
                 http: Client::new(),
+                torrent: None,
+                torrent_semaphore: None,
+                scan_events: state.scan_events.clone(),
+                job_tx: job_tx_wake.clone(),
             },
         );
+        let _ = job_tx_wake.send(0).await;
 
         state
     }

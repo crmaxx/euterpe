@@ -1,19 +1,22 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use euterpe_qobuz::{AlbumDetail, QobuzApi, QobuzError, Quality, TrackSummary};
+use euterpe_torrent::TorrentEngine;
 use futures_util::TryStreamExt;
 use reqwest::Client;
 use sqlx::SqlitePool;
-use tokio::sync::{broadcast, Mutex, Semaphore};
+use tokio::sync::{broadcast, mpsc, Mutex, Semaphore};
 use tokio_util::io::StreamReader;
 
-use crate::api::JobProgressEvent;
+use crate::api::{JobProgressEvent, ScanProgressEvent};
 use crate::config::AppConfig;
 use crate::db::{download_jobs, favorites};
 use crate::error::ApiError;
 use crate::library::paths::track_path;
 use crate::services::download::resolve::{push_album_api_candidate, resolve_from_qobuz_favorites};
+use crate::services::download::format_album_display_title;
 
 macro_rules! dl_debug {
     ($deps:expr, $($arg:tt)*) => {
@@ -39,20 +42,91 @@ pub struct WorkerDeps {
     pub config: Arc<AppConfig>,
     pub events: broadcast::Sender<JobProgressEvent>,
     pub http: Client,
+    pub torrent: Option<Arc<dyn TorrentEngine>>,
+    pub torrent_semaphore: Option<Arc<Semaphore>>,
+    pub scan_events: broadcast::Sender<ScanProgressEvent>,
+    pub job_tx: mpsc::Sender<i64>,
+}
+
+fn wake_scheduler(job_tx: &mpsc::Sender<i64>) {
+    let _ = job_tx.try_send(0);
 }
 
 pub fn spawn_worker(
-    mut job_rx: tokio::sync::mpsc::Receiver<i64>,
+    mut job_rx: mpsc::Receiver<i64>,
     deps: WorkerDeps,
 ) -> tokio::task::JoinHandle<()> {
+    let deps = Arc::new(deps);
+    let deps_dispatch = Arc::clone(&deps);
     tokio::spawn(async move {
-        while let Some(job_id) = job_rx.recv().await {
-            match run_job(job_id, &deps).await {
-                Ok(()) => {}
-                Err(e) => tracing::error!(job_id, "download job failed: {e}"),
+        let _ = try_dispatch(&deps_dispatch).await;
+        while job_rx.recv().await.is_some() {
+            if let Err(e) = try_dispatch(&deps_dispatch).await {
+                tracing::error!("download scheduler dispatch failed: {e}");
             }
         }
     })
+}
+
+async fn try_dispatch(deps: &Arc<WorkerDeps>) -> Result<(), ApiError> {
+    use crate::api::DownloadJobType;
+
+    loop {
+        let mut dispatched = false;
+
+        let album_running =
+            download_jobs::count_running_by_type(&deps.pool, DownloadJobType::Album).await?;
+        if album_running == 0 {
+            if let Some(id) =
+                download_jobs::next_queued_id(&deps.pool, DownloadJobType::Album).await?
+            {
+                if download_jobs::claim_running(&deps.pool, id).await? {
+                    dispatched = true;
+                    let deps = Arc::clone(deps);
+                    tokio::spawn(async move {
+                        let result = execute_job(id, &deps).await;
+                        if let Err(e) = result {
+                            tracing::error!(job_id = id, "download job failed: {e}");
+                        }
+                        wake_scheduler(&deps.job_tx);
+                    });
+                }
+            }
+        }
+
+        let torrent_max = if deps.torrent.is_some() {
+            deps.config.torrent_max_active
+        } else {
+            0
+        };
+        if torrent_max > 0 {
+            let torrent_running =
+                download_jobs::count_running_by_type(&deps.pool, DownloadJobType::Torrent)
+                    .await?;
+            if torrent_running < torrent_max as u64 {
+                if let Some(id) =
+                    download_jobs::next_queued_id(&deps.pool, DownloadJobType::Torrent).await?
+                {
+                    if download_jobs::claim_running(&deps.pool, id).await? {
+                        dispatched = true;
+                        let deps = Arc::clone(deps);
+                        tokio::spawn(async move {
+                            let result = execute_job(id, &deps).await;
+                            if let Err(e) = result {
+                                tracing::error!(job_id = id, "download job failed: {e}");
+                            }
+                            wake_scheduler(&deps.job_tx);
+                        });
+                    }
+                }
+            }
+        }
+
+        if !dispatched {
+            break;
+        }
+    }
+    Ok(())
 }
 
 async fn fetch_album_detail(
@@ -222,26 +296,32 @@ async fn fetch_album_detail(
     }))
 }
 
+/// Claim a queued job and run it (used in tests; production uses scheduler + `execute_job`).
 pub async fn run_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
     if !download_jobs::claim_running(&deps.pool, job_id).await? {
-        dl_debug!(deps, job_id, "download job not claimed (already running or terminal)");
         return Ok(());
     }
+    execute_job(job_id, deps).await
+}
 
-    dl_debug!(deps, job_id, "download job claimed");
+/// Runs a job that is already in `running` state (claimed by the scheduler).
+pub async fn execute_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
+    dl_debug!(deps, job_id, "download job executing");
 
     let job = download_jobs::get(&deps.pool, job_id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {job_id} not found")))?;
 
-    let quality = quality_from_format_id(job.quality as u8)
-        .ok_or_else(|| ApiError::bad_request("unsupported quality"))?;
-
     let result = match job.job_type {
         crate::api::DownloadJobType::Album => {
+            let quality = quality_from_format_id(job.quality as u8)
+                .ok_or_else(|| ApiError::bad_request("unsupported quality"))?;
             run_album_job(job_id, job.qobuz_id as u64, quality, deps).await
         }
-        _ => Err(ApiError::bad_request("only job_type=album is supported")),
+        crate::api::DownloadJobType::Torrent => {
+            super::torrent_job::run_torrent_job(job_id, deps).await
+        }
+        _ => Err(ApiError::bad_request("unsupported job_type")),
     };
 
     if let Err(e) = result {
@@ -263,7 +343,7 @@ async fn run_album_job(
         None
     };
     let payload = download_jobs::get_payload(&deps.pool, job_id).await?;
-    let stored_api_id = payload.and_then(|p| p.album_api_id);
+    let stored_api_id = payload.as_ref().and_then(|p| p.album_api_id.clone());
     tracing::info!(
         job_id,
         qobuz_id = album_id,
@@ -277,10 +357,21 @@ async fn run_album_job(
         job_id,
         album_id,
         meta.as_ref(),
-        stored_api_id.as_deref(),
+        stored_api_id.as_deref().map(str::as_ref),
         deps,
     )
     .await?;
+
+    let artist = album
+        .summary
+        .artist
+        .as_ref()
+        .map(|a| a.name.as_str())
+        .unwrap_or("");
+    let label = format_album_display_title(artist, &album.summary.title);
+    let mut job_payload = payload.unwrap_or_default();
+    job_payload.display_title = Some(label);
+    download_jobs::set_payload(&deps.pool, job_id, &job_payload).await?;
 
     let tracks = album
         .tracks
@@ -323,13 +414,21 @@ async fn run_album_job(
             "downloading track"
         );
         let _permit = semaphore.acquire().await.map_err(|e| ApiError::Message(e.to_string()))?;
-        download_track(job_id, album_id, &album, track, quality, deps).await?;
+        let speed_bps = download_track(job_id, album_id, &album, track, quality, deps).await?;
         done += 1;
         let progress = (done as f64 / total as f64) * 100.0;
-        download_jobs::update_progress(&deps.pool, job_id, progress).await?;
+        download_jobs::update_progress_and_speed(
+            &deps.pool,
+            job_id,
+            progress,
+            Some(speed_bps),
+        )
+        .await?;
         let _ = deps.events.send(JobProgressEvent {
             id: job_id,
             progress_pct: progress,
+            download_speed_bps: speed_bps,
+            torrent_detail: None,
         });
     }
 
@@ -391,7 +490,7 @@ async fn download_track(
     track: &TrackSummary,
     quality: Quality,
     deps: &WorkerDeps,
-) -> Result<(), ApiError> {
+) -> Result<u64, ApiError> {
     let stream = {
         let mut guard = deps.qobuz.lock().await;
         guard.track_stream_url(track.id, quality).await?
@@ -425,7 +524,7 @@ async fn download_track(
                 remote_len = remote_len.unwrap(),
                 "track file exists with matching size, skipping download"
             );
-            return Ok(());
+            return Ok(0);
         }
         dl_debug!(
             deps,
@@ -453,10 +552,17 @@ async fn download_track(
     }
 
     let part = dest.with_extension("part");
+    let started = Instant::now();
     download_url_to_file(&deps.http, &url, &part).await?;
     tokio::fs::rename(&part, &dest).await.map_err(|e| {
         ApiError::Message(format!("rename {}: {e}", dest.display()))
     })?;
+    let size = tokio::fs::metadata(&dest)
+        .await
+        .map_err(|e| ApiError::Message(format!("stat {}: {e}", dest.display())))?
+        .len();
+    let elapsed = started.elapsed().as_secs_f64().max(0.001);
+    let speed_bps = (size as f64 / elapsed) as u64;
 
     let tags = crate::library::qobuz_tags::track_tags_from_qobuz(album, track, catalog_album_id);
     if let Err(e) = crate::library::tags::write_qobuz_tags_async(&dest, tags).await {
@@ -470,7 +576,7 @@ async fn download_track(
     }
 
     tracing::info!(job_id, track_id = track.id, path = %dest.display(), "track downloaded");
-    Ok(())
+    Ok(speed_bps)
 }
 
 pub async fn download_url_to_file(
@@ -687,6 +793,8 @@ mod tests {
             6,
             Some(&crate::services::download::DownloadJobPayload {
                 album_api_id: Some("99".into()),
+                display_title: None,
+                torrent: None,
             }),
         )
         .await
@@ -703,12 +811,17 @@ mod tests {
             qobuz_api_base: None,
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
             debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
+        let (scan_events, _) = broadcast::channel(8);
+        let (job_tx, _job_rx) = mpsc::channel(8);
         let album_for_assert = album.clone();
         let deps = WorkerDeps {
             pool: pool.clone(),
@@ -719,6 +832,10 @@ mod tests {
             config,
             events,
             http: Client::new(),
+            torrent: None,
+            torrent_semaphore: None,
+            scan_events,
+            job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -821,6 +938,8 @@ mod tests {
             6,
             Some(&crate::services::download::DownloadJobPayload {
                 album_api_id: Some("ref".into()),
+                display_title: None,
+                torrent: None,
             }),
         )
         .await
@@ -837,12 +956,16 @@ mod tests {
             qobuz_api_base: None,
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
             debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
+        let (job_tx, _job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -852,6 +975,13 @@ mod tests {
             config,
             events,
             http: Client::new(),
+            torrent: None,
+            torrent_semaphore: None,
+            scan_events: {
+                let (scan_events, _) = broadcast::channel(8);
+                scan_events
+            },
+            job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -945,6 +1075,8 @@ mod tests {
             6,
             Some(&crate::services::download::DownloadJobPayload {
                 album_api_id: Some("99".into()),
+                display_title: None,
+                torrent: None,
             }),
         )
         .await
@@ -961,12 +1093,16 @@ mod tests {
             qobuz_api_base: None,
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
             debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
+        let (job_tx, _job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -976,6 +1112,13 @@ mod tests {
             config,
             events,
             http: Client::new(),
+            torrent: None,
+            torrent_semaphore: None,
+            scan_events: {
+                let (scan_events, _) = broadcast::channel(8);
+                scan_events
+            },
+            job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -1059,6 +1202,8 @@ mod tests {
             6,
             Some(&crate::services::download::DownloadJobPayload {
                 album_api_id: Some("99".into()),
+                display_title: None,
+                torrent: None,
             }),
         )
         .await
@@ -1075,12 +1220,16 @@ mod tests {
             qobuz_api_base: None,
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
             debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
+        let (job_tx, _job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1090,6 +1239,13 @@ mod tests {
             config,
             events,
             http: Client::new(),
+            torrent: None,
+            torrent_semaphore: None,
+            scan_events: {
+                let (scan_events, _) = broadcast::channel(8);
+                scan_events
+            },
+            job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -1152,6 +1308,8 @@ mod tests {
             6,
             Some(&crate::services::download::DownloadJobPayload {
                 album_api_id: Some("99".into()),
+                display_title: None,
+                torrent: None,
             }),
         )
         .await
@@ -1170,12 +1328,17 @@ mod tests {
             qobuz_api_base: None,
             qobuz_play_base: None,
             library_path: dir.path().to_path_buf(),
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
             download_concurrency: 2,
             library_scan: crate::config::LibraryScanConfig::default(),
             debug: false,
             static_dir: std::path::PathBuf::new(),
         });
 
+        let (scan_events, _) = broadcast::channel(8);
+        let (job_tx, _job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1185,6 +1348,10 @@ mod tests {
             config,
             events,
             http: Client::new(),
+            torrent: None,
+            torrent_semaphore: None,
+            scan_events,
+            job_tx,
         };
 
         run_album_job(job_id, 99, Quality::FlacCd, &deps)

@@ -38,7 +38,11 @@ describe("QueuePage", () => {
 
     await screen.findByText(/10%/);
 
-    const ev: JobProgressEvent = { id: 1, progress_pct: 50 };
+    const ev: JobProgressEvent = {
+      id: 1,
+      progress_pct: 50,
+      download_speed_bps: 1_048_576,
+    };
     await act(async () => {
       MockEventSource.instances[0]?.emit("job_progress", JSON.stringify(ev));
     });

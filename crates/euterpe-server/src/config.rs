@@ -124,6 +124,11 @@ pub struct AppConfig {
     /// Override play.qobuz.com base (bundle fetch).
     pub qobuz_play_base: Option<String>,
     pub library_path: PathBuf,
+    /// Separate directory for torrent downloads (not under library_path).
+    pub torrent_incoming_dir: Option<PathBuf>,
+    pub torrent_max_active: usize,
+    /// UPnP port mapping for the BitTorrent listen port (librqbit). Default on.
+    pub torrent_enable_upnp: bool,
     pub download_concurrency: usize,
     pub library_scan: LibraryScanConfig,
     /// Verbose HTTP, Qobuz API, library scan, and download worker logs (`EUTERPE_DEBUG=true`).
@@ -166,6 +171,22 @@ impl AppConfig {
             env::var("EUTERPE_LIBRARY_PATH").unwrap_or_else(|_| "/music".into()),
         );
 
+        let torrent_incoming_dir = env::var("EUTERPE_TORRENT_INCOMING_DIR")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from);
+
+        let torrent_max_active = env::var("EUTERPE_TORRENT_MAX_ACTIVE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2)
+            .max(1);
+
+        let torrent_enable_upnp = env::var("EUTERPE_TORRENT_UPNP")
+            .ok()
+            .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+            .unwrap_or(true);
+
         let download_concurrency = env::var("EUTERPE_DOWNLOAD_CONCURRENCY")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -199,6 +220,9 @@ impl AppConfig {
             qobuz_api_base,
             qobuz_play_base,
             library_path,
+            torrent_incoming_dir,
+            torrent_max_active,
+            torrent_enable_upnp,
             download_concurrency,
             library_scan,
             debug,
@@ -230,6 +254,28 @@ impl AppConfig {
             ))
         })
     }
+
+    pub fn ensure_torrent_incoming_dir(&self) -> Result<(), ApiError> {
+        if let Some(ref dir) = self.torrent_incoming_dir {
+            std::fs::create_dir_all(dir).map_err(|e| {
+                ApiError::Config(format!(
+                    "cannot create EUTERPE_TORRENT_INCOMING_DIR {}: {e}",
+                    dir.display()
+                ))
+            })?;
+        }
+        Ok(())
+    }
+}
+
+fn default_public_base_url(bind: SocketAddr) -> String {
+    let host = bind.ip().to_string();
+    let host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host
+    };
+    format!("http://{host}:{}", bind.port())
 }
 
 #[cfg(test)]
@@ -282,14 +328,4 @@ mod tests {
         );
         std::env::remove_var("EUTERPE_BIND");
     }
-}
-
-fn default_public_base_url(bind: SocketAddr) -> String {
-    let host = bind.ip().to_string();
-    let host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host
-    };
-    format!("http://{host}:{}", bind.port())
 }

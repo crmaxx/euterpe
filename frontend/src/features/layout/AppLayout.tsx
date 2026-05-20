@@ -1,4 +1,5 @@
 import {
+  Download,
   Folder,
   Heart,
   Link2,
@@ -23,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { usePreferences } from "@/hooks/use-preferences";
 
 const nav: { to: string; labelKey: string; icon: LucideIcon }[] = [
+  { to: "/sources", labelKey: "nav.sources", icon: Download },
   { to: "/favorites", labelKey: "nav.favorites", icon: Heart },
   { to: "/queue", labelKey: "nav.queue", icon: ListMusic },
   { to: "/library", labelKey: "nav.library", icon: Folder },
