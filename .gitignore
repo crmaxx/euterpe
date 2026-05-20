@@ -4,6 +4,7 @@ node_modules/
 **/*.rs.bk
 .env
 compose.yml
+.DS_Store
 
 # project
 docs/references/

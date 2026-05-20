@@ -15,6 +15,15 @@ COPY frontend/ ./
 RUN npm run build
 ```
 
+Для отчётов Hawk в SPA передайте build-args (токен попадает в бандл — используйте отдельный frontend-проект в Hawk):
+
+```bash
+docker build \
+  --build-arg VITE_HAWK_TOKEN='...' \
+  --build-arg VITE_HAWK_RELEASE='1.0.0' \
+  -f docker/Dockerfile .
+```
+
 ### Stage 2 — rust
 
 ```dockerfile
@@ -61,6 +70,25 @@ Phase 1: только `euterpe-qobuz` CLI binary optional.
 | `EUTERPE_QOBUZ_EMAIL` | — | Deprecated (password login unreliable) |
 | `EUTERPE_QOBUZ_PASSWORD` | — | Deprecated — use AUTH_TOKEN instead |
 | `EUTERPE_ADMIN_PASSWORD` | — | UI auth Phase 1 |
+| `HAWK_TOKEN` | — | Токен интеграции [Hawk.so](https://hawk.so) (base64 JSON); при пустом значении отчёты отключены |
+| `HAWK_RELEASE` | версия `euterpe-server` | Release в событиях Hawk |
+| `HAWK_COLLECTOR_ENDPOINT` | `https://{integrationId}.k1.hawk.so` | Override URL коллектора |
+| `HAWK_ENVIRONMENT` | — | Окружение (`production`, `staging`, …) |
+| `HAWK_BACKTRACE_TRIM` | `true` | Скрывать кадры `std::` / `tokio::` / … в backtrace |
+| `HAWK_BATCH_MAX` | `1` | Размер batch перед POST |
+| `HAWK_BATCH_INTERVAL_MS` | `1000` | Интервал flush batch (мс) |
+| `HAWK_SAMPLE_RATE` | `1.0` | Доля событий для отправки (0.0–1.0) |
+| `HAWK_FLUSH_TIMEOUT_SECS` | `2` | Таймаут flush при shutdown |
+| `HAWK_DEDUP_WINDOW_SECS` | `5` | Окно дедупликации одинаковых событий |
+
+### Frontend (Vite, build-time)
+
+| Переменная | Описание |
+|------------|----------|
+| `VITE_HAWK_TOKEN` | Токен интеграции для `@hawk.so/browser`; пусто → отключено |
+| `VITE_HAWK_RELEASE` | Release для source maps (по умолчанию версия из `frontend/package.json`) |
+
+См. [Hawk React / Browser](https://docs.hawk-tracker.ru/react).
 | `RUST_LOG` | `euterpe=info` | tracing |
 
 ## Сеть

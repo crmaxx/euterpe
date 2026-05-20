@@ -1,0 +1,36 @@
+[package]
+name = "euterpe-hawk"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Hawk.so error catcher for Rust (Codex Team event format)"
+
+[dependencies]
+axum = { version = "0.8", optional = true }
+backtrace = "0.3"
+base64 = "0.22"
+http = { version = "1", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tower = { version = "0.5", optional = true }
+tower-http = { version = "0.6", features = ["catch-panic"], optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", optional = true, features = ["registry"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+axum = "0.8"
+http-body-util = "0.1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tower = "0.5"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+wiremock = "0.6"
+
+[features]
+default = []
+axum = ["dep:axum", "dep:http", "dep:tower", "dep:tower-http"]
+tracing-layer = ["dep:tracing-subscriber"]
