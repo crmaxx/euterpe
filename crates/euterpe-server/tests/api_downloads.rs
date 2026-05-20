@@ -19,7 +19,7 @@ use euterpe_server::db::download_jobs;
 use euterpe_server::services::download::DownloadJobPayload;
 
 use download_mock::{DownloadMockQobuz, state_with_download_mock};
-use euterpe_server::app::test_support::test_state;
+use euterpe_server::app::test_support::{test_state, test_state_without_worker};
 use schema::{load_spec, schema_from_spec, validate_schema};
 
 #[tokio::test]
@@ -195,7 +195,7 @@ async fn download_job_completes_via_worker() {
 
 #[tokio::test]
 async fn purge_finished_deletes_terminal_jobs() {
-    let state = test_state().await;
+    let state = test_state_without_worker().await;
     let pool = state.db.clone();
     let payload = DownloadJobPayload {
         torrent: None,
@@ -245,7 +245,7 @@ async fn purge_finished_deletes_terminal_jobs() {
 
 #[tokio::test]
 async fn delete_with_purge_removes_terminal_job() {
-    let state = test_state().await;
+    let state = test_state_without_worker().await;
     let pool = state.db.clone();
     let payload = DownloadJobPayload {
         torrent: None,
@@ -275,7 +275,7 @@ async fn delete_with_purge_removes_terminal_job() {
 
 #[tokio::test]
 async fn delete_with_purge_rejects_running_job() {
-    let state = test_state().await;
+    let state = test_state_without_worker().await;
     let pool = state.db.clone();
     let payload = DownloadJobPayload {
         torrent: None,
@@ -304,7 +304,7 @@ async fn delete_with_purge_rejects_running_job() {
 
 #[tokio::test]
 async fn list_downloads_keyset_by_id_desc() {
-    let state = test_state().await;
+    let state = test_state_without_worker().await;
     let pool = state.db.clone();
     for i in 1..=4 {
         let payload = DownloadJobPayload {
