@@ -49,6 +49,25 @@ pub struct TrackTagsPatch {
     pub genre: Option<String>,
 }
 
+pub fn audio_content_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("flac") => "audio/flac",
+        Some("mp3") => "audio/mpeg",
+        Some("m4a") => "audio/mp4",
+        Some("aac") => "audio/aac",
+        Some("ogg") => "audio/ogg",
+        Some("opus") => "audio/opus",
+        Some("wav") => "audio/wav",
+        Some("aiff") | Some("aif") => "audio/aiff",
+        _ => "application/octet-stream",
+    }
+}
+
 pub fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())

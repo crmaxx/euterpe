@@ -240,6 +240,15 @@ export const handlers = [
     });
   }),
 
+  http.get("/api/v1/library/tracks/:id/stream", () =>
+    HttpResponse.arrayBuffer(new ArrayBuffer(128), {
+      headers: {
+        "Content-Type": "audio/wav",
+        "Accept-Ranges": "bytes",
+      },
+    }),
+  ),
+
   http.get("/api/v1/library/tracks/:id", ({ params }) =>
     HttpResponse.json({
       id: Number(params.id),

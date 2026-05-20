@@ -93,6 +93,10 @@ pub fn app(state: AppState) -> Router {
         )
         .layer(RequestBodyLimitLayer::new(MAX_ALBUM_COVER_BYTES))
         .route(
+            "/api/v1/library/tracks/{id}/stream",
+            get(library::get_library_track_stream),
+        )
+        .route(
             "/api/v1/library/tracks/{id}",
             get(library::get_library_track).patch(library::patch_library_track_tags),
         )

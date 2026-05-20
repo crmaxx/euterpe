@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { MetadataCandidate } from "@/api/client";
 import {
   useAlbumMetadataApply,
@@ -32,6 +32,23 @@ function parseAutofillId(actionId: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function resolveSelectedId(
+  options: ComboActionOption[],
+  userPick: string | null,
+): string {
+  if (
+    userPick != null &&
+    options.some((o) => o.id === userPick && !o.disabled)
+  ) {
+    return userPick;
+  }
+  const stored = localStorage.getItem(ACTION_STORAGE_KEY);
+  if (stored && options.some((o) => o.id === stored && !o.disabled)) {
+    return stored;
+  }
+  return options.find((o) => !o.disabled)?.id ?? ACTION_EDIT_TAGS;
+}
+
 type AlbumActionComboProps = {
   albumId: number;
   repairFolder?: string;
@@ -57,7 +74,7 @@ export function AlbumActionCombo({
   const lookup = useAlbumMetadataLookup();
   const apply = useAlbumMetadataApply();
 
-  const [selectedId, setSelectedId] = useState(ACTION_EDIT_TAGS);
+  const [userPick, setUserPick] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [candidates, setCandidates] = useState<MetadataCandidate[]>([]);
   const [lookupPage, setLookupPage] = useState(1);
@@ -94,21 +111,13 @@ export function AlbumActionCombo({
     return list;
   }, [t, repairFolder, scanRunning, scanPending, enabledIntegrations]);
 
-  useEffect(() => {
-    setSelectedId((current) => {
-      if (options.some((o) => o.id === current && !o.disabled)) {
-        return current;
-      }
-      const stored = localStorage.getItem(ACTION_STORAGE_KEY);
-      if (stored && options.some((o) => o.id === stored && !o.disabled)) {
-        return stored;
-      }
-      return options.find((o) => !o.disabled)?.id ?? current;
-    });
-  }, [options]);
+  const selectedId = useMemo(
+    () => resolveSelectedId(options, userPick),
+    [options, userPick],
+  );
 
   function selectAction(id: string) {
-    setSelectedId(id);
+    setUserPick(id);
     localStorage.setItem(ACTION_STORAGE_KEY, id);
     const integrationId = parseAutofillId(id);
     if (integrationId != null) {

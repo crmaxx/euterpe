@@ -1,4 +1,5 @@
-mod support;
+#[path = "support/download_mock.rs"]
+mod download_mock;
 
 use axum::body::Body;
 use axum::http::Request;
@@ -6,7 +7,7 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use support::{state_with_download_mock, DownloadMockQobuz};
+use download_mock::{state_with_download_mock, DownloadMockQobuz};
 
 #[tokio::test]
 async fn events_stream_returns_job_progress() {

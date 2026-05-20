@@ -781,6 +781,69 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /api/v1/library/tracks/{id}/stream:
+    get:
+      operationId: getLibraryTrackStream
+      tags: [Library]
+      summary: Stream library audio file for a track
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: access_token
+          in: query
+          required: false
+          description: Admin password (alternative to Authorization header for media elements)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Full audio file (no Range header)
+          headers:
+            Accept-Ranges:
+              schema:
+                type: string
+              example: bytes
+            Content-Length:
+              schema:
+                type: integer
+          content:
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: Partial content (Range request)
+          headers:
+            Content-Range:
+              schema:
+                type: string
+            Content-Length:
+              schema:
+                type: integer
+            Accept-Ranges:
+              schema:
+                type: string
+        "416":
+          description: Range not satisfiable
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/library/tracks/{id}:
     get:
       operationId: getLibraryTrack

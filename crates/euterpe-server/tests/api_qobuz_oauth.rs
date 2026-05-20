@@ -1,6 +1,7 @@
 //! OAuth flow with mocked Qobuz HTTP (no real network).
 
-mod support;
+#[path = "support/qobuz_account.rs"]
+mod qobuz_account;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -32,7 +33,7 @@ async fn oauth_start_returns_authorize_url_and_persists_state() {
         .create_async()
         .await;
 
-    let mut state = support::test_state().await;
+    let mut state = app::test_support::test_state().await;
     {
         let mut cfg = (*state.config).clone();
         cfg.public_base_url = "http://127.0.0.1:8080".into();
@@ -107,7 +108,7 @@ async fn oauth_callback_exchanges_code_and_stores_account() {
         .create_async()
         .await;
 
-    let mut state = support::test_state().await;
+    let mut state = app::test_support::test_state().await;
     let oauth_state = "test-oauth-state-abc";
     {
         let mut cfg = (*state.config).clone();
@@ -201,7 +202,7 @@ async fn oauth_callback_accepts_code_autorisation_without_state_when_single_pend
         .create_async()
         .await;
 
-    let mut state = support::test_state().await;
+    let mut state = app::test_support::test_state().await;
     {
         let mut cfg = (*state.config).clone();
         cfg.public_base_url = "http://127.0.0.1:8080".into();
@@ -242,8 +243,8 @@ async fn oauth_callback_accepts_code_autorisation_without_state_when_single_pend
 
 #[tokio::test]
 async fn logout_clears_active_account() {
-    let state = support::test_state().await;
-    support::seed_active_qobuz_account(&state, 4242, "uat-final").await;
+    let state = app::test_support::test_state().await;
+    qobuz_account::seed_active_qobuz_account(&state, 4242, "uat-final").await;
 
     let app = app::app(state.clone());
     let resp = app.clone()

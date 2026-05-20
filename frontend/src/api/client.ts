@@ -74,6 +74,17 @@ export const MAX_ALBUM_COVER_BYTES = 20 * 1024 * 1024;
 
 const API_BASE = "/api/v1";
 
+/** URL for Howler / `<audio>` (same-origin; admin token in query when set). */
+export function libraryTrackStreamUrl(trackId: number): string {
+  const base = `${API_BASE}/library/tracks/${trackId}/stream`;
+  const token = getAdminToken();
+  if (!token) {
+    return base;
+  }
+  const params = new URLSearchParams({ access_token: token });
+  return `${base}?${params.toString()}`;
+}
+
 export async function fetchJson<T>(
   path: string,
   init?: RequestInit,

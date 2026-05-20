@@ -20,12 +20,7 @@ pub async fn admin_auth(
         return Ok(next.run(request).await);
     };
 
-    let authorized = request
-        .headers()
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .map(|h| check_auth(h, expected))
-        .unwrap_or(false);
+    let authorized = check_request_auth(&request, expected);
 
     if authorized {
         Ok(next.run(request).await)
@@ -38,6 +33,35 @@ pub async fn admin_auth(
         };
         Err((StatusCode::UNAUTHORIZED, Json(body)).into_response())
     }
+}
+
+fn check_request_auth(request: &Request<Body>, expected: &str) -> bool {
+    if let Some(h) = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if check_auth(h, expected) {
+            return true;
+        }
+    }
+
+    let path = request.uri().path();
+    if path.ends_with("/stream") {
+        if let Some(query) = request.uri().query() {
+            for pair in query.split('&') {
+                let (key, value) = match pair.split_once('=') {
+                    Some((k, v)) => (k, v),
+                    None => (pair, ""),
+                };
+                if key == "access_token" && value == expected {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
 }
 
 fn check_auth(header: &str, expected: &str) -> bool {

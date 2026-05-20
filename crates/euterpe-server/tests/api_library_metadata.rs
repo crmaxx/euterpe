@@ -3,16 +3,13 @@ use std::path::PathBuf;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use euterpe_server::app;
-use http_body_util::BodyExt;
 use serde_json::json;
 use tower::ServiceExt;
-
-mod support;
 
 const SILENT_FLAC: &[u8] = include_bytes!("fixtures/silent.flac");
 
 async fn setup_album_with_integration() -> (euterpe_server::AppState, i64, i64) {
-    let state = support::test_state().await;
+    let state = app::test_support::test_state().await;
     let pool = state.db.clone();
     let library = state.config.library_path.clone();
 

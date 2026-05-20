@@ -4,8 +4,12 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-mod support;
-use support::{state_with_mock, MockQobuz};
+#[path = "support/qobuz_mock.rs"]
+mod qobuz_mock;
+#[path = "support/schema.rs"]
+mod schema;
+
+use qobuz_mock::{state_with_mock, MockQobuz};
 
 #[tokio::test]
 async fn sync_without_credentials_returns_503() {
@@ -50,9 +54,9 @@ async fn sync_with_mock_populates_db() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    let spec = support::load_spec();
-    support::validate_schema(
-        &support::schema_from_spec(&spec, "QobuzSyncResponse"),
+    let spec = schema::load_spec();
+    schema::validate_schema(
+        &schema::schema_from_spec(&spec, "QobuzSyncResponse"),
         &json,
     );
     assert_eq!(json["albums_total"], 2);
@@ -94,9 +98,9 @@ async fn list_favorites_keyset() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let spec = support::load_spec();
-    support::validate_schema(
-        &support::schema_from_spec(&spec, "QobuzFavoritesListResponse"),
+    let spec = schema::load_spec();
+    schema::validate_schema(
+        &schema::schema_from_spec(&spec, "QobuzFavoritesListResponse"),
         &json,
     );
     assert_eq!(json["items"].as_array().unwrap().len(), 2);

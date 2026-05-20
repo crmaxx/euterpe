@@ -1,5 +1,3 @@
-mod support;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use euterpe_server::app;
@@ -762,4 +760,158 @@ async fn library_patch_album_tags_updates_all_track_files() {
         assert_eq!(read.track_total, Some(12));
         assert_eq!(read.disc_total, Some(2));
     }
+}
+
+#[tokio::test]
+async fn library_track_stream_serves_audio() {
+    let state = app::test_support::test_state().await;
+    let library = state.config.library_path.clone();
+    let path = library.join("Stream Artist/Stream Album/play.wav");
+    write_minimal_wav(&path);
+
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "Stream Artist", None)
+            .await
+            .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Stream Album",
+            year: Some(2020),
+            qobuz_album_id: None,
+            path: Some("Stream Artist/Stream Album"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let track_id = euterpe_server::db::tracks::upsert(
+        &state.db,
+        euterpe_server::db::tracks::TrackUpsert {
+            album_id,
+            title: "Play",
+            path: "Stream Artist/Stream Album/play.wav",
+            track_number: Some(1),
+            year: Some(2020),
+            disc_number: Some(1),
+            genre: None,
+            qobuz_track_id: None,
+            duration_sec: Some(1),
+            file_mtime: None,
+            file_hash: None,
+            file_size: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/library/tracks/{track_id}/stream"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let ct = res
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(ct, "audio/wav");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(!bytes.is_empty());
+}
+
+fn write_wav_with_byte_length(path: &std::path::Path, target_len: u64) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 44100,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).unwrap();
+    while std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) < target_len {
+        writer.write_sample(0i16).unwrap();
+    }
+    writer.finalize().unwrap();
+}
+
+#[tokio::test]
+async fn library_track_stream_range_returns_partial_content() {
+    let state = app::test_support::test_state().await;
+    let library = state.config.library_path.clone();
+    let path = library.join("Range Artist/Range Album/range.wav");
+    write_wav_with_byte_length(&path, 2048);
+
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "Range Artist", None)
+            .await
+            .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Range Album",
+            year: Some(2020),
+            qobuz_album_id: None,
+            path: Some("Range Artist/Range Album"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let track_id = euterpe_server::db::tracks::upsert(
+        &state.db,
+        euterpe_server::db::tracks::TrackUpsert {
+            album_id,
+            title: "Range",
+            path: "Range Artist/Range Album/range.wav",
+            track_number: Some(1),
+            year: Some(2020),
+            disc_number: Some(1),
+            genre: None,
+            qobuz_track_id: None,
+            duration_sec: Some(1),
+            file_mtime: None,
+            file_hash: None,
+            file_size: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let full_len = tokio::fs::metadata(&path).await.unwrap().len();
+
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/library/tracks/{track_id}/stream"))
+                .header("Range", "bytes=0-1023")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    let cr = res
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(cr, format!("bytes 0-1023/{full_len}"));
+    let cl = res
+        .headers()
+        .get("content-length")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(cl, "1024");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(bytes.len(), 1024);
 }

@@ -4,8 +4,6 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-mod support;
-
 #[tokio::test]
 async fn static_spa_fallback_serves_index() {
     let dir = tempfile::tempdir().unwrap();
