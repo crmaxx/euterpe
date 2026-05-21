@@ -18,6 +18,7 @@ import {
   type SortOrder,
 } from "./client";
 import { ApiClientError } from "./errors";
+import { applyConvertProgressEvent } from "@/features/library/convertProgressStore";
 import type { KeysetListResponse } from "./keyset";
 import { flattenKeysetPages, useKeysetList } from "./hooks/keyset";
 import {
@@ -145,6 +146,7 @@ export function useConvertProgressSse() {
     }
     const source = subscribeServerEvents({
       onConvertProgress: (ev) => {
+        applyConvertProgressEvent(ev);
         void qc.invalidateQueries({
           queryKey: queryKeys.albumConvertLatest(ev.album_id),
         });

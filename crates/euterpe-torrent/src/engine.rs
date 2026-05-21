@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use librqbit::api::TorrentIdOrHash;
 use librqbit::{
@@ -21,7 +21,8 @@ pub struct TorrentEngineConfig {
 }
 
 pub struct LibrqbitEngine {
-    session: Arc<Session>,
+    incoming_dir: PathBuf,
+    session: RwLock<Option<Arc<Session>>>,
     session_settings: Mutex<SessionSettings>,
     session_mutex: AsyncMutex<()>,
 }
@@ -33,15 +34,39 @@ impl LibrqbitEngine {
             .map_err(|e| TorrentError::msg(format!("create incoming dir: {e}")))?;
 
         let opts = session_options(config.session_settings);
-        let session = Session::new_with_opts(config.incoming_dir, opts)
+        let session = Session::new_with_opts(config.incoming_dir.clone(), opts)
             .await
             .map_err(TorrentError::Other)?;
 
         Ok(Self {
-            session,
+            incoming_dir: config.incoming_dir,
+            session: RwLock::new(Some(session)),
             session_settings: Mutex::new(config.session_settings),
             session_mutex: AsyncMutex::new(()),
         })
+    }
+
+    fn session(&self) -> Arc<Session> {
+        self.session
+            .read()
+            .expect("session lock poisoned")
+            .clone()
+            .expect("torrent session not initialized")
+    }
+
+    fn dht_routing_nodes(session: &Session) -> u32 {
+        session.get_dht().map_or(0, |dht| {
+            let stats = dht.stats();
+            stats
+                .routing_table_size
+                .saturating_add(stats.routing_table_size_v6) as u32
+        })
+    }
+
+    fn active_torrent_count(session: &Session) -> usize {
+        let count = std::cell::Cell::new(0);
+        session.with_torrents(|torrents| count.set(torrents.count()));
+        count.get()
     }
 
     fn add_torrent_options(
@@ -66,7 +91,7 @@ impl LibrqbitEngine {
         opts: AddTorrentOptions,
     ) -> Result<AddTorrentResponse, TorrentError> {
         let _guard = self.session_mutex.lock().await;
-        self.session
+        self.session()
             .add_torrent(add, Some(opts))
             .await
             .map_err(TorrentError::Other)
@@ -158,6 +183,7 @@ impl LibrqbitEngine {
             librqbit_state: Self::map_librqbit_state(stats),
             peers_live,
             peers_connecting,
+            dht_routing_nodes: 0,
             eta_secs: Self::eta_secs_from_live(stats),
             error: stats.error.clone(),
         }
@@ -172,6 +198,8 @@ fn session_options(settings: SessionSettings) -> SessionOptions {
     };
     SessionOptions {
         disable_upload: settings.disable_upload,
+        // Ephemeral DHT avoids lock/port conflicts when the session is recreated on settings save.
+        disable_dht_persistence: true,
         ratelimits: settings.limits_config(),
         listen: Some(listen),
         ..Default::default()
@@ -263,16 +291,19 @@ impl TorrentEngine for LibrqbitEngine {
     }
 
     async fn job_stats(&self, handle: &JobHandle) -> Result<JobStats, TorrentError> {
-        let managed = self
-            .session
+        let session = self.session();
+        let dht_routing_nodes = Self::dht_routing_nodes(&session);
+        let managed = session
             .get(TorrentIdOrHash::Id(handle.librqbit_id))
             .ok_or_else(|| TorrentError::msg("torrent not in session"))?;
-        Ok(Self::stats_from_torrent(&managed.stats()))
+        let mut stats = Self::stats_from_torrent(&managed.stats());
+        stats.dht_routing_nodes = dht_routing_nodes;
+        Ok(stats)
     }
 
     async fn wait_until_completed(&self, handle: &JobHandle) -> Result<(), TorrentError> {
         let managed = self
-            .session
+            .session()
             .get(TorrentIdOrHash::Id(handle.librqbit_id))
             .ok_or_else(|| TorrentError::msg("torrent not in session"))?;
         managed
@@ -287,19 +318,44 @@ impl TorrentEngine for LibrqbitEngine {
 
     async fn remove_from_session(&self, handle: &JobHandle) -> Result<(), TorrentError> {
         let _guard = self.session_mutex.lock().await;
-        self.session
+        self.session()
             .delete(TorrentIdOrHash::Id(handle.librqbit_id), false)
             .await
             .map_err(TorrentError::Other)
     }
 
-    fn apply_ratelimits(&self, settings: SessionSettings) {
-        if let Ok(mut s) = self.session_settings.lock() {
-            *s = settings;
+    async fn apply_session_settings(&self, settings: SessionSettings) -> Result<(), TorrentError> {
+        let prev = *self
+            .session_settings
+            .lock()
+            .expect("settings lock");
+
+        if prev.disable_upload != settings.disable_upload {
+            let session = self.session();
+            if Self::active_torrent_count(&session) > 0 {
+                return Err(TorrentError::msg(
+                    "TORRENT_SESSION_BUSY: cannot change disable_upload while torrent downloads are active",
+                ));
+            }
+            let _guard = self.session_mutex.lock().await;
+            *self.session.write().expect("session lock poisoned") = None;
+            let opts = session_options(settings);
+            let new_session = Session::new_with_opts(self.incoming_dir.clone(), opts)
+                .await
+                .map_err(TorrentError::Other)?;
+            *self.session.write().expect("session lock poisoned") = Some(new_session);
+        } else {
+            let session = self.session();
+            session.ratelimits.set_upload_bps(settings.upload_bps);
+            session
+                .ratelimits
+                .set_download_bps(settings.download_bps);
         }
-        self.session.ratelimits.set_upload_bps(settings.upload_bps);
-        self.session
-            .ratelimits
-            .set_download_bps(settings.download_bps);
+
+        *self
+            .session_settings
+            .lock()
+            .expect("settings lock") = settings;
+        Ok(())
     }
 }

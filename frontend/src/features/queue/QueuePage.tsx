@@ -85,6 +85,7 @@ function torrentStatusLine(
   if (detail.librqbit_state === "live" || detail.librqbit_state === "initializing") {
     const peers = detail.peers_live + detail.peers_connecting;
     parts.push(t("queue.torrent.peers", { count: peers }));
+    parts.push(t("queue.torrent.dhtNodes", { count: detail.dht_routing_nodes }));
     if (peers === 0) {
       parts.push(t("queue.torrent.noPeers"));
     }
@@ -132,7 +133,7 @@ function torrentStatusForJob(
 export function QueuePage() {
   const { t } = usePreferences();
   const { toast } = useToast();
-  const { data, isLoading } = useDownloads();
+  const { data, isLoading, isError, error, refetch, isFetching } = useDownloads();
   const { items: favoriteItems } = useFavoritesFlat({ limit: 100 });
   const cancel = useCancelDownload();
   const purgeFinished = usePurgeFinishedDownloads();
@@ -249,7 +250,25 @@ export function QueuePage() {
           </Button>
         ) : null}
       </div>
-      {isLoading ? (
+      {isError ? (
+        <div
+          role="alert"
+          className="space-y-3 rounded-lg border border-destructive/50 bg-destructive/10 p-4"
+        >
+          <p className="font-medium text-destructive">{t("queue.loadFailed")}</p>
+          <p className="text-sm text-muted-foreground">
+            {error instanceof Error ? error.message : t("common.unknownError")}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isFetching}
+            onClick={() => void refetch()}
+          >
+            {t("queue.retry")}
+          </Button>
+        </div>
+      ) : isLoading ? (
         <p className="text-muted-foreground">{t("common.loading")}</p>
       ) : jobs.length === 0 ? (
         <p className="text-muted-foreground">{t("queue.noJobs")}</p>

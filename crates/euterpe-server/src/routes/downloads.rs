@@ -16,6 +16,7 @@ use crate::error::ApiError;
 use crate::services::download::{
     DownloadJobPayload, format_album_display_title, quality_from_format_id,
 };
+use crate::services::torrent_cleanup;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -258,6 +259,10 @@ pub async fn get_download(
 pub async fn purge_finished_downloads(
     State(state): State<AppState>,
 ) -> Result<Json<DownloadPurgeResponse>, ApiError> {
+    let torrent_ids = download_jobs::list_terminal_torrent_job_ids(&state.db).await?;
+    for id in torrent_ids {
+        torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
+    }
     let deleted = download_jobs::purge_finished(&state.db).await? as i64;
     Ok(Json(DownloadPurgeResponse { deleted }))
 }
@@ -276,6 +281,9 @@ pub async fn delete_download(
             return Err(ApiError::Message(
                 "cannot purge active job; cancel it first".into(),
             ));
+        }
+        if job.job_type == DownloadJobType::Torrent {
+            torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
         }
         if !download_jobs::delete_by_id(&state.db, id).await? {
             return Err(ApiError::Message(format!("job {id} not found")));
@@ -296,6 +304,10 @@ pub async fn delete_download(
 
     if !download_jobs::cancel(&state.db, id).await? {
         return Err(ApiError::Message(format!("job {id} not found")));
+    }
+
+    if job.job_type == DownloadJobType::Torrent {
+        torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
     }
 
     let _ = state.job_tx.send(0).await;

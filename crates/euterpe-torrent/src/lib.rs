@@ -29,5 +29,5 @@ pub trait TorrentEngine: Send + Sync {
     async fn wait_until_completed(&self, handle: &JobHandle) -> Result<(), TorrentError>;
     async fn cancel(&self, handle: &JobHandle) -> Result<(), TorrentError>;
     async fn remove_from_session(&self, handle: &JobHandle) -> Result<(), TorrentError>;
-    fn apply_ratelimits(&self, settings: SessionSettings);
+    async fn apply_session_settings(&self, settings: SessionSettings) -> Result<(), TorrentError>;
 }

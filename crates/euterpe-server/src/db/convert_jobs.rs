@@ -58,6 +58,9 @@ pub struct ConvertJobRow {
 pub struct ConvertFileStatus {
     pub path: String,
     pub status: String,
+    /// Encode progress within this file (0–100), while `status == "running"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_pct: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -141,23 +144,20 @@ pub async fn update_progress(
     id: i64,
     files_done: i64,
     files_total: i64,
+    progress_pct: f64,
     payload_json: Option<&str>,
 ) -> Result<(), ApiError> {
-    let pct = if files_total > 0 {
-        (files_done as f64 / files_total as f64) * 100.0
-    } else {
-        0.0
-    };
     sqlx::query(
         r#"
         UPDATE convert_jobs
-        SET files_done = ?, progress_pct = ?, payload_json = COALESCE(?, payload_json),
+        SET files_done = ?, files_total = ?, progress_pct = ?, payload_json = COALESCE(?, payload_json),
             updated_at = datetime('now')
         WHERE id = ?
         "#,
     )
     .bind(files_done)
-    .bind(pct)
+    .bind(files_total)
+    .bind(progress_pct)
     .bind(payload_json)
     .bind(id)
     .execute(pool)

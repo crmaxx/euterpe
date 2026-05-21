@@ -35,6 +35,9 @@ impl ApiError {
             ApiError::Message(msg) if msg.contains("not found") => "NOT_FOUND",
             ApiError::Message(msg) if msg.contains("cannot cancel") => "JOB_NOT_CANCELLABLE",
             ApiError::Message(msg) if msg.contains("cannot purge") => "JOB_NOT_PURGEABLE",
+            ApiError::Message(msg) if msg.contains("TORRENT_SESSION_BUSY") => {
+                "TORRENT_SESSION_BUSY"
+            }
             ApiError::Message(msg) if msg.contains("INVALID_CURSOR") => "INVALID_CURSOR",
             ApiError::Message(msg) if msg.contains("PROVIDER_UNAVAILABLE") => {
                 "PROVIDER_UNAVAILABLE"
@@ -62,6 +65,7 @@ impl ApiError {
             ApiError::Message(msg) if msg.contains("not found") => StatusCode::NOT_FOUND,
             ApiError::Message(msg) if msg.contains("cannot cancel") => StatusCode::CONFLICT,
             ApiError::Message(msg) if msg.contains("cannot purge") => StatusCode::CONFLICT,
+            ApiError::Message(msg) if msg.contains("TORRENT_SESSION_BUSY") => StatusCode::CONFLICT,
             ApiError::Message(msg) if msg.contains("PROVIDER_UNAVAILABLE") => {
                 StatusCode::BAD_GATEWAY
             }

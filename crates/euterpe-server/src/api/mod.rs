@@ -12,7 +12,8 @@ mod torrent;
 pub use keyset::{KeysetPage, SortKeyKind, SortKeyValue, SortOrder};
 
 pub use convert::{
-    ConvertAlbumResponse, ConvertJobResponse, ConvertJobSummary, ConvertProgressEvent,
+    ConvertAlbumResponse, ConvertFileProgress, ConvertJobResponse, ConvertJobSummary,
+    ConvertProgressEvent,
 };
 pub use downloads::{
     CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse, DownloadJob,

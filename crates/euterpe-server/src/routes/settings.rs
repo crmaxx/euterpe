@@ -18,18 +18,21 @@ pub async fn patch_torrent_settings(
     Json(patch): Json<TorrentSettingsPatch>,
 ) -> Result<Json<TorrentSettingsResponse>, ApiError> {
     let mut settings = torrent_settings::load(&state.db).await?;
-    if let Some(v) = patch.seed_ratio_limit {
-        settings.seed_ratio_limit = v;
-    }
-    if let Some(v) = patch.seed_time_limit_sec {
-        settings.seed_time_limit_sec = v;
+    if let Some(v) = patch.disable_upload {
+        settings.disable_upload = v;
     }
     if let Some(v) = patch.max_upload_kib_per_sec {
         settings.max_upload_kib_per_sec = v;
     }
-    torrent_settings::save(&state.db, &settings).await?;
+    torrent_settings::validate(&settings)?;
+
     if let Some(engine) = state.torrent.as_ref() {
-        engine.apply_ratelimits(torrent_settings::to_session_settings(&settings));
+        engine
+            .apply_session_settings(torrent_settings::to_session_settings(&settings))
+            .await
+            .map_err(|e| ApiError::Message(e.to_string()))?;
     }
+
+    torrent_settings::save(&state.db, &settings).await?;
     Ok(Json(TorrentSettingsResponse { settings }))
 }

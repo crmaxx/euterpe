@@ -42,18 +42,24 @@ pub struct TorrentConfirmRequest {
     pub auto_index_after_import: bool,
 }
 
+/// Persisted torrent session options (maps to librqbit `disable_upload` + ratelimits).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TorrentSettings {
-    pub seed_ratio_limit: f64,
-    pub seed_time_limit_sec: u64,
+    /// When true, librqbit does not upload to peers (download-only).
+    #[serde(default = "default_disable_upload")]
+    pub disable_upload: bool,
+    /// Upload cap in KiB/s; 0 = no cap. Ignored when `disable_upload` is true.
     pub max_upload_kib_per_sec: u64,
+}
+
+fn default_disable_upload() -> bool {
+    true
 }
 
 impl Default for TorrentSettings {
     fn default() -> Self {
         Self {
-            seed_ratio_limit: 0.0,
-            seed_time_limit_sec: 0,
+            disable_upload: true,
             max_upload_kib_per_sec: 0,
         }
     }
@@ -68,9 +74,7 @@ pub struct TorrentSettingsResponse {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TorrentSettingsPatch {
     #[serde(default)]
-    pub seed_ratio_limit: Option<f64>,
-    #[serde(default)]
-    pub seed_time_limit_sec: Option<u64>,
+    pub disable_upload: Option<bool>,
     #[serde(default)]
     pub max_upload_kib_per_sec: Option<u64>,
 }

@@ -1,3 +1,5 @@
+pub mod streaming;
+
 use flacenc::bitsink::ByteSink;
 use flacenc::component::BitRepr;
 use flacenc::config::Encoder;

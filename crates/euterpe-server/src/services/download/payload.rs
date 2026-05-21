@@ -27,6 +27,7 @@ pub fn format_album_display_title(artist: &str, title: &str) -> String {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TorrentRuntimeSnapshot {
     pub librqbit_state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,6 +40,8 @@ pub struct TorrentRuntimeSnapshot {
     pub eta_secs: Option<u64>,
     pub peers_live: u32,
     pub peers_connecting: u32,
+    #[serde(default)]
+    pub dht_routing_nodes: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -56,6 +59,7 @@ impl TorrentRuntimeSnapshot {
             eta_secs: None,
             peers_live: 0,
             peers_connecting: 0,
+            dht_routing_nodes: 0,
             error: None,
         }
     }
@@ -79,6 +83,7 @@ impl TorrentRuntimeSnapshot {
             eta_secs: stats.eta_secs,
             peers_live: stats.peers_live,
             peers_connecting: stats.peers_connecting,
+            dht_routing_nodes: stats.dht_routing_nodes,
             error: stats.error.clone(),
         }
     }
@@ -104,6 +109,7 @@ impl TorrentRuntimeSnapshot {
             eta_secs: self.eta_secs,
             peers_live: self.peers_live,
             peers_connecting: self.peers_connecting,
+            dht_routing_nodes: self.dht_routing_nodes,
             error: self.error.clone(),
         }
     }
@@ -177,5 +183,25 @@ impl DownloadJobPayload {
             t.librqbit_id = None;
             t.runtime = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TorrentRuntimeSnapshot;
+
+    #[test]
+    fn runtime_snapshot_deserializes_without_dht_field() {
+        let raw = r#"{
+            "librqbit_state": "live",
+            "progress_bytes": 0,
+            "total_bytes": 1000,
+            "download_speed_bps": 0,
+            "upload_speed_bps": 0,
+            "peers_live": 1,
+            "peers_connecting": 0
+        }"#;
+        let snap: TorrentRuntimeSnapshot = serde_json::from_str(raw).unwrap();
+        assert_eq!(snap.dht_routing_nodes, 0);
     }
 }

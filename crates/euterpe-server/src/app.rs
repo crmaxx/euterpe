@@ -38,6 +38,29 @@ use crate::services::download::{WorkerDeps, spawn_worker};
 use crate::services::qobuz_sync;
 use crate::state::{AppChannels, AppState};
 
+/// HTTP access-log style line for `TraceLayer::on_response`.
+///
+/// - **5xx** → `ERROR` (server fault; Hawk layer may report these)
+/// - **4xx** → `WARN` (client/validation; not a process crash)
+/// - **2xx/3xx** → `DEBUG`
+fn log_http_response(status: u16, latency_ms: u64) {
+    match status {
+        500..=599 => tracing::event!(
+            Level::ERROR,
+            status,
+            latency_ms,
+            "http response: server error (details in JSON body)"
+        ),
+        400..=499 => tracing::event!(
+            Level::WARN,
+            status,
+            latency_ms,
+            "http response: client error (details in JSON body)"
+        ),
+        _ => tracing::event!(Level::DEBUG, status, latency_ms, "http response"),
+    }
+}
+
 pub fn app(state: AppState) -> Router {
     let hawk = state.hawk.clone();
     let protected = Router::new()
@@ -226,18 +249,7 @@ pub fn app(state: AppState) -> Router {
             })
             .on_response(
                 |res: &Response<Body>, latency: Duration, _span: &tracing::Span| {
-                    let status = res.status().as_u16();
-                    let latency_ms = latency.as_millis() as u64;
-                    if status >= 400 {
-                        tracing::event!(
-                            Level::WARN,
-                            status,
-                            latency_ms,
-                            "response failed — error JSON is in the response body"
-                        );
-                    } else {
-                        tracing::event!(Level::DEBUG, status, latency_ms, "response");
-                    }
+                    log_http_response(res.status().as_u16(), latency.as_millis() as u64);
                 },
             ),
     )

@@ -104,6 +104,14 @@ export type ConvertAlbumResponse =
 export type ConvertJobResponse = components["schemas"]["ConvertJobResponse"];
 export type ConvertJobSummary = components["schemas"]["ConvertJobSummary"];
 
+export type ConvertFileProgress = {
+  path: string;
+  status: string;
+  /** Per-file encode progress 0–100 while status is `running`. */
+  progress_pct?: number | null;
+  error?: string | null;
+};
+
 /** SSE `convert_progress` payload (not in OpenAPI event schemas). */
 export type ConvertProgressEvent = {
   job_id: number;
@@ -112,6 +120,7 @@ export type ConvertProgressEvent = {
   files_total: number;
   files_done: number;
   progress_pct: number;
+  files?: ConvertFileProgress[];
   error_message?: string | null;
 };
 
