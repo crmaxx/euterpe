@@ -32,6 +32,12 @@ import { Label } from "@/components/ui/label";
 import { flattenKeysetPages } from "@/api/hooks/keyset";
 import { AlbumActionCombo } from "@/features/library/AlbumActionCombo";
 import { TrackPlaybackScale } from "@/features/library/TrackPlaybackScale";
+import {
+  useAlbumConvertLive,
+  useHydrateAlbumConvertLive,
+} from "@/features/library/convertProgressStore";
+import { findTrackConvertProgress } from "@/features/library/parseConvertFiles";
+import { TrackConvertProgress } from "@/features/library/TrackConvertProgress";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
@@ -453,6 +459,8 @@ export function LibraryPage() {
   const isLoading = albumsQuery.isLoading;
   const { data: albumDetail } = useLibraryAlbum(selectedAlbumId);
   const { data: convertJob } = useAlbumConvertLatest(selectedAlbumId);
+  useHydrateAlbumConvertLive(selectedAlbumId, convertJob);
+  const convertLive = useAlbumConvertLive(selectedAlbumId);
   const postConvert = usePostAlbumConvert();
   const trackQuery = useLibraryTrack(editingTrackId);
   const patchTags = usePatchTrackTags();
@@ -851,7 +859,11 @@ export function LibraryPage() {
                     </div>
                   ) : null}
                   <ul className="divide-y divide-border">
-                    {group.tracks.map((track) => (
+                    {group.tracks.map((track) => {
+                      const convertProgress = convertLive
+                        ? findTrackConvertProgress(track.path, convertLive.files)
+                        : null;
+                      return (
                       <li key={track.id} className="flex flex-col">
                         <div className="flex items-center gap-2 px-4 py-2">
                           <Button
@@ -889,6 +901,13 @@ export function LibraryPage() {
                             <Pencil className="size-4" aria-hidden />
                           </Button>
                         </div>
+                        {convertProgress != null ? (
+                          <TrackConvertProgress
+                            status={convertProgress.status}
+                            progressPct={convertProgress.progressPct}
+                            error={convertProgress.error}
+                          />
+                        ) : null}
                         {player.playback?.trackId === track.id ? (
                           <TrackPlaybackScale
                             positionSec={player.playback.positionSec}
@@ -897,7 +916,8 @@ export function LibraryPage() {
                           />
                         ) : null}
                       </li>
-                    ))}
+                    );
+                    })}
                   </ul>
                 </section>
               ))}

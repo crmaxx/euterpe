@@ -148,6 +148,9 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
             ticker.tick().await;
             if download_jobs::is_stopped(&deps.pool, job_id).await? {
                 let _ = torrent.cancel(&handle).await;
+                if download_jobs::is_cancelled(&deps.pool, job_id).await? {
+                    let _ = tokio::fs::remove_dir_all(&save_dir).await;
+                }
                 return Ok(());
             }
             stats = poll_stats().await?;
@@ -164,6 +167,9 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
 
     if download_jobs::is_stopped(&deps.pool, job_id).await? {
         let _ = torrent.cancel(&handle).await;
+        if download_jobs::is_cancelled(&deps.pool, job_id).await? {
+            let _ = tokio::fs::remove_dir_all(&save_dir).await;
+        }
         return Ok(());
     }
 

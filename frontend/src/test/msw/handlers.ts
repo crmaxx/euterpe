@@ -123,8 +123,7 @@ export const handlers = [
 
   http.get("/api/v1/settings/torrent", () =>
     HttpResponse.json({
-      seed_ratio_limit: 0,
-      seed_time_limit_sec: 0,
+      disable_upload: true,
       max_upload_kib_per_sec: 0,
     }),
   ),
@@ -132,8 +131,7 @@ export const handlers = [
   http.patch("/api/v1/settings/torrent", async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     return HttpResponse.json({
-      seed_ratio_limit: (body.seed_ratio_limit as number) ?? 0,
-      seed_time_limit_sec: (body.seed_time_limit_sec as number) ?? 0,
+      disable_upload: (body.disable_upload as boolean) ?? true,
       max_upload_kib_per_sec: (body.max_upload_kib_per_sec as number) ?? 0,
     });
   }),
@@ -196,6 +194,7 @@ export const handlers = [
           quality: 6,
           progress_pct: 10,
           download_speed_bps: 512000,
+          queue_position: 1,
           created_at: "2026-01-01",
           updated_at: "2026-01-01",
         },
@@ -209,6 +208,7 @@ export const handlers = [
           quality: 6,
           progress_pct: 100,
           download_speed_bps: 0,
+          queue_position: 2,
           created_at: "2026-01-01",
           updated_at: "2026-01-01",
         },

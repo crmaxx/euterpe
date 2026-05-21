@@ -8,15 +8,22 @@ mod encode;
 mod error;
 mod format;
 mod pcm;
+mod pcm_push;
 mod settings;
+mod source;
 mod tags;
 
-pub use convert::{convert_file, output_path_for, ConvertOptions, ConvertResult};
+pub use convert::{
+    convert_file, output_path_for, ConvertOptions, ConvertProgress, ConvertResult,
+};
 pub use encode::{encode_flac, to_flacenc_encoder};
+pub use encode::streaming::encode_flac_streaming;
 pub use error::ConvertError;
 pub use format::{decode_to_pcm, detect_format, is_convertible_extension, InputFormat};
 pub use pcm::PcmBuffer;
 pub use settings::{FilePolicy, FlacEncodeSettings, FlacPreset};
+pub use source::{open_pcm_source, PcmSource};
+pub use tags::{ensure_libflac_metadata_tail, transfer_tags};
 
 #[cfg(test)]
 mod tests {
@@ -55,9 +62,18 @@ mod tests {
         write_test_wav(&wav, 2048);
 
         let src_pcm = decode_to_pcm(&wav).unwrap();
-        let settings = FlacEncodeSettings::default();
-        let flac = encode_flac(&src_pcm, &settings).unwrap();
-        let round = encode::decode_flac_bytes(&flac).unwrap();
+        let result = convert_file(
+            &wav,
+            ConvertOptions {
+                flac_encode: &FlacEncodeSettings::default(),
+                file_policy: FilePolicy::SiblingThenDelete,
+                on_progress: None,
+            },
+        )
+        .unwrap();
+
+        let data = std::fs::read(&result.output_path).unwrap();
+        let round = encode::decode_flac_bytes(&data).unwrap();
         assert!(pcm_equal(&src_pcm, &round));
     }
 
@@ -72,6 +88,7 @@ mod tests {
             ConvertOptions {
                 flac_encode: &FlacEncodeSettings::default(),
                 file_policy: FilePolicy::SiblingThenDelete,
+                on_progress: None,
             },
         )
         .unwrap();

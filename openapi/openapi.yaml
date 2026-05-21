@@ -1949,6 +1949,7 @@ components:
         - upload_speed_bps
         - peers_live
         - peers_connecting
+        - dht_routing_nodes
       additionalProperties: false
       properties:
         librqbit_state:
@@ -1983,6 +1984,10 @@ components:
         peers_connecting:
           type: integer
           minimum: 0
+        dht_routing_nodes:
+          type: integer
+          minimum: 0
+          description: DHT routing table node count (IPv4 + IPv6) for the torrent engine session.
         error:
           type: ["string", "null"]
 
@@ -2174,22 +2179,19 @@ components:
 
     TorrentSettings:
       type: object
-      required: [seed_ratio_limit, seed_time_limit_sec, max_upload_kib_per_sec]
+      required: [disable_upload, max_upload_kib_per_sec]
       additionalProperties: false
       properties:
-        seed_ratio_limit:
-          type: number
-          minimum: 0
-          description: "0 = download-only (disable upload). Values > 0 are rejected in v1."
-        seed_time_limit_sec:
-          type: integer
-          format: int64
-          minimum: 0
-          description: "0 = download-only. Values > 0 are rejected in v1."
+        disable_upload:
+          type: boolean
+          description: |
+            librqbit download-only mode (no upload to peers). Applied when the torrent
+            session starts; changing this may require a server restart to take effect.
         max_upload_kib_per_sec:
           type: integer
           format: int64
           minimum: 0
+          description: Upload cap in KiB/s when disable_upload is false; 0 = unlimited.
 
     TorrentSettingsResponse:
       allOf:
@@ -2199,13 +2201,8 @@ components:
       type: object
       additionalProperties: false
       properties:
-        seed_ratio_limit:
-          type: number
-          minimum: 0
-        seed_time_limit_sec:
-          type: integer
-          format: int64
-          minimum: 0
+        disable_upload:
+          type: boolean
         max_upload_kib_per_sec:
           type: integer
           format: int64

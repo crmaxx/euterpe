@@ -1,0 +1,44 @@
+---
+description: Prefer streaming/chunked I/O in Rust; avoid loading whole files into memory when possible
+globs: crates/**/*.rs
+alwaysApply: false
+---
+
+# Rust: streaming I/O over full-buffer reads
+
+When reading files, decoding media, or encoding output, **use streaming or chunked processing by default**. Load the entire payload into a `Vec` or single buffer only when you have a concrete reason.
+
+## Default
+
+- Process data in **bounded chunks** (frames, blocks, `BufRead` lines, fixed byte windows).
+- Write outputs **incrementally** (`Write`, temp file + append, encoder frame API).
+- Bound memory to **O(chunk size)**, not O(file size).
+
+## Prefer
+
+| Instead of | Use |
+|------------|-----|
+| `read_to_end` / `fs::read` on large inputs | `BufRead`, `read` loops, format iterators (`next_packet`, sample iterators) |
+| `collect()` on unbounded iterators | fold/write per chunk; `extend` only with known caps |
+| `decode_all()` when API allows incremental decode | packet/frame/chunk loops |
+| `MemSource::from_samples(&entire_album)` | frame/block encoders (`encode_fixed_size_frame`, etc.) |
+| `write_all` after building full output `Vec` | stream encode directly to `File` |
+
+## Report progress on long work
+
+For jobs that can run minutes (convert, scan, transcode), emit progress **per chunk** (callback, DB, SSE)—not only after the whole file finishes.
+
+## Exceptions (full-buffer OK)
+
+- Size is **provably small** (config caps, tests, tiny fixtures).
+- API is **inherently one-shot** and no streaming API exists—document why; consider subprocess/ffmpeg or a different crate.
+- **Random access** required on a small in-memory index (still mmap/stream source, don’t duplicate whole file in RAM if avoidable).
+
+## This repo (`euterpe-converter`)
+
+- **ALAC/M4A**: Symphonia already demuxes by packet—accumulate PCM per FLAC block, not for the whole album.
+- **WAV**: read via `hound` in chunks, not `collect()` on all samples.
+- **FLAC encode**: prefer `flacenc` per-frame APIs over `encode_with_fixed_block_size` + full `MemSource`.
+- **APE**: frame-by-frame via `ape-decoder::FrameIterator` (`ApeSource`), not `decode_all()` on the hot path.
+
+When adding or refactoring decode/encode paths, choose streaming first; only fall back to full-buffer with a short comment explaining the constraint.

@@ -115,6 +115,13 @@ Qobuz integration is informed by community tools (unofficial API):
 - [streamrip](https://github.com/nathom/streamrip)
 - [qobuz-sync](https://github.com/trevorstarick/qobuz-sync)
 
+## TODO
+
+- Connect to network share
+- Rework "Sources" page
+- CUE split
+- (Incremental?) Backups
+
 ## Disclaimer
 
 Requires an active **Qobuz subscription**. This project is not affiliated with Qobuz. Use in compliance with [Qobuz API Terms of Use](https://static.qobuz.com/apps/api/QobuzAPI-TermsofUse.pdf). For personal / educational use.

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::{ConvertError, Result};
+use crate::error::Result;
 use crate::pcm::PcmBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,16 +31,7 @@ pub fn is_convertible_extension(ext: &str) -> bool {
     )
 }
 
+/// Full-buffer decode (tests and legacy callers). Production path uses [`crate::source::open_pcm_source`].
 pub fn decode_to_pcm(path: &Path) -> Result<PcmBuffer> {
-    let format = detect_format(path)
-        .ok_or_else(|| ConvertError::UnsupportedFormat(path.display().to_string()))?;
-    match format {
-        InputFormat::Wav => crate::decode::wav::decode(path),
-        InputFormat::Alac => crate::decode::alac::decode(path),
-        InputFormat::Ape => crate::decode::ape::decode(path),
-        #[cfg(feature = "wavpack")]
-        InputFormat::WavPack => Err(ConvertError::UnsupportedFormat(
-            "WavPack not yet implemented".into(),
-        )),
-    }
+    crate::source::decode_to_pcm(path)
 }

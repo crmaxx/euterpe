@@ -7,6 +7,7 @@ use lofty::probe::Probe;
 use lofty::tag::{Accessor, Tag};
 
 use crate::error::ApiError;
+use crate::library::paths::{library_path_hints, parse_album_dir_component, parse_track_file_stem};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackTags {
@@ -88,7 +89,29 @@ pub fn is_convertible_path(path: &Path) -> bool {
         .is_some_and(euterpe_converter::is_convertible_extension)
 }
 
+/// Folder names that are library layout containers, not performing artists.
+const GENERIC_ARTIST_DIRS: &[&str] = &["qobuz", "downloads", "torrent", "torrents", "incoming"];
+
 pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
+    read_tags_with_rel(path, None)
+}
+
+/// Read tags for indexing; falls back to path/filename when lofty cannot parse the file (e.g. some ALAC `.m4a`).
+pub fn read_tags_with_rel(path: &Path, path_rel: Option<&str>) -> Result<TrackTags, ApiError> {
+    match read_tags_lofty(path) {
+        Ok(tags) => Ok(tags),
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "lofty tag read failed; indexing from path/filename hints"
+            );
+            Ok(tags_from_path(path, path_rel))
+        }
+    }
+}
+
+fn read_tags_lofty(path: &Path) -> Result<TrackTags, ApiError> {
     let tagged = Probe::open(path)
         .map_err(|e| ApiError::Message(format!("probe {}: {e}", path.display())))?
         .guess_file_type()
@@ -118,23 +141,17 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
                 tag.genre().map(|g| g.to_string()),
             )
         } else {
+            let fallback = tags_from_path(path, None);
             (
-                path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Unknown Title")
-                    .to_string(),
-                "Unknown Artist".to_string(),
-                path.parent()
-                    .and_then(|p| p.file_name())
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("Unknown Album")
-                    .to_string(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
+                fallback.title,
+                fallback.artist,
+                fallback.album,
+                fallback.track_number,
+                fallback.year,
+                fallback.disc_number,
+                fallback.track_total,
+                fallback.disc_total,
+                fallback.genre,
             )
         };
 
@@ -161,6 +178,101 @@ pub fn read_tags(path: &Path) -> Result<TrackTags, ApiError> {
         isrc,
         composer,
     })
+}
+
+fn is_generic_artist_dir(name: &str) -> bool {
+    GENERIC_ARTIST_DIRS.contains(&name.trim().to_ascii_lowercase().as_str())
+}
+
+/// Derive a display artist from `Genesis - …` style album folder names.
+fn artist_from_album_folder(album_folder: &str) -> String {
+    if let Some((artist, _)) = album_folder.split_once(" - ") {
+        let artist = artist.trim();
+        if !artist.is_empty() {
+            return artist.to_string();
+        }
+    }
+    album_folder.trim().to_string()
+}
+
+fn tags_from_path(path: &Path, path_rel: Option<&str>) -> TrackTags {
+    if let Some(rel) = path_rel.and_then(library_path_hints) {
+        let album_component = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        let artist = if is_generic_artist_dir(&rel.artist_name) {
+            artist_from_album_folder(album_component)
+        } else {
+            rel.artist_name
+        };
+        let title = rel
+            .track_title
+            .unwrap_or_else(|| path_file_title(path));
+        return TrackTags {
+            title,
+            artist,
+            album: rel.album_title,
+            track_number: rel.track_number,
+            year: rel.year.map(|y| y as u32),
+            disc_number: None,
+            track_total: None,
+            disc_total: None,
+            genre: None,
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        };
+    }
+
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown Title");
+    let (track_number, title) = parse_track_file_stem(stem);
+    let album_dir = path.parent();
+    let album_folder = album_dir
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown Album");
+    let (year, album_title) = parse_album_dir_component(album_folder);
+    let artist = album_dir
+        .and_then(|p| p.parent())
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .filter(|name| !is_generic_artist_dir(name))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| artist_from_album_folder(album_folder));
+
+    TrackTags {
+        title,
+        artist,
+        album: album_title,
+        track_number,
+        year: year.map(|y| y as u32),
+        disc_number: None,
+        track_total: None,
+        disc_total: None,
+        genre: None,
+        duration_sec: None,
+        qobuz_track_id: None,
+        qobuz_album_id: None,
+        label: None,
+        isrc: None,
+        composer: None,
+    }
+}
+
+fn path_file_title(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown Title");
+    parse_track_file_stem(stem).1
 }
 
 fn tag_string(tag: Option<&Tag>, key: &ItemKey) -> Option<String> {
@@ -461,6 +573,28 @@ mod tests {
     fn is_audio_file_recognizes_extensions() {
         assert!(is_audio_file(Path::new("/a/track.flac")));
         assert!(is_audio_file(Path::new("/a/track.MP3")));
+        assert!(is_audio_file(Path::new("/a/track.m4a")));
         assert!(!is_audio_file(Path::new("/a/readme.txt")));
+    }
+
+    #[test]
+    fn tags_from_path_qobuz_layout_uses_album_folder_artist() {
+        let rel = "Qobuz/Genesis - The Lamb Lies Down On Broadway [Cartridge 2] UK 1974/Genesis - The Lamb Lies Down On Broadway [Cartridge 2].m4a";
+        let path = Path::new("/music").join(rel);
+        let tags = tags_from_path(&path, Some(rel));
+        assert_eq!(tags.artist, "Genesis");
+        assert!(tags.album.contains("Lamb Lies Down"));
+        assert!(tags.title.contains("Lamb") || tags.title.contains("Genesis"));
+    }
+
+    #[test]
+    fn tags_from_path_standard_artist_album_layout() {
+        let rel = "Genesis/1974 - The Lamb/01 - In The Cage.flac";
+        let path = Path::new("/music").join(rel);
+        let tags = tags_from_path(&path, Some(rel));
+        assert_eq!(tags.artist, "Genesis");
+        assert_eq!(tags.album, "The Lamb");
+        assert_eq!(tags.title, "In The Cage");
+        assert_eq!(tags.track_number, Some(1));
     }
 }

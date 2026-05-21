@@ -25,6 +25,24 @@ fn bind_sort_keys<'q, T>(
 }
 use crate::services::download::DownloadJobPayload;
 
+/// Tolerate corrupt or legacy `payload_json` so one bad row does not break `GET /downloads`.
+fn parse_job_payload(job_id: i64, raw: Option<&str>) -> DownloadJobPayload {
+    let Some(raw) = raw else {
+        return DownloadJobPayload::default();
+    };
+    match serde_json::from_str(raw) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(
+                job_id,
+                error = %e,
+                "download job payload JSON invalid; listing job with empty payload"
+            );
+            DownloadJobPayload::default()
+        }
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct JobRow {
     id: i64,
@@ -51,13 +69,7 @@ impl JobRow {
             "torrent" => DownloadJobType::Torrent,
             other => return Err(ApiError::Config(format!("invalid job_type {other}"))),
         };
-        let payload: DownloadJobPayload = self
-            .payload_json
-            .as_deref()
-            .map(serde_json::from_str)
-            .transpose()
-            .map_err(|e| ApiError::Message(format!("invalid job payload: {e}")))?
-            .unwrap_or_default();
+        let payload = parse_job_payload(self.id, self.payload_json.as_deref());
         Ok(DownloadJob {
             id: self.id,
             status: DownloadJobStatus::parse(&self.status)
@@ -467,7 +479,17 @@ pub async fn list_keyset(
 
     let mut items = Vec::with_capacity(page.items.len());
     for row in page.items {
-        items.push(row.into_job()?);
+        let job_id = row.id;
+        match row.into_job() {
+            Ok(job) => items.push(job),
+            Err(e) => {
+                tracing::error!(
+                    job_id,
+                    error = %e,
+                    "skipping download job row in list"
+                );
+            }
+        }
     }
 
     Ok(KeysetPage {
@@ -665,6 +687,20 @@ pub fn is_terminal_status(status: DownloadJobStatus) -> bool {
         status,
         DownloadJobStatus::Completed | DownloadJobStatus::Failed | DownloadJobStatus::Cancelled
     )
+}
+
+/// Terminal torrent jobs (for incoming dir cleanup before purge).
+pub async fn list_terminal_torrent_job_ids(pool: &SqlitePool) -> Result<Vec<i64>, ApiError> {
+    let rows: Vec<(i64,)> = sqlx::query_as(
+        r#"
+        SELECT id FROM download_jobs
+        WHERE job_type = 'torrent'
+          AND status IN ('completed', 'failed', 'cancelled')
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
 /// Remove all jobs that are not `queued` or `running`.

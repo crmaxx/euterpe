@@ -664,11 +664,11 @@ async fn collect_index_job(
     file_mtime: Option<String>,
     size_bytes: u64,
 ) -> Result<ScanIndexJob, ApiError> {
-    let track_tags = tags::read_tags(path)?;
     let rel = path
         .strip_prefix(root)
         .map_err(|_| ApiError::Message("path outside library root".into()))?;
     let path_rel = rel.to_string_lossy().replace('\\', "/");
+    let track_tags = tags::read_tags_with_rel(path, Some(&path_rel))?;
     let album_dir = path
         .parent()
         .ok_or_else(|| ApiError::Message("no parent".into()))?;

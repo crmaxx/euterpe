@@ -1,17 +1,36 @@
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::encode::encode_flac;
+use crate::encode::streaming::{encode_flac_streaming, EncodeProgress};
 use crate::error::{ConvertError, Result};
-use crate::format::decode_to_pcm;
 use crate::settings::{FilePolicy, FlacEncodeSettings};
-use crate::tags::transfer_tags;
+use crate::source::open_pcm_source;
+use crate::tags::{ensure_libflac_metadata_tail, transfer_tags};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+pub struct ConvertProgress {
+    pub flac_frames_encoded: u64,
+    pub pcm_samples_read: u64,
+    pub pcm_samples_total: Option<u64>,
+}
+
+impl From<EncodeProgress> for ConvertProgress {
+    fn from(p: EncodeProgress) -> Self {
+        Self {
+            flac_frames_encoded: p.flac_frames_encoded,
+            pcm_samples_read: p.pcm_samples_read,
+            pcm_samples_total: p.pcm_samples_total,
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct ConvertOptions<'a> {
     pub flac_encode: &'a FlacEncodeSettings,
     pub file_policy: FilePolicy,
+    pub on_progress: Option<Arc<dyn Fn(ConvertProgress) + Send + Sync>>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,8 +54,9 @@ pub fn convert_file(src: &Path, opts: ConvertOptions<'_>) -> Result<ConvertResul
         )));
     }
 
-    let pcm = decode_to_pcm(src)?;
-    let flac_data = encode_flac(&pcm, opts.flac_encode)?;
+    tracing::info!(path = %src.display(), "convert start");
+
+    let mut pcm_src = open_pcm_source(src)?;
     let out_path = output_path_for(src, opts.file_policy);
     let parent = out_path
         .parent()
@@ -47,10 +67,30 @@ pub fn convert_file(src: &Path, opts: ConvertOptions<'_>) -> Result<ConvertResul
         ".euterpe-convert-{}.flac.tmp",
         std::process::id()
     ));
-    {
-        let mut f = File::create(&temp_path).map_err(ConvertError::Io)?;
-        f.write_all(&flac_data).map_err(ConvertError::Io)?;
-        f.sync_all().map_err(ConvertError::Io)?;
+
+    let encode_result = {
+        let mut out = BufWriter::new(
+            File::create(&temp_path).map_err(ConvertError::Io)?,
+        );
+        let mut progress_cb = |p: EncodeProgress| {
+            if let Some(cb) = &opts.on_progress {
+                cb(p.into());
+            }
+        };
+        let result = encode_flac_streaming(
+            &mut pcm_src,
+            opts.flac_encode,
+            &mut out,
+            Some(&mut progress_cb),
+        );
+        if let Ok(inner) = out.into_inner() {
+            let _ = inner.sync_all();
+        }
+        result
+    };
+    if let Err(e) = encode_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(e);
     }
 
     fs::rename(&temp_path, &out_path).map_err(|e| {
@@ -58,6 +98,7 @@ pub fn convert_file(src: &Path, opts: ConvertOptions<'_>) -> Result<ConvertResul
         ConvertError::Io(e)
     })?;
 
+    ensure_libflac_metadata_tail(&out_path)?;
     transfer_tags(src, &out_path)?;
 
     if out_path != src {
@@ -67,6 +108,13 @@ pub fn convert_file(src: &Path, opts: ConvertOptions<'_>) -> Result<ConvertResul
     let bytes_written = fs::metadata(&out_path)
         .map_err(ConvertError::Io)?
         .len();
+
+    tracing::info!(
+        path = %src.display(),
+        out = %out_path.display(),
+        bytes = bytes_written,
+        "convert done"
+    );
 
     Ok(ConvertResult {
         output_path: out_path,

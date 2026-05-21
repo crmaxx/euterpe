@@ -116,6 +116,7 @@ pub struct TorrentJobDetail {
     pub eta_secs: Option<u64>,
     pub peers_live: u32,
     pub peers_connecting: u32,
+    pub dht_routing_nodes: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

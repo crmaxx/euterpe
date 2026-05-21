@@ -989,6 +989,8 @@ export interface components {
             eta_secs?: number | null;
             peers_live: number;
             peers_connecting: number;
+            /** @description DHT routing table node count (IPv4 + IPv6) for the torrent engine session. */
+            dht_routing_nodes: number;
             error?: string | null;
         };
         DownloadJob: {
@@ -1072,21 +1074,20 @@ export interface components {
             auto_index_after_import: boolean;
         };
         TorrentSettings: {
-            /** @description 0 = download-only (disable upload). Values > 0 are rejected in v1. */
-            seed_ratio_limit: number;
+            /**
+             * @description librqbit download-only mode (no upload to peers). Applied when the torrent
+             *     session starts; changing this may require a server restart to take effect.
+             */
+            disable_upload: boolean;
             /**
              * Format: int64
-             * @description 0 = download-only. Values > 0 are rejected in v1.
+             * @description Upload cap in KiB/s when disable_upload is false; 0 = unlimited.
              */
-            seed_time_limit_sec: number;
-            /** Format: int64 */
             max_upload_kib_per_sec: number;
         };
         TorrentSettingsResponse: components["schemas"]["TorrentSettings"];
         TorrentSettingsPatch: {
-            seed_ratio_limit?: number;
-            /** Format: int64 */
-            seed_time_limit_sec?: number;
+            disable_upload?: boolean;
             /** Format: int64 */
             max_upload_kib_per_sec?: number;
         };

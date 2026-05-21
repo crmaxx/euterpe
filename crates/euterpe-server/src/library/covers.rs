@@ -182,16 +182,21 @@ pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Opt
     if !album_dir.is_dir() {
         return None;
     }
-    const PREFERRED: &[&str] = &[
-        "cover.jpg",
-        "cover.jpeg",
-        "cover.png",
-        "cover.webp",
-        "cover.bmp",
-        "folder.jpg",
-    ];
-    for name in PREFERRED {
-        if album_dir.join(name).is_file() {
+    for entry in std::fs::read_dir(&album_dir).ok()?.flatten() {
+        if !entry.path().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let lower = name.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "cover.jpg"
+                | "cover.jpeg"
+                | "cover.png"
+                | "cover.webp"
+                | "cover.bmp"
+                | "folder.jpg"
+        ) {
             return Some(format!("{album_rel}/{name}"));
         }
     }

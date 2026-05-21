@@ -56,6 +56,8 @@ pub struct JobStats {
     pub librqbit_state: LibrqbitState,
     pub peers_live: u32,
     pub peers_connecting: u32,
+    /// DHT routing table size (IPv4 + IPv6 nodes) for the shared librqbit session.
+    pub dht_routing_nodes: u32,
     pub eta_secs: Option<u64>,
     pub error: Option<String>,
 }
@@ -94,6 +96,7 @@ mod tests {
             librqbit_state: LibrqbitState::Live,
             peers_live: 3,
             peers_connecting: 1,
+            dht_routing_nodes: 42,
             eta_secs: Some(120),
             error: None,
         };

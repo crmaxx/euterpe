@@ -12,9 +12,8 @@ function TorrentSettingsForm({ settings }: { settings: TorrentSettings }) {
   const { toast } = useToast();
   const patch = usePatchTorrentSettings();
 
-  const [ratio, setRatio] = useState(() => String(settings.seed_ratio_limit));
-  const [seedTime, setSeedTime] = useState(() =>
-    String(settings.seed_time_limit_sec),
+  const [disableUpload, setDisableUpload] = useState(
+    () => settings.disable_upload,
   );
   const [maxUpload, setMaxUpload] = useState(() =>
     String(settings.max_upload_kib_per_sec),
@@ -23,8 +22,7 @@ function TorrentSettingsForm({ settings }: { settings: TorrentSettings }) {
   const save = async () => {
     try {
       await patch.mutateAsync({
-        seed_ratio_limit: Number(ratio),
-        seed_time_limit_sec: Number(seedTime),
+        disable_upload: disableUpload,
         max_upload_kib_per_sec: Number(maxUpload),
       });
       toast({ title: t("settings.torrent.saved") });
@@ -44,28 +42,14 @@ function TorrentSettingsForm({ settings }: { settings: TorrentSettings }) {
         <p className="text-sm text-muted-foreground">{t("settings.torrent.hint")}</p>
       </div>
       <div className="grid max-w-md gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="torrent-ratio">{t("settings.torrent.ratio")}</Label>
-          <Input
-            id="torrent-ratio"
-            type="number"
-            min={0}
-            step={0.1}
-            value={ratio}
-            onChange={(e) => setRatio(e.target.value)}
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={disableUpload}
+            onChange={(e) => setDisableUpload(e.target.checked)}
           />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="torrent-seed-time">{t("settings.torrent.seedTime")}</Label>
-          <Input
-            id="torrent-seed-time"
-            type="number"
-            min={0}
-            step={1}
-            value={seedTime}
-            onChange={(e) => setSeedTime(e.target.value)}
-          />
-        </div>
+          {t("settings.torrent.disableUpload")}
+        </label>
         <div className="space-y-1">
           <Label htmlFor="torrent-upload">{t("settings.torrent.maxUpload")}</Label>
           <Input
@@ -74,6 +58,7 @@ function TorrentSettingsForm({ settings }: { settings: TorrentSettings }) {
             min={0}
             step={1}
             value={maxUpload}
+            disabled={disableUpload}
             onChange={(e) => setMaxUpload(e.target.value)}
           />
         </div>
@@ -93,7 +78,7 @@ export function TorrentSettingsSection() {
     return <p className="text-sm text-muted-foreground">{t("common.loading")}</p>;
   }
 
-  const formKey = `${data.seed_ratio_limit}-${data.seed_time_limit_sec}-${data.max_upload_kib_per_sec}`;
+  const formKey = `${data.disable_upload}-${data.max_upload_kib_per_sec}`;
 
   return <TorrentSettingsForm key={formKey} settings={data} />;
 }
