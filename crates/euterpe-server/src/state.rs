@@ -7,11 +7,11 @@ use sqlx::SqlitePool;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 use crate::api::{ConvertProgressEvent, JobProgressEvent, ScanProgressEvent};
-use crate::services::app_settings::{self, RuntimeSettingsHandle};
 use crate::config::AppConfig;
 use crate::credentials::{self, QobuzCredentials};
 use crate::crypto::MasterKey;
 use crate::error::ApiError;
+use crate::services::app_settings::{self, RuntimeSettingsHandle};
 use crate::services::torrent_staging::TorrentStaging;
 
 /// Channels created at startup and passed into [`AppState::new`].

@@ -12,13 +12,13 @@ use crate::api::{
     LibraryTrackTagsPatchRequest,
 };
 use crate::db::{albums, artists, convert_jobs, library_scan_runs, tracks};
-use crate::services::convert::start_album_convert;
 use crate::error::ApiError;
 use crate::library::covers;
 use crate::library::stream;
 use crate::library::tags::{
     self, AlbumTagsPatch, TrackTagsPatch, apply_album_patch, apply_patch, is_audio_file,
 };
+use crate::services::convert::start_album_convert;
 use crate::services::library_scan;
 use crate::state::AppState;
 
@@ -501,12 +501,8 @@ pub async fn post_library_album_convert(
     albums::get_by_id(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
-    let job_id =
-        start_album_convert(&state.db, id, &state.convert_job_tx).await?;
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(ConvertAlbumResponse { job_id }),
-    ))
+    let job_id = start_album_convert(&state.db, id, &state.convert_job_tx).await?;
+    Ok((StatusCode::ACCEPTED, Json(ConvertAlbumResponse { job_id })))
 }
 
 pub async fn get_library_album_convert_latest(

@@ -5,7 +5,10 @@
 use std::path::Path;
 use std::process::Command;
 
-use euterpe_converter::{convert_file, encode_flac_streaming, open_pcm_source, transfer_tags, ConvertOptions, FilePolicy, FlacEncodeSettings};
+use euterpe_converter::{
+    ConvertOptions, FilePolicy, FlacEncodeSettings, convert_file, encode_flac_with_libflac,
+    open_pcm_source, transfer_tags,
+};
 
 fn flac_test(path: &Path) -> String {
     let out = Command::new("flac")
@@ -15,7 +18,11 @@ fn flac_test(path: &Path) -> String {
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             let status = if o.status.success() { "OK" } else { "FAIL" };
-            format!("{status} exit={:?} stderr_len={}", o.status.code(), stderr.len())
+            format!(
+                "{status} exit={:?} stderr_len={}",
+                o.status.code(),
+                stderr.len()
+            )
         }
         Err(e) => format!("flac not run: {e}"),
     }
@@ -31,14 +38,15 @@ fn main() {
     let no_tags_out = src.with_extension("euterpe-notags.flac");
     println!("=== encode only (no tag transfer) ===");
     {
-        let mut pcm = open_pcm_source(src).expect("open source");
-        let mut f = std::fs::File::create(&no_tags_out).expect("create");
-        encode_flac_streaming(&mut pcm, &settings, &mut f, None).expect("encode");
+        let pcm = open_pcm_source(src).expect("open source");
+        encode_flac_with_libflac(pcm, &no_tags_out, &settings, None).expect("encode");
     }
     println!(
         "flac -t (no tags): {} ({} bytes)",
         flac_test(&no_tags_out),
-        std::fs::metadata(&no_tags_out).map(|m| m.len()).unwrap_or(0)
+        std::fs::metadata(&no_tags_out)
+            .map(|m| m.len())
+            .unwrap_or(0)
     );
 
     println!("=== transfer_tags onto no-tags flac ===");

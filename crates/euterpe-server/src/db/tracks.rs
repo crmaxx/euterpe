@@ -209,7 +209,10 @@ pub fn path_extension_lower(path: &str) -> Option<String> {
         .map(|e| e.to_ascii_lowercase())
 }
 
-pub async fn album_has_convertible_tracks(pool: &SqlitePool, album_id: i64) -> Result<bool, ApiError> {
+pub async fn album_has_convertible_tracks(
+    pool: &SqlitePool,
+    album_id: i64,
+) -> Result<bool, ApiError> {
     let rows = list_by_album(pool, album_id).await?;
     Ok(rows
         .iter()

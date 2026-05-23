@@ -140,11 +140,7 @@ fn default_parallelism() -> u32 {
 }
 
 fn default_formats() -> Vec<String> {
-    vec![
-        "wav".into(),
-        "m4a".into(),
-        "ape".into(),
-    ]
+    vec!["wav".into(), "m4a".into(), "ape".into()]
 }
 
 impl Default for ConverterSettings {
@@ -322,12 +318,7 @@ pub async fn load_library_scan(pool: &SqlitePool, config: &AppConfig) -> Library
 }
 
 pub async fn load_downloads(pool: &SqlitePool, config: &AppConfig) -> DownloadsSettings {
-    load_json(
-        pool,
-        KEY_DOWNLOADS_SETTINGS,
-        downloads_defaults(config),
-    )
-    .await
+    load_json(pool, KEY_DOWNLOADS_SETTINGS, downloads_defaults(config)).await
 }
 
 async fn load_json<T>(pool: &SqlitePool, key: &str, default: T) -> T

@@ -146,13 +146,13 @@ pub async fn update_progress(
     files_total: i64,
     progress_pct: f64,
     payload_json: Option<&str>,
-) -> Result<(), ApiError> {
-    sqlx::query(
+) -> Result<bool, ApiError> {
+    let result = sqlx::query(
         r#"
         UPDATE convert_jobs
         SET files_done = ?, files_total = ?, progress_pct = ?, payload_json = COALESCE(?, payload_json),
             updated_at = datetime('now')
-        WHERE id = ?
+        WHERE id = ? AND status = 'running'
         "#,
     )
     .bind(files_done)
@@ -162,7 +162,7 @@ pub async fn update_progress(
     .bind(id)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn finish(
@@ -231,4 +231,64 @@ pub async fn row_to_summary(row: ConvertJobRow) -> Result<crate::api::ConvertJob
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{albums, artists, connect, migrate};
+
+    async fn seed_album(pool: &SqlitePool) -> i64 {
+        let artist_id = artists::upsert_by_name(pool, "Artist", None).await.unwrap();
+        albums::upsert(
+            pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("Artist/Album"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn progress_updates_do_not_modify_terminal_jobs() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let album_id = seed_album(&pool).await;
+        let job_id = create(&pool, album_id, ConvertTrigger::Manual, 2)
+            .await
+            .unwrap();
+        assert!(claim_running(&pool, job_id).await.unwrap());
+        finish(&pool, job_id, ConvertJobStatus::Success, None, Some("[]"))
+            .await
+            .unwrap();
+
+        update_progress(&pool, job_id, 1, 2, 50.0, Some("[{\"path\":\"late\"}]"))
+            .await
+            .unwrap();
+
+        let row = get_by_id(&pool, job_id).await.unwrap().unwrap();
+        assert_eq!(row.status, "success");
+        assert_eq!(row.progress_pct, 100.0);
+        assert_eq!(row.payload_json.as_deref(), Some("[]"));
+    }
+
+    #[tokio::test]
+    async fn active_convert_jobs_are_unique_per_album() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let album_id = seed_album(&pool).await;
+
+        create(&pool, album_id, ConvertTrigger::Manual, 1)
+            .await
+            .unwrap();
+        let duplicate = create(&pool, album_id, ConvertTrigger::Auto, 1).await;
+
+        assert!(duplicate.is_err(), "second active job should be rejected");
+    }
 }

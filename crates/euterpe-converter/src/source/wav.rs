@@ -2,13 +2,12 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 
-use flacenc::error::SourceError;
-use flacenc::source::{Fill, Source};
 use hound::{SampleFormat, WavIntoSamples, WavReader};
 
 use crate::error::{ConvertError, Result};
 use crate::pcm::PcmBuffer;
 use crate::pcm_push::clamp_sample;
+use crate::source::traits::{Fill, PcmRead};
 
 enum WavSampleIter {
     Int(WavIntoSamples<BufReader<File>, i32>),
@@ -43,6 +42,12 @@ impl WavSource {
         let sample_rate = spec.sample_rate as usize;
         let total_samples = reader.duration() as usize;
         let bits = bits_per_sample as u8;
+        if spec.sample_format == SampleFormat::Float {
+            return Err(ConvertError::Decode(
+                "float WAV is not supported for browser-compatible FLAC; use integer PCM WAV"
+                    .into(),
+            ));
+        }
 
         let samples = match spec.sample_format {
             SampleFormat::Int => WavSampleIter::Int(reader.into_samples()),
@@ -61,14 +66,11 @@ impl WavSource {
     }
 }
 
-fn decode_err(msg: String) -> SourceError {
-    SourceError::from_io_error(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        msg,
-    ))
+fn decode_err(msg: String) -> ConvertError {
+    ConvertError::Decode(msg)
 }
 
-impl Source for WavSource {
+impl PcmRead for WavSource {
     fn channels(&self) -> usize {
         self.channels
     }
@@ -85,11 +87,7 @@ impl Source for WavSource {
         Some(self.total_samples)
     }
 
-    fn read_samples<F: Fill>(
-        &mut self,
-        block_size: usize,
-        dest: &mut F,
-    ) -> std::result::Result<usize, SourceError> {
+    fn read_samples<F: Fill>(&mut self, block_size: usize, dest: &mut F) -> Result<usize> {
         let to_read = block_size.min(self.total_samples.saturating_sub(self.samples_read));
         if to_read == 0 {
             return Ok(0);
@@ -120,11 +118,19 @@ pub fn decode(path: &Path) -> Result<PcmBuffer> {
     let bits_per_sample = spec.bits_per_sample as u8;
     let sample_rate = spec.sample_rate;
     let bits = bits_per_sample;
+    if spec.sample_format == SampleFormat::Float {
+        return Err(ConvertError::Decode(
+            "float WAV is not supported for browser-compatible FLAC; use integer PCM WAV".into(),
+        ));
+    }
 
     let samples: Vec<i32> = match spec.sample_format {
         SampleFormat::Int => reader
             .samples::<i32>()
-            .map(|s| s.map(|v| clamp_sample(v, bits)).map_err(|e| ConvertError::Decode(e.to_string())))
+            .map(|s| {
+                s.map(|v| clamp_sample(v, bits))
+                    .map_err(|e| ConvertError::Decode(e.to_string()))
+            })
             .collect::<std::result::Result<Vec<_>, _>>()?,
         SampleFormat::Float => reader
             .samples::<f32>()
@@ -141,4 +147,36 @@ pub fn decode(path: &Path) -> Result<PcmBuffer> {
         bits_per_sample,
         sample_rate,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hound::{SampleFormat, WavSpec, WavWriter};
+    use tempfile::tempdir;
+
+    #[test]
+    fn rejects_float_wav_instead_of_writing_32bit_flac() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("float.wav");
+        let spec = WavSpec {
+            channels: 2,
+            sample_rate: 44_100,
+            bits_per_sample: 32,
+            sample_format: SampleFormat::Float,
+        };
+        let mut w = WavWriter::create(&path, spec).unwrap();
+        w.write_sample(0.25f32).unwrap();
+        w.write_sample(-0.25f32).unwrap();
+        w.finalize().unwrap();
+
+        let err = match WavSource::open(&path) {
+            Ok(_) => panic!("float WAV should be rejected"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("float WAV"),
+            "unexpected error: {err}"
+        );
+    }
 }

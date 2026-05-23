@@ -190,12 +190,7 @@ pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Opt
         let lower = name.to_ascii_lowercase();
         if matches!(
             lower.as_str(),
-            "cover.jpg"
-                | "cover.jpeg"
-                | "cover.png"
-                | "cover.webp"
-                | "cover.bmp"
-                | "folder.jpg"
+            "cover.jpg" | "cover.jpeg" | "cover.png" | "cover.webp" | "cover.bmp" | "folder.jpg"
         ) {
             return Some(format!("{album_rel}/{name}"));
         }

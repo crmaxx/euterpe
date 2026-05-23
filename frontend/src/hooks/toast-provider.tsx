@@ -1,5 +1,9 @@
 import * as React from "react";
-import { ToastContext, type ToastMessage } from "@/hooks/toast-context";
+import {
+  ToastContext,
+  toastDuration,
+  type ToastMessage,
+} from "@/hooks/toast-context";
 
 export function ToastStateProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = React.useState<ToastMessage[]>([]);
@@ -9,7 +13,7 @@ export function ToastStateProvider({ children }: { children: React.ReactNode }) 
     setToasts((prev) => [...prev, { ...msg, id }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 5000);
+    }, toastDuration(msg));
   }, []);
 
   const dismiss = React.useCallback((id: string) => {

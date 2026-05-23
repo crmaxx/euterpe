@@ -3,11 +3,10 @@ use std::io::BufReader;
 use std::path::Path;
 
 use ape_decoder::ApeDecoder;
-use flacenc::error::SourceError;
-use flacenc::source::{Fill, Source};
 
 use crate::error::{ConvertError, Result};
 use crate::pcm::PcmBuffer;
+use crate::source::traits::{Fill, PcmRead};
 
 pub struct ApeSource {
     decoder: ApeDecoder<BufReader<File>>,
@@ -50,7 +49,7 @@ impl ApeSource {
         })
     }
 
-    fn load_next_frame(&mut self) -> std::result::Result<bool, SourceError> {
+    fn load_next_frame(&mut self) -> Result<bool> {
         if self.current_frame >= self.decoder.total_frames() {
             return Ok(false);
         }
@@ -64,14 +63,11 @@ impl ApeSource {
     }
 }
 
-fn decode_err(msg: String) -> SourceError {
-    SourceError::from_io_error(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        msg,
-    ))
+fn decode_err(msg: String) -> ConvertError {
+    ConvertError::Decode(msg)
 }
 
-impl Source for ApeSource {
+impl PcmRead for ApeSource {
     fn channels(&self) -> usize {
         self.channels
     }
@@ -88,11 +84,7 @@ impl Source for ApeSource {
         Some(self.total_samples)
     }
 
-    fn read_samples<F: Fill>(
-        &mut self,
-        block_size: usize,
-        dest: &mut F,
-    ) -> std::result::Result<usize, SourceError> {
+    fn read_samples<F: Fill>(&mut self, block_size: usize, dest: &mut F) -> Result<usize> {
         let frame_bytes = self.bytes_per_sample * self.channels;
 
         loop {
@@ -128,9 +120,7 @@ pub fn decode(path: &Path) -> Result<PcmBuffer> {
     };
     let block = 4096usize;
     loop {
-        let n = src
-            .read_samples(block, &mut fill)
-            .map_err(|e| ConvertError::Decode(e.to_string()))?;
+        let n = src.read_samples(block, &mut fill)?;
         if n == 0 {
             break;
         }

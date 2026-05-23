@@ -7,6 +7,15 @@ export type ToastMessage = {
   variant?: "default" | "destructive";
 };
 
+export const TOAST_DURATION_MS = 5000;
+export const ERROR_TOAST_DURATION_MS = 15000;
+
+export function toastDuration(msg: Pick<ToastMessage, "variant">) {
+  return msg.variant === "destructive"
+    ? ERROR_TOAST_DURATION_MS
+    : TOAST_DURATION_MS;
+}
+
 export type ToastContextValue = {
   toasts: ToastMessage[];
   toast: (msg: Omit<ToastMessage, "id">) => void;

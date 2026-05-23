@@ -19,12 +19,10 @@ impl PcmBuffer {
         self.samples.iter().map(|s| s.abs()).max().unwrap_or(0)
     }
 
-    /// Normalize samples to fit `bits_per_sample` (flacenc input range).
+    /// Normalize samples to fit `bits_per_sample`.
     pub fn clamp_to_bit_depth(&mut self) {
-        let max = (1i32 << (self.bits_per_sample.saturating_sub(1))) - 1;
-        let min = -max - 1;
         for s in &mut self.samples {
-            *s = (*s).clamp(min, max);
+            *s = crate::pcm_push::clamp_sample(*s, self.bits_per_sample);
         }
     }
 }

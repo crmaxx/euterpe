@@ -75,7 +75,17 @@ pub fn is_audio_file(path: &Path) -> bool {
         .map(|e| {
             matches!(
                 e.to_ascii_lowercase().as_str(),
-                "flac" | "mp3" | "m4a" | "aac" | "ogg" | "opus" | "wav" | "aiff" | "aif" | "wv"
+                "flac"
+                    | "mp3"
+                    | "m4a"
+                    | "aac"
+                    | "ogg"
+                    | "opus"
+                    | "wav"
+                    | "aiff"
+                    | "aif"
+                    | "wv"
+                    | "wavpack"
                     | "ape"
             )
         })
@@ -207,9 +217,7 @@ fn tags_from_path(path: &Path, path_rel: Option<&str>) -> TrackTags {
         } else {
             rel.artist_name
         };
-        let title = rel
-            .track_title
-            .unwrap_or_else(|| path_file_title(path));
+        let title = rel.track_title.unwrap_or_else(|| path_file_title(path));
         return TrackTags {
             title,
             artist,
@@ -574,7 +582,15 @@ mod tests {
         assert!(is_audio_file(Path::new("/a/track.flac")));
         assert!(is_audio_file(Path::new("/a/track.MP3")));
         assert!(is_audio_file(Path::new("/a/track.m4a")));
+        assert!(is_audio_file(Path::new("/a/track.wv")));
+        assert!(is_audio_file(Path::new("/a/track.wavpack")));
         assert!(!is_audio_file(Path::new("/a/readme.txt")));
+    }
+
+    #[test]
+    fn is_convertible_path_recognizes_wavpack() {
+        assert!(is_convertible_path(Path::new("/a/track.wv")));
+        assert!(is_convertible_path(Path::new("/a/track.wavpack")));
     }
 
     #[test]
