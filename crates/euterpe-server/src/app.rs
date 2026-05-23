@@ -134,8 +134,7 @@ pub fn app(state: AppState) -> Router {
         )
         .route(
             "/api/v1/settings/converter",
-            get(settings_ext::get_converter_settings)
-                .patch(settings_ext::patch_converter_settings),
+            get(settings_ext::get_converter_settings).patch(settings_ext::patch_converter_settings),
         )
         .route(
             "/api/v1/settings/library-scan",

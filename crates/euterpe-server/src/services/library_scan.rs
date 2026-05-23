@@ -37,7 +37,8 @@ pub struct ScanDeps {
     /// Subtree only (canonical absolute path under `library_path`); `None` = full library.
     pub scan_root: Option<PathBuf>,
     pub convert_job_tx: Option<tokio::sync::mpsc::Sender<i64>>,
-    pub runtime: Option<std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>>,
+    pub runtime:
+        Option<std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>>,
 }
 
 #[derive(Eq, PartialEq)]
@@ -829,7 +830,9 @@ pub async fn start_scan(
     scan: LibraryScanConfig,
     scan_root: Option<PathBuf>,
     convert_job_tx: Option<tokio::sync::mpsc::Sender<i64>>,
-    runtime: Option<std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>>,
+    runtime: Option<
+        std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>,
+    >,
 ) -> Result<i64, ApiError> {
     if library_scan_runs::has_running(pool).await? {
         return Err(ApiError::Message("SCAN_ALREADY_RUNNING".into()));

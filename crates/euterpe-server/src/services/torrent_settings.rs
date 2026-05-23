@@ -51,9 +51,9 @@ pub async fn load(pool: &SqlitePool) -> Result<TorrentSettings, ApiError> {
 }
 
 fn normalize_legacy(legacy: TorrentSettingsLegacy) -> TorrentSettings {
-    let disable_upload = legacy.disable_upload.unwrap_or(
-        legacy.seed_ratio_limit == 0.0 && legacy.seed_time_limit_sec == 0,
-    );
+    let disable_upload = legacy
+        .disable_upload
+        .unwrap_or(legacy.seed_ratio_limit == 0.0 && legacy.seed_time_limit_sec == 0);
     TorrentSettings {
         disable_upload,
         max_upload_kib_per_sec: legacy.max_upload_kib_per_sec,

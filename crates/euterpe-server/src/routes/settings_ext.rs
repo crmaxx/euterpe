@@ -10,7 +10,9 @@ use crate::error::ApiError;
 use crate::services::app_settings;
 use crate::state::AppState;
 
-pub async fn get_ui_settings(State(state): State<AppState>) -> Result<Json<UiPreferencesResponse>, ApiError> {
+pub async fn get_ui_settings(
+    State(state): State<AppState>,
+) -> Result<Json<UiPreferencesResponse>, ApiError> {
     let settings = state.runtime.read().await.ui.clone();
     Ok(Json(UiPreferencesResponse { settings }))
 }

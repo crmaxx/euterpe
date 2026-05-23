@@ -1,12 +1,10 @@
 use std::fs::File;
 use std::path::Path;
 
-use flacenc::error::SourceError;
-use flacenc::source::{Fill, Source};
-use symphonia::core::codecs::{Decoder, DecoderOptions, CODEC_TYPE_ALAC};
+use symphonia::core::codecs::{CODEC_TYPE_ALAC, Decoder, DecoderOptions};
 use symphonia::core::errors::Error;
-use symphonia::core::formats::FormatReader;
 use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::FormatReader;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
@@ -14,6 +12,7 @@ use symphonia::core::probe::Hint;
 use crate::error::{ConvertError, Result};
 use crate::pcm::PcmBuffer;
 use crate::pcm_push::append_symphonia_buffer;
+use crate::source::traits::{Fill, PcmRead};
 
 type BoxedDecoder = Box<dyn Decoder>;
 
@@ -25,34 +24,38 @@ struct AlacMagicCookie {
     num_channels: u8,
 }
 
-/// Read stream format from the ALAC magic cookie (24 or 48 bytes).
+/// Read stream format from the ALAC magic cookie (24-byte payload, or payload embedded in MP4 extra data).
 /// Layout matches [symphonia-codec-alac](https://docs.rs/symphonia-codec-alac).
 fn parse_alac_magic_cookie(data: &[u8]) -> Option<AlacMagicCookie> {
-    if data.len() != 24 && data.len() != 48 {
-        return None;
+    fn parse_payload(data: &[u8]) -> Option<AlacMagicCookie> {
+        if data.len() < 24 {
+            return None;
+        }
+        let bit_depth = *data.get(5)?;
+        if !(1..=32).contains(&bit_depth) {
+            return None;
+        }
+        let num_channels = *data.get(9)?;
+        if !(1..=8).contains(&num_channels) {
+            return None;
+        }
+        let sample_rate = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        if sample_rate == 0 {
+            return None;
+        }
+        Some(AlacMagicCookie {
+            bit_depth,
+            sample_rate,
+            num_channels,
+        })
     }
-    let bit_depth = *data.get(5)?;
-    if !(1..=32).contains(&bit_depth) {
-        return None;
-    }
-    let num_channels = *data.get(9)?;
-    if !(1..=8).contains(&num_channels) {
-        return None;
-    }
-    let sample_rate = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
-    if sample_rate == 0 {
-        return None;
-    }
-    Some(AlacMagicCookie {
-        bit_depth,
-        sample_rate,
-        num_channels,
-    })
+
+    parse_payload(data)
+        .or_else(|| data.get(12..).and_then(parse_payload))
+        .or_else(|| data.get(24..).and_then(parse_payload))
 }
 
-fn resolve_alac_format(
-    params: &symphonia::core::codecs::CodecParameters,
-) -> (usize, usize, usize) {
+fn resolve_alac_format(params: &symphonia::core::codecs::CodecParameters) -> (usize, usize, usize) {
     let cookie = params
         .extra_data
         .as_deref()
@@ -118,8 +121,7 @@ impl AlacSource {
             .ok_or(ConvertError::NotAlac)?;
         let track_id = track.id;
 
-        let (sample_rate, channels, bits_per_sample) =
-            resolve_alac_format(&track.codec_params);
+        let (sample_rate, channels, bits_per_sample) = resolve_alac_format(&track.codec_params);
 
         tracing::info!(
             path = %path.display(),
@@ -129,10 +131,7 @@ impl AlacSource {
             "alac stream format"
         );
 
-        let total_samples = track
-            .codec_params
-            .n_frames
-            .map(|f| f as usize);
+        let total_samples = track.codec_params.n_frames.map(|f| f as usize);
 
         let decoder = symphonia::default::get_codecs()
             .make(&track.codec_params, &DecoderOptions::default())
@@ -150,7 +149,7 @@ impl AlacSource {
         })
     }
 
-    fn decode_more(&mut self) -> std::result::Result<bool, SourceError> {
+    fn decode_more(&mut self) -> Result<bool> {
         loop {
             let packet = match self.format.next_packet() {
                 Ok(p) => p,
@@ -172,24 +171,17 @@ impl AlacSource {
                 .decoder
                 .decode(&packet)
                 .map_err(|e| decode_err(e.to_string()))?;
-            append_symphonia_buffer(
-                decoded,
-                self.bits_per_sample as u8,
-                &mut self.pending,
-            );
+            append_symphonia_buffer(decoded, self.bits_per_sample as u8, &mut self.pending);
             return Ok(true);
         }
     }
 }
 
-fn decode_err(msg: String) -> SourceError {
-    SourceError::from_io_error(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        msg,
-    ))
+fn decode_err(msg: String) -> ConvertError {
+    ConvertError::Decode(msg)
 }
 
-impl Source for AlacSource {
+impl PcmRead for AlacSource {
     fn channels(&self) -> usize {
         self.channels
     }
@@ -206,11 +198,7 @@ impl Source for AlacSource {
         self.total_samples
     }
 
-    fn read_samples<F: Fill>(
-        &mut self,
-        block_size: usize,
-        dest: &mut F,
-    ) -> std::result::Result<usize, SourceError> {
+    fn read_samples<F: Fill>(&mut self, block_size: usize, dest: &mut F) -> Result<usize> {
         loop {
             let available = self.pending.len() / self.channels;
             if available >= block_size {
@@ -244,9 +232,7 @@ pub fn decode(path: &Path) -> Result<PcmBuffer> {
     };
     let block = 4096usize;
     loop {
-        let n = src
-            .read_samples(block, &mut fill)
-            .map_err(|e| ConvertError::Decode(e.to_string()))?;
+        let n = src.read_samples(block, &mut fill)?;
         if n == 0 {
             break;
         }
@@ -274,6 +260,14 @@ mod tests {
         b
     }
 
+    fn cookie_bytes_36(bit_depth: u8, sample_rate: u32, channels: u8) -> [u8; 36] {
+        let mut b = [0u8; 36];
+        b[17] = bit_depth;
+        b[21] = channels;
+        b[32..36].copy_from_slice(&sample_rate.to_be_bytes());
+        b
+    }
+
     #[test]
     fn parse_alac_magic_cookie_24bit_48k() {
         let data = cookie_bytes(24, 48_000, 2);
@@ -293,5 +287,14 @@ mod tests {
         assert_eq!(rate, 48_000);
         assert_eq!(ch, 2);
         assert_eq!(bits, 24);
+    }
+
+    #[test]
+    fn parse_alac_magic_cookie_36byte_isomp4_extra_data() {
+        let data = cookie_bytes_36(24, 48_000, 2);
+        let c = parse_alac_magic_cookie(&data).unwrap();
+        assert_eq!(c.bit_depth, 24);
+        assert_eq!(c.sample_rate, 48_000);
+        assert_eq!(c.num_channels, 2);
     }
 }

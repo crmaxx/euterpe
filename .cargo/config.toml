@@ -6,6 +6,9 @@ x64-linux = "build --release -p euterpe-server --target x86_64-unknown-linux-gnu
 x64-windows = "build --release -p euterpe-server --target x86_64-pc-windows-gnu"
 pi1 = "build --release -p euterpe-server --target arm-unknown-linux-gnueabihf"
 
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
 # Linux x86_64 (native on amd64 Linux; also used as cross target).
 [target.x86_64-unknown-linux-gnu]
 

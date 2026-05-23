@@ -2,11 +2,7 @@
 
 use symphonia::core::audio::{AudioBufferRef, Signal};
 
-pub fn append_symphonia_buffer(
-    buf: AudioBufferRef<'_>,
-    target_bits: u8,
-    out: &mut Vec<i32>,
-) {
+pub fn append_symphonia_buffer(buf: AudioBufferRef<'_>, target_bits: u8, out: &mut Vec<i32>) {
     let source_bits = symphonia_buffer_bits(&buf);
     match buf {
         AudioBufferRef::F32(b) => {
@@ -52,11 +48,7 @@ pub fn append_symphonia_buffer(
             let frames = b.frames();
             for f in 0..frames {
                 for c in 0..ch {
-                    out.push(convert_sample(
-                        b.chan(c)[f],
-                        source_bits,
-                        target_bits,
-                    ));
+                    out.push(convert_sample(b.chan(c)[f], source_bits, target_bits));
                 }
             }
         }
@@ -105,8 +97,12 @@ pub fn convert_sample(value: i32, source_bits: u8, target_bits: u8) -> i32 {
 }
 
 pub fn clamp_sample(s: i32, bits_per_sample: u8) -> i32 {
-    let max = (1i32 << bits_per_sample.saturating_sub(1)) - 1;
-    let min = -max - 1;
+    if bits_per_sample >= 32 {
+        return s;
+    }
+    let bits = bits_per_sample.max(1) as u32;
+    let max = ((1i64 << (bits - 1)) - 1) as i32;
+    let min = (-(1i64 << (bits - 1))) as i32;
     s.clamp(min, max)
 }
 
@@ -129,5 +125,11 @@ mod tests {
     #[test]
     fn clamp_only_at_target_ceiling() {
         assert_eq!(clamp_sample(50_000, 16), 32_767);
+    }
+
+    #[test]
+    fn clamp_32_bit_keeps_full_i32_range() {
+        assert_eq!(clamp_sample(i32::MAX, 32), i32::MAX);
+        assert_eq!(clamp_sample(i32::MIN, 32), i32::MIN);
     }
 }

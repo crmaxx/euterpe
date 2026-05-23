@@ -21,7 +21,7 @@ When reading files, decoding media, or encoding output, **use streaming or chunk
 | `read_to_end` / `fs::read` on large inputs | `BufRead`, `read` loops, format iterators (`next_packet`, sample iterators) |
 | `collect()` on unbounded iterators | fold/write per chunk; `extend` only with known caps |
 | `decode_all()` when API allows incremental decode | packet/frame/chunk loops |
-| `MemSource::from_samples(&entire_album)` | frame/block encoders (`encode_fixed_size_frame`, etc.) |
+| full-album PCM buffers | streaming PCM readers feeding native encoders |
 | `write_all` after building full output `Vec` | stream encode directly to `File` |
 
 ## Report progress on long work
@@ -38,7 +38,7 @@ For jobs that can run minutes (convert, scan, transcode), emit progress **per ch
 
 - **ALAC/M4A**: Symphonia already demuxes by packet—accumulate PCM per FLAC block, not for the whole album.
 - **WAV**: read via `hound` in chunks, not `collect()` on all samples.
-- **FLAC encode**: prefer `flacenc` per-frame APIs over `encode_with_fixed_block_size` + full `MemSource`.
+- **FLAC encode**: feed streaming PCM readers into the native `libFLAC` encoder via `flac-bound`.
 - **APE**: frame-by-frame via `ape-decoder::FrameIterator` (`ApeSource`), not `decode_all()` on the hot path.
 
 When adding or refactoring decode/encode paths, choose streaming first; only fall back to full-buffer with a short comment explaining the constraint.

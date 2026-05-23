@@ -13,6 +13,9 @@ RUN npm run generate:api && npm run build
 
 FROM rust:1-bookworm AS builder
 WORKDIR /app
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends cmake clang libclang-dev \
+    && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.toml
 COPY crates crates
 COPY migrations migrations
@@ -20,6 +23,7 @@ COPY openapi openapi
 RUN cargo build --release -p euterpe-server
 
 FROM debian:bookworm-slim
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/euterpe-server /usr/local/bin/euterpe-server

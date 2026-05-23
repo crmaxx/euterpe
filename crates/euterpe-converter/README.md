@@ -10,25 +10,27 @@ Lossless audio conversion to FLAC for Euterpe.
 
 ## Backlog
 
-- **WavPack** (`.wv`) — enable via feature flag `wavpack` when a decoder is integrated.
+- **WavPack** (`.wv`) — behind the `wavpack` feature.
 
 ## PCM guarantee
 
 Encoding presets affect compression ratio and CPU time only. Roundtrip tests assert **identical PCM samples** after FLAC decode.
 
-## I/O design (streaming by default)
+## I/O design
 
-Conversion uses a **bounded-memory pipeline**:
+Production conversion uses `flac-bound` over vendored static `libFLAC`. The previous pure-Rust
+encoder path produced formally valid files, but 24-bit transient material could stall
+browser/Howler playback even though `flac -t` and Audacity accepted it. `libFLAC` produces
+browser-compatible bitstreams for the same PCM.
 
-1. **Decode** — `WavSource`, `AlacSource`, or `ApeSource` implement `flacenc::Source` and yield PCM in FLAC block-sized chunks (Symphonia packets for ALAC, `FrameIterator` for APE, incremental `hound` reads for WAV).
-2. **Encode** — PCM is accumulated to full FLAC block sizes before each frame is encoded (Symphonia ALAC packets can be smaller than a block). Frames use **fixed blocking** (frame numbers in headers, matching STREAMINFO `min/max blocksize`). Do not use sample-number headers on a fixed-block stream (breaks Safari). After encode, an empty Vorbis Comment block is appended as the metadata tail (like libflac/xrecode) so a manually added SEEKTABLE is not the last block. Compressed frames for the whole album are held in RAM during encode (~output FLAC size, not full PCM). `flacenc` multithread is ignored (parallelism is per-file in the server worker).
+The Rust streaming decoder modules feed PCM directly into `libFLAC`. After encode, an empty
+Vorbis Comment block is appended as the metadata tail when needed, then source tags are transferred.
 
-Peak decode RAM is **O(FLAC block × channels + one APE frame)**. Encode RAM scales with compressed FLAC size.
+Docker builder images install `cmake` to build the vendored encoder. Runtime images do not need
+a separate `libFLAC` package.
 
 **Format preservation:** FLAC uses the source sample rate and bit depth (e.g. 48 kHz / 24-bit ALAC from the MP4 magic cookie). No forced downmix to 44.1 kHz / 16-bit.
 
-`decode_to_pcm` / `encode_flac` + `MemSource` remain for tests and small fixtures.
-
-Progress: `ConvertOptions::on_progress` fires every 32 FLAC frames during encode (used by the convert worker for SSE).
+`decode_to_pcm` remains for tests and small fixtures.
 
 See project rule `.cursor/rules/rust-streaming-io.mdc`.

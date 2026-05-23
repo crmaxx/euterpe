@@ -19,16 +19,18 @@ pub fn detect_format(path: &Path) -> Option<InputFormat> {
         "m4a" | "mp4" | "caf" => Some(InputFormat::Alac),
         "ape" => Some(InputFormat::Ape),
         #[cfg(feature = "wavpack")]
-        "wv" => Some(InputFormat::WavPack),
+        "wv" | "wavpack" => Some(InputFormat::WavPack),
         _ => None,
     }
 }
 
 pub fn is_convertible_extension(ext: &str) -> bool {
-    matches!(
-        ext.to_ascii_lowercase().as_str(),
-        "wav" | "wave" | "m4a" | "mp4" | "caf" | "ape"
-    )
+    match ext.to_ascii_lowercase().as_str() {
+        "wav" | "wave" | "m4a" | "mp4" | "caf" | "ape" => true,
+        #[cfg(feature = "wavpack")]
+        "wv" | "wavpack" => true,
+        _ => false,
+    }
 }
 
 /// Full-buffer decode (tests and legacy callers). Production path uses [`crate::source::open_pcm_source`].

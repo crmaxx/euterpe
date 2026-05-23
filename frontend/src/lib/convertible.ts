@@ -6,6 +6,8 @@ const CONVERTIBLE_EXTENSIONS = new Set([
   "mp4",
   "caf",
   "ape",
+  "wv",
+  "wavpack",
 ]);
 
 export function isConvertiblePath(path: string): boolean {

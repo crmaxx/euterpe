@@ -325,10 +325,7 @@ impl TorrentEngine for LibrqbitEngine {
     }
 
     async fn apply_session_settings(&self, settings: SessionSettings) -> Result<(), TorrentError> {
-        let prev = *self
-            .session_settings
-            .lock()
-            .expect("settings lock");
+        let prev = *self.session_settings.lock().expect("settings lock");
 
         if prev.disable_upload != settings.disable_upload {
             let session = self.session();
@@ -347,15 +344,10 @@ impl TorrentEngine for LibrqbitEngine {
         } else {
             let session = self.session();
             session.ratelimits.set_upload_bps(settings.upload_bps);
-            session
-                .ratelimits
-                .set_download_bps(settings.download_bps);
+            session.ratelimits.set_download_bps(settings.download_bps);
         }
 
-        *self
-            .session_settings
-            .lock()
-            .expect("settings lock") = settings;
+        *self.session_settings.lock().expect("settings lock") = settings;
         Ok(())
     }
 }

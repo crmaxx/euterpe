@@ -31,22 +31,22 @@ pub async fn subscribe_events(
         .merge(scan_stream)
         .merge(convert_stream)
         .map(|payload| {
-        let (event_name, data) = match payload {
-            SsePayload::Job(p) => (
-                "job_progress",
-                serde_json::to_string(&p).unwrap_or_default(),
-            ),
-            SsePayload::Scan(p) => (
-                "scan_progress",
-                serde_json::to_string(&p).unwrap_or_default(),
-            ),
-            SsePayload::Convert(p) => (
-                "convert_progress",
-                serde_json::to_string(&p).unwrap_or_default(),
-            ),
-        };
-        Ok(Event::default().event(event_name).data(data))
-    });
+            let (event_name, data) = match payload {
+                SsePayload::Job(p) => (
+                    "job_progress",
+                    serde_json::to_string(&p).unwrap_or_default(),
+                ),
+                SsePayload::Scan(p) => (
+                    "scan_progress",
+                    serde_json::to_string(&p).unwrap_or_default(),
+                ),
+                SsePayload::Convert(p) => (
+                    "convert_progress",
+                    serde_json::to_string(&p).unwrap_or_default(),
+                ),
+            };
+            Ok(Event::default().event(event_name).data(data))
+        });
 
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }

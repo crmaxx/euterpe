@@ -6,6 +6,7 @@ import {
   ToastTitle,
   ToastViewport,
 } from "@/components/ui/toast";
+import { toastDuration } from "@/hooks/toast-context";
 import { useToast } from "@/hooks/use-toast";
 
 export function Toaster() {
@@ -17,6 +18,7 @@ export function Toaster() {
         <Toast
           key={t.id}
           variant={t.variant}
+          duration={toastDuration(t)}
           open
           onOpenChange={(open) => !open && dismiss(t.id)}
         >

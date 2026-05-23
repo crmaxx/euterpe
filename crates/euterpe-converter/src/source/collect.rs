@@ -1,13 +1,9 @@
-use flacenc::error::SourceError;
-use flacenc::source::Fill;
-
+use crate::error::{ConvertError, Result};
 use crate::pcm_push::convert_sample;
+use crate::source::traits::Fill;
 
-fn decode_err(msg: String) -> SourceError {
-    SourceError::from_io_error(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        msg,
-    ))
+fn decode_err(msg: String) -> ConvertError {
+    ConvertError::Decode(msg)
 }
 
 /// Append PCM into a `Vec<i32>` for full-buffer test decode paths.
@@ -18,17 +14,13 @@ pub struct VecFill {
 }
 
 impl Fill for VecFill {
-    fn fill_interleaved(&mut self, interleaved: &[i32]) -> std::result::Result<(), SourceError> {
+    fn fill_interleaved(&mut self, interleaved: &[i32]) -> Result<()> {
         // AlacSource already bit-converts; extend as-is (clamp is a no-op in range).
         self.samples.extend_from_slice(interleaved);
         Ok(())
     }
 
-    fn fill_le_bytes(
-        &mut self,
-        bytes: &[u8],
-        bytes_per_sample: usize,
-    ) -> std::result::Result<(), SourceError> {
+    fn fill_le_bytes(&mut self, bytes: &[u8], bytes_per_sample: usize) -> Result<()> {
         let frame_bytes = bytes_per_sample * self.channels;
         if frame_bytes == 0 || !bytes.len().is_multiple_of(frame_bytes) {
             return Err(decode_err("PCM byte length mismatch".into()));
