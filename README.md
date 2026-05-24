@@ -119,7 +119,7 @@ Qobuz integration is informed by community tools (unofficial API):
 
 - Connect to network share
 - Rework "Sources" page
-- CUE split
+- ~~CUE split~~
 - (Incremental?) Backups
 
 ## Disclaimer
