@@ -4,7 +4,6 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useServerInfo } from "@/api/hooks";
 import { Toaster } from "@/components/toaster";
 import { AdminLogin } from "@/features/auth/AdminLogin";
-import { FavoritesPage } from "@/features/favorites/FavoritesPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { AppLayout } from "@/features/layout/AppLayout";
 import { LibraryPage } from "@/features/library/LibraryPage";
@@ -55,7 +54,6 @@ function AppRoutes() {
       <Route element={<AppLayout />}>
         <Route index element={<Navigate to="/sources" replace />} />
         <Route path="sources" element={<SourcesPage />} />
-        <Route path="favorites" element={<FavoritesPage />} />
         <Route path="queue" element={<QueuePage />} />
         <Route path="library" element={<LibraryPage />} />
         <Route path="settings" element={<SettingsPage />} />
