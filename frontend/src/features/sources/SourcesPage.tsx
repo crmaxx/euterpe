@@ -13,6 +13,7 @@ import {
 } from "@/api/hooks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { FavoritesPage } from "@/features/favorites/FavoritesPage";
 import { TorrentInspectView } from "@/features/sources/TorrentInspectView";
 import { useToast } from "@/hooks/use-toast";
