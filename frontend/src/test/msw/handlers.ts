@@ -286,6 +286,7 @@ export const handlers = [
           year: 2020,
           track_count: 2,
           cover_path: null,
+          has_cue_files: true,
         },
       ],
       next_cursor: null,
@@ -315,6 +316,7 @@ export const handlers = [
       title: "Local Album",
       artist_name: "Test Artist",
       has_convertible_tracks: false,
+      has_cue_files: true,
       year: 2020,
       cover_path: null,
       genre: "Pop",
@@ -341,6 +343,7 @@ export const handlers = [
       title: (body.album_title as string) ?? "Local Album",
       artist_name: (body.artist_name as string) ?? "Test Artist",
       has_convertible_tracks: false,
+      has_cue_files: true,
       year: (body.year as number) ?? 2020,
       cover_path: null,
       genre: (body.genre as string) ?? "Pop",
@@ -359,6 +362,87 @@ export const handlers = [
       ],
     });
   }),
+
+  http.get("/api/v1/library/albums/:id/cue", () =>
+    HttpResponse.json({
+      cue_files: [{ path: "Test Artist/Local Album/album.cue", selected: true }],
+      document: {
+        cue_path: "Test Artist/Local Album/album.cue",
+        audio_path: "album.flac",
+        audio_format: "flac",
+        album_title: "Local Album",
+        album_artist: "Test Artist",
+        year: 2020,
+        genre: "Pop",
+        comment: "Vinyl rip",
+        extra_fields: [],
+        tracks: [
+          {
+            number: 1,
+            artist: "Test Artist",
+            title: "Track One",
+            genre: "Pop",
+            start_index: "00:00:00",
+            pregap: null,
+            duration: "00:01:00",
+            selected: true,
+          },
+        ],
+      },
+      validation: { valid: true, issues: [] },
+    }),
+  ),
+
+  http.post("/api/v1/library/albums/:id/cue/validate", async ({ request }) => {
+    const body = (await request.json()) as {
+      document?: { album_title?: string; year?: number | null; genre?: string | null; tracks?: { title?: string; number?: number }[] };
+    };
+    const issues = [];
+    if (!body.document?.album_title?.trim()) {
+      issues.push({
+        code: "missing_album_title",
+        message: "Album title is required",
+        severity: "error",
+        field: "album_title",
+      });
+    }
+    if (body.document?.year == null) {
+      issues.push({
+        code: "missing_album_year",
+        message: "Album year is required",
+        severity: "error",
+        field: "year",
+      });
+    }
+    if (!body.document?.genre?.trim()) {
+      issues.push({
+        code: "missing_album_genre",
+        message: "Album genre is required",
+        severity: "error",
+        field: "genre",
+      });
+    }
+    for (const track of body.document?.tracks ?? []) {
+      if (!track.title?.trim()) {
+        issues.push({
+          code: "missing_track_title",
+          message: "Track title is required",
+          severity: "error",
+          field: "tracks.title",
+          track_number: track.number ?? null,
+        });
+      }
+    }
+    return HttpResponse.json({ valid: issues.length === 0, issues });
+  }),
+
+  http.post("/api/v1/library/albums/:id/cue/split", () =>
+    HttpResponse.json({ job_id: 7 }, { status: 202 }),
+  ),
+
+  http.get("/api/v1/library/albums/:id/cue/latest", () =>
+    HttpResponse.json({ job: null }),
+  ),
 
   http.get("/api/v1/library/tracks/:id/stream", () =>
     HttpResponse.arrayBuffer(new ArrayBuffer(128), {

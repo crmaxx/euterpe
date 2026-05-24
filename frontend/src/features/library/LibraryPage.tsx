@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useAlbumConvertLatest,
+  useAlbumCueLatest,
   useLibraryAlbum,
   useLibraryAlbumsKeyset,
   useLibraryTrack,
@@ -37,7 +38,8 @@ import {
   useHydrateAlbumConvertLive,
 } from "@/features/library/convertProgressStore";
 import { findTrackConvertProgress } from "@/features/library/parseConvertFiles";
-import { TrackConvertProgress } from "@/features/library/TrackConvertProgress";
+import { TrackOperationProgress } from "@/features/library/TrackOperationProgress";
+import { CueEditorDialog } from "@/features/library/CueEditorDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
@@ -436,6 +438,7 @@ export function LibraryPage() {
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
   const [editingAlbumTags, setEditingAlbumTags] = useState(false);
+  const [editingCue, setEditingCue] = useState(false);
   const tagEditorSaveRef = useRef<(() => void) | null>(null);
   const albumTagEditorSaveRef = useRef<(() => void) | null>(null);
   const coverInputRef = useRef<HTMLInputElement>(null);
@@ -459,6 +462,7 @@ export function LibraryPage() {
   const isLoading = albumsQuery.isLoading;
   const { data: albumDetail } = useLibraryAlbum(selectedAlbumId);
   const { data: convertJob } = useAlbumConvertLatest(selectedAlbumId);
+  const { data: cueJob } = useAlbumCueLatest(selectedAlbumId);
   useHydrateAlbumConvertLive(selectedAlbumId, convertJob);
   const convertLive = useAlbumConvertLive(selectedAlbumId);
   const postConvert = usePostAlbumConvert();
@@ -476,6 +480,23 @@ export function LibraryPage() {
   const repairFolder = albumDetail
     ? albumFolderFromTracks(albumDetail.tracks)
     : undefined;
+  const cueOperation =
+    cueJob?.job && cueJob.job.status !== "success"
+      ? {
+          status:
+            cueJob.job.status === "failed"
+              ? ("failed" as const)
+              : cueJob.job.status === "running"
+                ? ("running" as const)
+                : ("pending" as const),
+          progressPct:
+            Number.isFinite(cueJob.job.progress_pct) &&
+            cueJob.job.status === "running"
+              ? Math.min(100, Math.max(0, cueJob.job.progress_pct))
+              : undefined,
+          error: cueJob.job.error_message,
+        }
+      : null;
 
   const trackGroups = useMemo(
     () => (albumDetail ? groupTracksByDisc(albumDetail.tracks) : []),
@@ -623,6 +644,14 @@ export function LibraryPage() {
     setEditingAlbumTags(true);
   }
 
+  function openCueEditor() {
+    setEditingCue(true);
+  }
+
+  function closeCueEditor() {
+    setEditingCue(false);
+  }
+
   const tagEditorCanConfirm =
     editingTrackId != null && !!trackQuery.data && !trackQuery.isLoading;
 
@@ -713,6 +742,7 @@ export function LibraryPage() {
                     onClick={() => {
                       setSelectedAlbumId(a.id);
                       setEditingAlbumTags(false);
+                      setEditingCue(false);
                       albumTagEditorSaveRef.current = null;
                     }}
                   >
@@ -826,12 +856,14 @@ export function LibraryPage() {
                     <AlbumActionCombo
                       albumId={albumDetail.id}
                       hasConvertibleTracks={albumDetail.has_convertible_tracks}
+                      hasCueFiles={albumDetail.has_cue_files}
                       repairFolder={repairFolder}
                       scanRunning={scanRunning}
                       scanPending={startScan.isPending}
                       convertRunning={convertRunning}
                       convertPending={postConvert.isPending}
                       onEditTags={openAlbumTagEditor}
+                      onOpenCue={openCueEditor}
                       onRepairFolder={(folder) => void handleScan(folder)}
                       onConvertToFlac={() => void handleConvertToFlac()}
                       onApplied={handleAutofillApplied}
@@ -859,10 +891,14 @@ export function LibraryPage() {
                     </div>
                   ) : null}
                   <ul className="divide-y divide-border">
-                    {group.tracks.map((track) => {
+                    {group.tracks.map((track, trackIndex) => {
                       const convertProgress = convertLive
                         ? findTrackConvertProgress(track.path, convertLive.files)
                         : null;
+                      const cueProgress =
+                        cueOperation && trackIndex === 0 && group === trackGroups[0]
+                          ? cueOperation
+                          : null;
                       return (
                       <li key={track.id} className="flex flex-col">
                         <div className="flex items-center gap-2 px-4 py-2">
@@ -902,10 +938,18 @@ export function LibraryPage() {
                           </Button>
                         </div>
                         {convertProgress != null ? (
-                          <TrackConvertProgress
+                          <TrackOperationProgress
+                            kind="convert"
                             status={convertProgress.status}
                             progressPct={convertProgress.progressPct}
                             error={convertProgress.error}
+                          />
+                        ) : cueProgress != null ? (
+                          <TrackOperationProgress
+                            kind="cue"
+                            status={cueProgress.status}
+                            progressPct={cueProgress.progressPct}
+                            error={cueProgress.error}
                           />
                         ) : null}
                         {player.playback?.trackId === track.id ? (
@@ -989,6 +1033,11 @@ export function LibraryPage() {
           />
         ) : null}
       </Modal>
+      <CueEditorDialog
+        albumId={selectedAlbumId}
+        open={editingCue}
+        onClose={closeCueEditor}
+      />
     </div>
   );
 }

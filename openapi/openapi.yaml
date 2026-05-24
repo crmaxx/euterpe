@@ -1219,6 +1219,135 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /api/v1/library/albums/{id}/cue:
+    get:
+      operationId: getLibraryAlbumCue
+      tags: [Library]
+      summary: CUE files and editable CUE document for an album
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: cue_path
+          in: query
+          description: Library-relative CUE path to parse when an album has multiple CUE files.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: CUE editor payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CueAlbumResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/library/albums/{id}/cue/validate:
+    post:
+      operationId: validateLibraryAlbumCue
+      tags: [Library]
+      summary: Validate an edited CUE document
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CueValidateRequest"
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CueValidationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/library/albums/{id}/cue/split:
+    post:
+      operationId: splitLibraryAlbumCue
+      tags: [Library]
+      summary: Split a FLAC album image using an edited CUE document
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CueSplitRequest"
+      responses:
+        "202":
+          description: CUE split job queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CueSplitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/library/albums/{id}/cue/latest:
+    get:
+      operationId: getLibraryAlbumCueLatest
+      tags: [Library]
+      summary: Latest CUE split job for an album
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: Latest CUE split job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CueJobResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/library/convert/jobs/{id}:
     get:
       operationId: getConvertJob
@@ -2140,6 +2269,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TorrentInspectFile"
+        post_download_capability:
+          oneOf:
+            - $ref: "#/components/schemas/TorrentPostDownloadCapability"
+            - type: "null"
 
     TorrentInspectMagnetRequest:
       type: object
@@ -2176,6 +2309,59 @@ components:
           type: boolean
         auto_index_after_import:
           type: boolean
+        post_download:
+          $ref: "#/components/schemas/TorrentPostDownloadOptions"
+
+    TorrentCueCandidate:
+      type: object
+      required: [cue_path, audio_path, audio_format, direct_split_supported, convert_required_for_split]
+      additionalProperties: false
+      properties:
+        cue_path:
+          type: string
+        audio_path:
+          type: string
+        audio_format:
+          type: string
+          enum: [flac, wav, ape, m4a, wv]
+        direct_split_supported:
+          type: boolean
+        convert_required_for_split:
+          type: boolean
+
+    TorrentPostDownloadCapability:
+      type: object
+      required: [cue_candidates, has_flac_image_cue, has_convertible_image_cue]
+      additionalProperties: false
+      properties:
+        cue_candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/TorrentCueCandidate"
+        has_flac_image_cue:
+          type: boolean
+        has_convertible_image_cue:
+          type: boolean
+
+    TorrentPostDownloadOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        convert_after_download:
+          type: boolean
+          default: false
+        split_after_download:
+          type: boolean
+          default: false
+          description: Direct split for FLAC image+CUE releases.
+        split_after_conversion:
+          type: boolean
+          default: false
+          description: Split converted FLAC after non-FLAC image conversion.
+        cue_path:
+          type: ["string", "null"]
+        source_file_policy:
+          $ref: "#/components/schemas/CueSourceFilePolicy"
 
     TorrentSettings:
       type: object
@@ -2415,6 +2601,214 @@ components:
         job:
           $ref: "#/components/schemas/ConvertJobSummary"
 
+    CueSourceFilePolicy:
+      type: string
+      enum: [keep, delete_after_success]
+
+    CueIssueSeverity:
+      type: string
+      enum: [error, warning]
+
+    CueIssue:
+      type: object
+      required: [code, message, severity]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        severity:
+          $ref: "#/components/schemas/CueIssueSeverity"
+        field:
+          type: ["string", "null"]
+        track_number:
+          type: ["integer", "null"]
+        line:
+          type: ["integer", "null"]
+          minimum: 1
+        column:
+          type: ["integer", "null"]
+          minimum: 1
+
+    CueExtraField:
+      type: object
+      required: [scope, key, value]
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          enum: [album, track]
+        track_number:
+          type: ["integer", "null"]
+        key:
+          type: string
+        value:
+          type: string
+
+    CueFileChoice:
+      type: object
+      required: [path, selected]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        selected:
+          type: boolean
+
+    CueTrack:
+      type: object
+      required: [number, title, start_index, selected]
+      additionalProperties: false
+      properties:
+        number:
+          type: integer
+          minimum: 1
+          maximum: 255
+        artist:
+          type: ["string", "null"]
+        title:
+          type: string
+        genre:
+          type: ["string", "null"]
+        start_index:
+          type: string
+          pattern: "^[0-9]+:[0-5][0-9]:[0-7][0-9]$"
+        pregap:
+          type: ["string", "null"]
+        duration:
+          type: ["string", "null"]
+        selected:
+          type: boolean
+
+    CueDocument:
+      type: object
+      required: [cue_path, audio_path, album_title, album_artist, tracks]
+      additionalProperties: false
+      properties:
+        cue_path:
+          type: string
+        audio_path:
+          type: string
+        audio_format:
+          type: string
+          enum: [flac, wav, ape, m4a, wv, unknown]
+        album_title:
+          type: string
+        album_artist:
+          type: string
+        year:
+          type: ["integer", "null"]
+        genre:
+          type: ["string", "null"]
+        comment:
+          type: ["string", "null"]
+        extra_fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CueExtraField"
+        tracks:
+          type: array
+          items:
+            $ref: "#/components/schemas/CueTrack"
+
+    CueAlbumResponse:
+      type: object
+      required: [cue_files, document, validation]
+      additionalProperties: false
+      properties:
+        cue_files:
+          type: array
+          items:
+            $ref: "#/components/schemas/CueFileChoice"
+        document:
+          $ref: "#/components/schemas/CueDocument"
+        validation:
+          $ref: "#/components/schemas/CueValidationResponse"
+
+    CueValidateRequest:
+      type: object
+      required: [document]
+      additionalProperties: false
+      properties:
+        document:
+          $ref: "#/components/schemas/CueDocument"
+
+    CueValidationResponse:
+      type: object
+      required: [valid, issues]
+      additionalProperties: false
+      properties:
+        valid:
+          type: boolean
+        issues:
+          type: array
+          items:
+            $ref: "#/components/schemas/CueIssue"
+
+    CueSplitRequest:
+      type: object
+      required: [document, source_file_policy]
+      additionalProperties: false
+      properties:
+        document:
+          $ref: "#/components/schemas/CueDocument"
+        source_file_policy:
+          $ref: "#/components/schemas/CueSourceFilePolicy"
+        file_mask:
+          type: ["string", "null"]
+          default: "{$n} {$a} $t"
+
+    CueSplitResponse:
+      type: object
+      required: [job_id]
+      additionalProperties: false
+      properties:
+        job_id:
+          type: integer
+          format: int64
+
+    CueJobSummary:
+      type: object
+      required: [id, album_id, status, tracks_total, tracks_done, progress_pct, created_at, updated_at]
+      additionalProperties: false
+      properties:
+        id:
+          type: integer
+          format: int64
+        album_id:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [queued, running, success, failed]
+        tracks_total:
+          type: integer
+          minimum: 0
+        tracks_done:
+          type: integer
+          minimum: 0
+        progress_pct:
+          type: number
+          minimum: 0
+          maximum: 100
+        error_message:
+          type: ["string", "null"]
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    CueJobResponse:
+      type: object
+      required: [job]
+      additionalProperties: false
+      properties:
+        job:
+          oneOf:
+            - $ref: "#/components/schemas/CueJobSummary"
+            - type: "null"
+
     LibraryScanStartResponse:
       type: object
       required: [scan_id]
@@ -2497,7 +2891,7 @@ components:
 
     LibraryAlbumItem:
       type: object
-      required: [id, title, artist_name, track_count]
+      required: [id, title, artist_name, track_count, has_cue_files]
       additionalProperties: false
       properties:
         id:
@@ -2514,6 +2908,9 @@ components:
           minimum: 0
         cover_path:
           type: ["string", "null"]
+        has_cue_files:
+          type: boolean
+          description: True when the album folder contains at least one .cue file.
 
     LibraryAlbumListResponse:
       type: object
@@ -2554,7 +2951,7 @@ components:
 
     LibraryAlbumDetailResponse:
       type: object
-      required: [id, title, artist_name, has_convertible_tracks, tracks]
+      required: [id, title, artist_name, has_convertible_tracks, has_cue_files, tracks]
       additionalProperties: false
       properties:
         id:
@@ -2567,6 +2964,9 @@ components:
         has_convertible_tracks:
           type: boolean
           description: True when album has WAV/ALAC/APE (etc.) tracks eligible for FLAC conversion
+        has_cue_files:
+          type: boolean
+          description: True when the album folder contains at least one .cue file.
         year:
           type: ["integer", "null"]
         cover_path:

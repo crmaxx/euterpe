@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/euterpe-cue",
     "crates/euterpe-converter",
     "crates/euterpe-hawk",
     "crates/euterpe-qobuz",

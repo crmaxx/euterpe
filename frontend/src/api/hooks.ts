@@ -69,6 +69,8 @@ export const queryKeys = {
   downloadsSettings: ["downloadsSettings"] as const,
   albumConvertLatest: (albumId: number) =>
     ["albumConvertLatest", albumId] as const,
+  albumCue: (albumId: number) => ["albumCue", albumId] as const,
+  albumCueLatest: (albumId: number) => ["albumCueLatest", albumId] as const,
 };
 
 export function useServerInfo() {
@@ -300,6 +302,63 @@ export function useAlbumCoverBlobUrl(
     ? (synced ?? query.data)
     : synced;
   return { ...query, data };
+}
+
+export function useAlbumCue(albumId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.albumCue(albumId ?? 0),
+    queryFn: () => api.albumCue(albumId!),
+    enabled: enabled && albumId != null,
+  });
+}
+
+export function useValidateAlbumCue() {
+  return useMutation({
+    mutationFn: ({
+      albumId,
+      document,
+    }: {
+      albumId: number;
+      document: Parameters<typeof api.validateAlbumCue>[1]["document"];
+    }) => api.validateAlbumCue(albumId, { document }),
+  });
+}
+
+export function useSplitAlbumCue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      albumId,
+      body,
+    }: {
+      albumId: number;
+      body: Parameters<typeof api.splitAlbumCue>[1];
+    }) => api.splitAlbumCue(albumId, body),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: queryKeys.albumCueLatest(vars.albumId) });
+      void qc.invalidateQueries({ queryKey: queryKeys.libraryAlbum(vars.albumId) });
+    },
+  });
+}
+
+export function useAlbumCueLatest(albumId: number | null) {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: queryKeys.albumCueLatest(albumId ?? 0),
+    queryFn: () => api.albumCueLatest(albumId!),
+    enabled: albumId != null,
+    refetchInterval: (query) => {
+      const status = query.state.data?.job?.status;
+      return status === "queued" || status === "running" ? 2_000 : false;
+    },
+  });
+  const status = query.data?.job?.status;
+  useEffect(() => {
+    if (albumId == null || (status !== "success" && status !== "failed")) return;
+    void qc.invalidateQueries({ queryKey: queryKeys.libraryAlbum(albumId) });
+    void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+  }, [albumId, qc, status]);
+  return query;
 }
 
 export function useUploadLibraryAlbumCover() {
@@ -702,7 +761,8 @@ export function usePatchDownloadsSettings() {
 }
 
 export function useAlbumConvertLatest(albumId: number | null) {
-  return useQuery({
+  const qc = useQueryClient();
+  const query = useQuery({
     queryKey: queryKeys.albumConvertLatest(albumId ?? 0),
     queryFn: async () => {
       try {
@@ -720,6 +780,13 @@ export function useAlbumConvertLatest(albumId: number | null) {
       return status === "queued" || status === "running" ? 2_000 : false;
     },
   });
+  const status = query.data?.status;
+  useEffect(() => {
+    if (albumId == null || (status !== "success" && status !== "failed")) return;
+    void qc.invalidateQueries({ queryKey: queryKeys.libraryAlbum(albumId) });
+    void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+  }, [albumId, qc, status]);
+  return query;
 }
 
 export function usePostAlbumConvert() {

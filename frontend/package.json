@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "node ./scripts/check-node-version.mjs && eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "generate:api": "openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts",
     "preview": "vite preview"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.13.0"
   },
   "dependencies": {
     "@hawk.so/browser": "^3.3.6",

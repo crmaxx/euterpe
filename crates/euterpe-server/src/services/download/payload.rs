@@ -130,6 +130,8 @@ pub struct TorrentJobPayload {
     pub copy_to_library: bool,
     pub auto_index_after_import: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_download: Option<crate::api::TorrentPostDownloadOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub magnet: Option<String>,
     pub save_dir_incoming: String,
     #[serde(skip_serializing_if = "Option::is_none")]

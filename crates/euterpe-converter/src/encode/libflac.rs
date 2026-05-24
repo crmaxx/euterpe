@@ -6,7 +6,45 @@ use crate::encode::EncodeProgress;
 use crate::error::{ConvertError, Result};
 use crate::settings::{FlacEncodeSettings, FlacPreset};
 use crate::source::collect::VecFill;
-use crate::source::traits::PcmRead;
+use crate::source::traits::{Fill, PcmRead};
+
+struct InterleavedSliceSource<'a> {
+    samples: &'a [i32],
+    cursor: usize,
+    channels: usize,
+    bits_per_sample: usize,
+    sample_rate: usize,
+}
+
+impl PcmRead for InterleavedSliceSource<'_> {
+    fn channels(&self) -> usize {
+        self.channels
+    }
+
+    fn bits_per_sample(&self) -> usize {
+        self.bits_per_sample
+    }
+
+    fn sample_rate(&self) -> usize {
+        self.sample_rate
+    }
+
+    fn len_hint(&self) -> Option<usize> {
+        Some(self.samples.len() / self.channels)
+    }
+
+    fn read_samples<F: Fill>(&mut self, block_size: usize, dest: &mut F) -> Result<usize> {
+        if self.cursor >= self.samples.len() {
+            return Ok(0);
+        }
+        let remaining_frames = (self.samples.len() - self.cursor) / self.channels;
+        let frames = remaining_frames.min(block_size);
+        let end = self.cursor + frames * self.channels;
+        dest.fill_interleaved(&self.samples[self.cursor..end])?;
+        self.cursor = end;
+        Ok(frames)
+    }
+}
 
 pub fn encode_flac_with_libflac<S>(
     mut src: S,
@@ -82,4 +120,30 @@ where
         .finish()
         .map_err(|enc| ConvertError::Encode(format!("libFLAC finish failed: {:?}", enc.state())))?;
     Ok(())
+}
+
+pub fn encode_interleaved_pcm_to_flac(
+    samples: &[i32],
+    channels: usize,
+    bits_per_sample: usize,
+    sample_rate: usize,
+    dst: &Path,
+    settings: &FlacEncodeSettings,
+    on_progress: Option<&mut dyn FnMut(EncodeProgress)>,
+) -> Result<()> {
+    if channels == 0 || !samples.len().is_multiple_of(channels) {
+        return Err(ConvertError::Encode("PCM sample/channel mismatch".into()));
+    }
+    encode_flac_with_libflac(
+        InterleavedSliceSource {
+            samples,
+            cursor: 0,
+            channels,
+            bits_per_sample,
+            sample_rate,
+        },
+        dst,
+        settings,
+        on_progress,
+    )
 }

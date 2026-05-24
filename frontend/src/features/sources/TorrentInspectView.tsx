@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import { ChevronRight, File, Folder, Loader2 } from "lucide-react";
-import type { TorrentInspectResponse } from "@/api/client";
+import type {
+  TorrentInspectResponse,
+  TorrentPostDownloadOptions,
+} from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -21,10 +24,12 @@ type Props = {
   selection: Record<number, boolean>;
   copyToLibrary: boolean;
   autoIndex: boolean;
+  postDownload: TorrentPostDownloadOptions | null;
   busy: boolean;
   onSelectionChange: (next: Record<number, boolean>) => void;
   onCopyToLibraryChange: (v: boolean) => void;
   onAutoIndexChange: (v: boolean) => void;
+  onPostDownloadChange: (next: TorrentPostDownloadOptions | null) => void;
   onCancel: () => void;
   onConfirm: () => void;
 };
@@ -108,10 +113,12 @@ export function TorrentInspectView({
   selection,
   copyToLibrary,
   autoIndex,
+  postDownload,
   busy,
   onSelectionChange,
   onCopyToLibraryChange,
   onAutoIndexChange,
+  onPostDownloadChange,
   onCancel,
   onConfirm,
 }: Props) {
@@ -130,6 +137,26 @@ export function TorrentInspectView({
     () => inspect.files.filter((f) => selection[f.index]).length,
     [inspect.files, selection],
   );
+
+  const selectedCueCandidate = useMemo(() => {
+    const candidates = inspect.post_download_capability?.cue_candidates ?? [];
+    return candidates.find((candidate) => {
+      const cue = inspect.files.find((f) => f.path === candidate.cue_path);
+      const audio = inspect.files.find((f) => f.path === candidate.audio_path);
+      return !!cue && !!audio && !!selection[cue.index] && !!selection[audio.index];
+    });
+  }, [inspect.files, inspect.post_download_capability?.cue_candidates, selection]);
+
+  const postCueEnabled = !!selectedCueCandidate && !!postDownload;
+
+  const setPostOption = (patch: Partial<TorrentPostDownloadOptions>) => {
+    if (!postDownload) return;
+    onPostDownloadChange({
+      ...postDownload,
+      cue_path: selectedCueCandidate?.cue_path ?? postDownload.cue_path ?? null,
+      ...patch,
+    });
+  };
 
   const setAll = (checked: boolean) => {
     const next = { ...selection };
@@ -188,6 +215,98 @@ export function TorrentInspectView({
               </span>
             </label>
           </div>
+
+          {inspect.post_download_capability && postDownload ? (
+            <div className="space-y-2">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("sources.torrent.postDownload")}
+              </p>
+              {inspect.post_download_capability.has_flac_image_cue ? (
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Checkbox
+                    checked={postDownload.split_after_download}
+                    disabled={!postCueEnabled}
+                    onCheckedChange={(v) =>
+                      setPostOption({ split_after_download: !!v })
+                    }
+                  />
+                  <span
+                    className={cn(
+                      "text-sm",
+                      postCueEnabled ? "text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    {t("sources.torrent.splitAfterDownload")}
+                  </span>
+                </label>
+              ) : null}
+              {inspect.post_download_capability.has_convertible_image_cue ? (
+                <>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <Checkbox
+                      checked={postDownload.convert_after_download}
+                      disabled={!postCueEnabled}
+                      onCheckedChange={(v) =>
+                        setPostOption({
+                          convert_after_download: !!v,
+                          split_after_conversion: v
+                            ? postDownload.split_after_conversion
+                            : false,
+                        })
+                      }
+                    />
+                    <span
+                      className={cn(
+                        "text-sm",
+                        postCueEnabled ? "text-foreground" : "text-muted-foreground",
+                      )}
+                    >
+                      {t("sources.torrent.convertAfterDownload")}
+                    </span>
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <Checkbox
+                      checked={postDownload.split_after_conversion}
+                      disabled={
+                        !postCueEnabled || !postDownload.convert_after_download
+                      }
+                      onCheckedChange={(v) =>
+                        setPostOption({ split_after_conversion: !!v })
+                      }
+                    />
+                    <span
+                      className={cn(
+                        "text-sm",
+                        postCueEnabled && postDownload.convert_after_download
+                          ? "text-foreground"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      {t("sources.torrent.splitAfterConversion")}
+                    </span>
+                  </label>
+                </>
+              ) : null}
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={postDownload.source_file_policy === "delete_after_success"}
+                  disabled={
+                    !postCueEnabled ||
+                    (!postDownload.split_after_download &&
+                      !postDownload.split_after_conversion)
+                  }
+                  onCheckedChange={(v) =>
+                    setPostOption({
+                      source_file_policy: v ? "delete_after_success" : "keep",
+                    })
+                  }
+                />
+                <span className="text-sm text-muted-foreground">
+                  {t("sources.torrent.deleteCueSource")}
+                </span>
+              </label>
+            </div>
+          ) : null}
 
           <div className="space-y-2 text-sm">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">

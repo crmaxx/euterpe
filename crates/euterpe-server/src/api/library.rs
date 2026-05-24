@@ -1,6 +1,120 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueIssue {
+    pub code: String,
+    pub message: String,
+    pub severity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueExtraField {
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub track_number: Option<i32>,
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueFileChoice {
+    pub path: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueTrack {
+    pub number: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    pub start_index: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pregap: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<String>,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueDocument {
+    pub cue_path: String,
+    pub audio_path: String,
+    pub audio_format: String,
+    pub album_title: String,
+    pub album_artist: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genre: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(default)]
+    pub extra_fields: Vec<CueExtraField>,
+    pub tracks: Vec<CueTrack>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueValidationResponse {
+    pub valid: bool,
+    pub issues: Vec<CueIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueAlbumResponse {
+    pub cue_files: Vec<CueFileChoice>,
+    pub document: CueDocument,
+    pub validation: CueValidationResponse,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CueValidateRequest {
+    pub document: CueDocument,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CueSplitRequest {
+    pub document: CueDocument,
+    pub source_file_policy: String,
+    #[serde(default)]
+    pub file_mask: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueSplitResponse {
+    pub job_id: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueJobSummary {
+    pub id: i64,
+    pub album_id: i64,
+    pub status: String,
+    pub tracks_total: i64,
+    pub tracks_done: i64,
+    pub progress_pct: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueJobResponse {
+    pub job: Option<CueJobSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LibraryScanStartResponse {
     pub scan_id: i64,
 }
@@ -47,6 +161,7 @@ pub struct LibraryAlbumItem {
     pub track_count: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cover_path: Option<String>,
+    pub has_cue_files: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +204,7 @@ pub struct LibraryAlbumDetailResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disc_total: Option<i32>,
     pub has_convertible_tracks: bool,
+    pub has_cue_files: bool,
     pub tracks: Vec<LibraryTrackItem>,
 }
 

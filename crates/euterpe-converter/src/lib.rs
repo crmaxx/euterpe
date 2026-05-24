@@ -15,7 +15,7 @@ mod tags;
 
 pub use convert::{ConvertOptions, ConvertProgress, ConvertResult, convert_file, output_path_for};
 pub use encode::EncodeProgress;
-pub use encode::libflac::encode_flac_with_libflac;
+pub use encode::libflac::{encode_flac_with_libflac, encode_interleaved_pcm_to_flac};
 pub use error::ConvertError;
 pub use format::{InputFormat, decode_to_pcm, detect_format, is_convertible_extension};
 pub use pcm::PcmBuffer;

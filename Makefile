@@ -126,7 +126,7 @@ prepare:
 
 backend:
 	@test -x "$(CARGO)" || command -v "$(CARGO)" >/dev/null 2>&1 || { echo "cargo not found — https://rustup.rs"; exit 1; }
-	$(CARGO) run -p euterpe-server
+	$(CARGO) run -p euterpe-server --release
 
 frontend-install:
 	cd $(FRONTEND_DIR) && npm ci

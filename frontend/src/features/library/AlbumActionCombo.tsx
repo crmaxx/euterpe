@@ -17,6 +17,7 @@ const ACTION_STORAGE_KEY = "euterpe.albumAction";
 const DEFAULT_INTEGRATION_KEY = "euterpe.defaultTagIntegrationId";
 
 const ACTION_EDIT_TAGS = "edit-tags";
+const ACTION_CUE = "cue";
 const ACTION_REPAIR_FOLDER = "repair-folder";
 const ACTION_CONVERT_TO_FLAC = "convert-to-flac";
 const AUTOFILL_PREFIX = "autofill:";
@@ -53,12 +54,14 @@ function resolveSelectedId(
 type AlbumActionComboProps = {
   albumId: number;
   hasConvertibleTracks: boolean;
+  hasCueFiles: boolean;
   repairFolder?: string;
   scanRunning: boolean;
   scanPending: boolean;
   convertRunning: boolean;
   convertPending: boolean;
   onEditTags: () => void;
+  onOpenCue: () => void;
   onRepairFolder: (folder: string) => void;
   onConvertToFlac: () => void;
   onApplied: () => void;
@@ -67,12 +70,14 @@ type AlbumActionComboProps = {
 export function AlbumActionCombo({
   albumId,
   hasConvertibleTracks,
+  hasCueFiles,
   repairFolder,
   scanRunning,
   scanPending,
   convertRunning,
   convertPending,
   onEditTags,
+  onOpenCue,
   onRepairFolder,
   onConvertToFlac,
   onApplied,
@@ -112,6 +117,12 @@ export function AlbumActionCombo({
           convertRunning || convertPending || scanRunning || scanPending,
       });
     }
+    if (hasCueFiles) {
+      list.push({
+        id: ACTION_CUE,
+        label: "CUE",
+      });
+    }
     if (repairFolder) {
       list.push({
         id: ACTION_REPAIR_FOLDER,
@@ -129,6 +140,7 @@ export function AlbumActionCombo({
   }, [
     t,
     hasConvertibleTracks,
+    hasCueFiles,
     repairFolder,
     scanRunning,
     scanPending,
@@ -212,6 +224,10 @@ export function AlbumActionCombo({
     }
     if (selectedId === ACTION_CONVERT_TO_FLAC) {
       onConvertToFlac();
+      return;
+    }
+    if (selectedId === ACTION_CUE) {
+      onOpenCue();
       return;
     }
     if (selectedId === ACTION_REPAIR_FOLDER) {

@@ -168,6 +168,22 @@ pub fn app(state: AppState) -> Router {
             get(library::get_library_album_convert_latest),
         )
         .route(
+            "/api/v1/library/albums/{id}/cue",
+            get(library::get_library_album_cue),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/cue/validate",
+            post(library::validate_library_album_cue),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/cue/split",
+            post(library::split_library_album_cue),
+        )
+        .route(
+            "/api/v1/library/albums/{id}/cue/latest",
+            get(library::get_library_album_cue_latest),
+        )
+        .route(
             "/api/v1/library/convert/jobs/{id}",
             get(library::get_convert_job),
         )

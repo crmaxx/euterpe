@@ -35,6 +35,8 @@ export type TorrentInspectResponse =
 export type TorrentInspectFile = components["schemas"]["TorrentInspectFile"];
 export type TorrentConfirmRequest =
   components["schemas"]["TorrentConfirmRequest"];
+export type TorrentPostDownloadOptions =
+  components["schemas"]["TorrentPostDownloadOptions"];
 export type TorrentSettings = components["schemas"]["TorrentSettings"];
 export type TorrentSettingsPatch =
   components["schemas"]["TorrentSettingsPatch"];
@@ -103,6 +105,14 @@ export type ConvertAlbumResponse =
   components["schemas"]["ConvertAlbumResponse"];
 export type ConvertJobResponse = components["schemas"]["ConvertJobResponse"];
 export type ConvertJobSummary = components["schemas"]["ConvertJobSummary"];
+export type CueAlbumResponse = components["schemas"]["CueAlbumResponse"];
+export type CueDocument = components["schemas"]["CueDocument"];
+export type CueValidateRequest = components["schemas"]["CueValidateRequest"];
+export type CueValidationResponse =
+  components["schemas"]["CueValidationResponse"];
+export type CueSplitRequest = components["schemas"]["CueSplitRequest"];
+export type CueSplitResponse = components["schemas"]["CueSplitResponse"];
+export type CueJobResponse = components["schemas"]["CueJobResponse"];
 
 export type ConvertFileProgress = {
   path: string;
@@ -307,6 +317,26 @@ export const api = {
 
   convertJob: (jobId: number) =>
     fetchJson<ConvertJobResponse>(`/library/convert/jobs/${jobId}`),
+
+  albumCue: (albumId: number, cuePath?: string) => {
+    const q = cuePath ? `?cue_path=${encodeURIComponent(cuePath)}` : "";
+    return fetchJson<CueAlbumResponse>(`/library/albums/${albumId}/cue${q}`);
+  },
+
+  validateAlbumCue: (albumId: number, body: CueValidateRequest) =>
+    fetchJson<CueValidationResponse>(`/library/albums/${albumId}/cue/validate`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  splitAlbumCue: (albumId: number, body: CueSplitRequest) =>
+    fetchJson<CueSplitResponse>(`/library/albums/${albumId}/cue/split`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  albumCueLatest: (albumId: number) =>
+    fetchJson<CueJobResponse>(`/library/albums/${albumId}/cue/latest`),
 
   downloads: (
     params: KeysetListParams & { status?: string } = {},
