@@ -118,7 +118,7 @@ Qobuz integration is informed by community tools (unofficial API):
 ## TODO
 
 - Connect to network share
-- Rework "Sources" page
+- ~~Rework "Sources" page~~
 - ~~CUE split~~
 - (Incremental?) Backups
 
