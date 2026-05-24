@@ -163,6 +163,11 @@ export const en = {
   },
   sources: {
     title: "Sources",
+    tabs: {
+      torrent: "Torrent",
+      qobuzUrl: "Qobuz Url",
+      qobuzFavorites: "Qobuz Favorites",
+    },
     qobuz: {
       title: "Qobuz",
       hint: "Queue an album download from a play.qobuz.com URL or album ref.",

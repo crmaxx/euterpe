@@ -166,6 +166,11 @@ export const ru = {
   },
   sources: {
     title: "Источники",
+    tabs: {
+      torrent: "Torrent",
+      qobuzUrl: "Qobuz Url",
+      qobuzFavorites: "Qobuz Favorites",
+    },
     qobuz: {
       title: "Qobuz",
       hint: "Поставить в очередь загрузку альбома по URL play.qobuz.com или ref.",
