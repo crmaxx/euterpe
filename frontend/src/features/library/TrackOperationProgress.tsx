@@ -2,10 +2,11 @@ import { Progress } from "@/components/ui/progress";
 import { usePreferences } from "@/hooks/use-preferences";
 import { cn } from "@/lib/utils";
 
-import type { TrackConvertStatus } from "@/features/library/parseConvertFiles";
+export type TrackOperationKind = "convert" | "cue";
+export type TrackOperationStatus = "pending" | "running" | "failed";
 
 function progressValue(
-  status: TrackConvertStatus,
+  status: TrackOperationStatus,
   progressPct?: number,
 ): number {
   switch (status) {
@@ -13,36 +14,36 @@ function progressValue(
       return 0;
     case "running":
       return progressPct ?? 8;
-    case "success":
     case "failed":
       return 100;
   }
 }
 
 type Props = {
-  status: TrackConvertStatus;
+  kind: TrackOperationKind;
+  status: TrackOperationStatus;
   progressPct?: number;
   error?: string | null;
   className?: string;
 };
 
-export function TrackConvertProgress({
+export function TrackOperationProgress({
+  kind,
   status,
   progressPct,
   error,
   className,
 }: Props) {
   const { t } = usePreferences();
+  const prefix = kind === "cue" ? "cueTrack" : "convertTrack";
   const label =
     status === "pending"
-      ? t("library.convertTrackPending")
+      ? t(`library.${prefix}Pending`)
       : status === "running"
         ? progressPct != null
-          ? `${t("library.convertTrackRunning")} ${Math.round(progressPct)}%`
-          : t("library.convertTrackRunning")
-        : status === "success"
-          ? t("library.convertTrackSuccess")
-          : t("library.convertTrackFailed");
+          ? `${t(`library.${prefix}Running`)} ${Math.round(progressPct)}%`
+          : t(`library.${prefix}Running`)
+        : t(`library.${prefix}Failed`);
 
   return (
     <div className={cn("px-4 pb-2 pl-14", className)}>
@@ -59,9 +60,7 @@ export function TrackConvertProgress({
       <p
         className={cn(
           "mt-1 text-xs",
-          status === "failed"
-            ? "text-destructive"
-            : "text-muted-foreground",
+          status === "failed" ? "text-destructive" : "text-muted-foreground",
         )}
         title={error ?? undefined}
       >

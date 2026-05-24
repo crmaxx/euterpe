@@ -192,4 +192,130 @@ describe("LibraryPage", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
   });
+
+  it("opens CUE editor from album actions when album has cue files", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /choose album action/i }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: /^cue$/i }));
+    await user.click(await screen.findByRole("button", { name: /run: cue/i }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/album artist/i)).toHaveValue("Test Artist");
+    expect(screen.getByLabelText(/album title/i)).toHaveValue("Local Album");
+    expect(screen.getByDisplayValue("Track One")).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", {
+        name: /delete source after successful split/i,
+      }),
+    ).toBeChecked();
+    expect(screen.getByRole("button", { name: /check/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /split/i })).toBeInTheDocument();
+  });
+
+  it("validates CUE editor and disables split when required fields are missing", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /choose album action/i }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: /^cue$/i }));
+    await user.click(await screen.findByRole("button", { name: /run: cue/i }));
+    const title = await screen.findByLabelText(/album title/i);
+    await user.clear(title);
+    await user.click(screen.getByRole("button", { name: /check/i }));
+
+    expect(await screen.findByText(/album title is required/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /split/i })).toBeDisabled();
+  });
+
+  it("lets CUE FILE be edited before split", async () => {
+    let splitAudioPath: string | null = null;
+    server.use(
+      http.get("/api/v1/library/albums/:id/cue", () =>
+        HttpResponse.json({
+          cue_files: [{ path: "Test Artist/Local Album/album.cue", selected: true }],
+          document: {
+            cue_path: "Test Artist/Local Album/album.cue",
+            audio_path: "album.wv",
+            audio_format: "wv",
+            album_title: "Local Album",
+            album_artist: "Test Artist",
+            year: 2020,
+            genre: "Pop",
+            comment: "Vinyl rip",
+            extra_fields: [],
+            tracks: [
+              {
+                number: 1,
+                artist: "Test Artist",
+                title: "Track One",
+                genre: "Pop",
+                start_index: "00:00:00",
+                pregap: null,
+                duration: "00:01:00",
+                selected: true,
+              },
+            ],
+          },
+          validation: { valid: true, issues: [] },
+        }),
+      ),
+      http.post("/api/v1/library/albums/:id/cue/split", async ({ request }) => {
+        const body = (await request.json()) as {
+          document?: { audio_path?: string };
+        };
+        splitAudioPath = body.document?.audio_path ?? null;
+        return HttpResponse.json({ job_id: 7 }, { status: 202 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /choose album action/i }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: /^cue$/i }));
+    await user.click(await screen.findByRole("button", { name: /run: cue/i }));
+
+    const file = await screen.findByLabelText(/^file$/i);
+    await user.clear(file);
+    await user.type(file, "album.flac");
+    await user.click(screen.getByRole("button", { name: /check/i }));
+    await user.click(await screen.findByRole("button", { name: /split/i }));
+
+    await waitFor(() => expect(splitAudioPath).toBe("album.flac"));
+  });
+
+  it("shows failed CUE split under the first track instead of the album header", async () => {
+    server.use(
+      http.get("/api/v1/library/albums/:id/cue/latest", () =>
+        HttpResponse.json({
+          job: {
+            id: 7,
+            album_id: 1,
+            status: "failed",
+            tracks_total: 7,
+            tracks_done: 0,
+            progress_pct: 0,
+            error_message: "CUE split input must be FLAC",
+            created_at: "2026-01-01T00:00:00Z",
+            updated_at: "2026-01-01T00:00:00Z",
+          },
+        }),
+      ),
+    );
+
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: /Local Album/i }));
+
+    expect(await screen.findByText(/split failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/CUE split input must be FLAC/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^CUE:/i)).not.toBeInTheDocument();
+  });
 });

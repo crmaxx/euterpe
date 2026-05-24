@@ -667,6 +667,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/library/albums/{id}/cue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** CUE files and editable CUE document for an album */
+        get: operations["getLibraryAlbumCue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{id}/cue/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate an edited CUE document */
+        post: operations["validateLibraryAlbumCue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{id}/cue/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Split a FLAC album image using an edited CUE document */
+        post: operations["splitLibraryAlbumCue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/library/albums/{id}/cue/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest CUE split job for an album */
+        get: operations["getLibraryAlbumCueLatest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/library/convert/jobs/{id}": {
         parameters: {
             query?: never;
@@ -1059,6 +1127,7 @@ export interface components {
             /** Format: int64 */
             free_space_bytes?: number | null;
             files: components["schemas"]["TorrentInspectFile"][];
+            post_download_capability?: components["schemas"]["TorrentPostDownloadCapability"] | null;
         };
         TorrentInspectMagnetRequest: {
             magnet: string;
@@ -1072,6 +1141,36 @@ export interface components {
             files: components["schemas"]["TorrentConfirmFile"][];
             copy_to_library: boolean;
             auto_index_after_import: boolean;
+            post_download?: components["schemas"]["TorrentPostDownloadOptions"];
+        };
+        TorrentCueCandidate: {
+            cue_path: string;
+            audio_path: string;
+            /** @enum {string} */
+            audio_format: "flac" | "wav" | "ape" | "m4a" | "wv";
+            direct_split_supported: boolean;
+            convert_required_for_split: boolean;
+        };
+        TorrentPostDownloadCapability: {
+            cue_candidates: components["schemas"]["TorrentCueCandidate"][];
+            has_flac_image_cue: boolean;
+            has_convertible_image_cue: boolean;
+        };
+        TorrentPostDownloadOptions: {
+            /** @default false */
+            convert_after_download: boolean;
+            /**
+             * @description Direct split for FLAC image+CUE releases.
+             * @default false
+             */
+            split_after_download: boolean;
+            /**
+             * @description Split converted FLAC after non-FLAC image conversion.
+             * @default false
+             */
+            split_after_conversion: boolean;
+            cue_path?: string | null;
+            source_file_policy?: components["schemas"]["CueSourceFilePolicy"];
         };
         TorrentSettings: {
             /**
@@ -1190,6 +1289,92 @@ export interface components {
         ConvertJobResponse: {
             job: components["schemas"]["ConvertJobSummary"];
         };
+        /** @enum {string} */
+        CueSourceFilePolicy: "keep" | "delete_after_success";
+        /** @enum {string} */
+        CueIssueSeverity: "error" | "warning";
+        CueIssue: {
+            code: string;
+            message: string;
+            severity: components["schemas"]["CueIssueSeverity"];
+            field?: string | null;
+            track_number?: number | null;
+            line?: number | null;
+            column?: number | null;
+        };
+        CueExtraField: {
+            /** @enum {string} */
+            scope: "album" | "track";
+            track_number?: number | null;
+            key: string;
+            value: string;
+        };
+        CueFileChoice: {
+            path: string;
+            selected: boolean;
+        };
+        CueTrack: {
+            number: number;
+            artist?: string | null;
+            title: string;
+            genre?: string | null;
+            start_index: string;
+            pregap?: string | null;
+            duration?: string | null;
+            selected: boolean;
+        };
+        CueDocument: {
+            cue_path: string;
+            audio_path: string;
+            /** @enum {string} */
+            audio_format?: "flac" | "wav" | "ape" | "m4a" | "wv" | "unknown";
+            album_title: string;
+            album_artist: string;
+            year?: number | null;
+            genre?: string | null;
+            comment?: string | null;
+            extra_fields?: components["schemas"]["CueExtraField"][];
+            tracks: components["schemas"]["CueTrack"][];
+        };
+        CueAlbumResponse: {
+            cue_files: components["schemas"]["CueFileChoice"][];
+            document: components["schemas"]["CueDocument"];
+            validation: components["schemas"]["CueValidationResponse"];
+        };
+        CueValidateRequest: {
+            document: components["schemas"]["CueDocument"];
+        };
+        CueValidationResponse: {
+            valid: boolean;
+            issues: components["schemas"]["CueIssue"][];
+        };
+        CueSplitRequest: {
+            document: components["schemas"]["CueDocument"];
+            source_file_policy: components["schemas"]["CueSourceFilePolicy"];
+            /** @default {$n} {$a} $t */
+            file_mask: string | null;
+        };
+        CueSplitResponse: {
+            /** Format: int64 */
+            job_id: number;
+        };
+        CueJobSummary: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            album_id: number;
+            /** @enum {string} */
+            status: "queued" | "running" | "success" | "failed";
+            tracks_total: number;
+            tracks_done: number;
+            progress_pct: number;
+            error_message?: string | null;
+            created_at: string;
+            updated_at: string;
+        };
+        CueJobResponse: {
+            job: components["schemas"]["CueJobSummary"] | null;
+        };
         LibraryScanStartResponse: {
             /** Format: int64 */
             scan_id: number;
@@ -1226,6 +1411,8 @@ export interface components {
             year?: number | null;
             track_count: number;
             cover_path?: string | null;
+            /** @description True when the album folder contains at least one .cue file. */
+            has_cue_files: boolean;
         };
         LibraryAlbumListResponse: {
             items: components["schemas"]["LibraryAlbumItem"][];
@@ -1250,6 +1437,8 @@ export interface components {
             artist_name: string;
             /** @description True when album has WAV/ALAC/APE (etc.) tracks eligible for FLAC conversion */
             has_convertible_tracks: boolean;
+            /** @description True when the album folder contains at least one .cue file. */
+            has_cue_files: boolean;
             year?: number | null;
             cover_path?: string | null;
             genre?: string | null;
@@ -2591,6 +2780,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConvertJobResponse"];
+                };
+            };
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getLibraryAlbumCue: {
+        parameters: {
+            query?: {
+                /** @description Library-relative CUE path to parse when an album has multiple CUE files. */
+                cue_path?: string;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description CUE editor payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CueAlbumResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    validateLibraryAlbumCue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CueValidateRequest"];
+            };
+        };
+        responses: {
+            /** @description Validation result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CueValidationResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    splitLibraryAlbumCue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CueSplitRequest"];
+            };
+        };
+        responses: {
+            /** @description CUE split job queued */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CueSplitResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getLibraryAlbumCueLatest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest CUE split job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CueJobResponse"];
                 };
             };
             404: components["responses"]["NotFound"];

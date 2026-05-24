@@ -6,14 +6,16 @@ use axum::response::Response;
 use serde::Deserialize;
 
 use crate::api::{
-    AlbumCoverUploadResponse, ConvertAlbumResponse, ConvertJobResponse, LibraryAlbumDetailResponse,
-    LibraryAlbumListResponse, LibraryAlbumTagsPatchRequest, LibraryScanLatestResponse,
-    LibraryScanRunSummary, LibraryScanStartResponse, LibraryTrackDetailResponse, LibraryTrackItem,
-    LibraryTrackTagsPatchRequest,
+    AlbumCoverUploadResponse, ConvertAlbumResponse, ConvertJobResponse, CueAlbumResponse,
+    CueJobResponse, CueSplitRequest, CueSplitResponse, CueValidateRequest, CueValidationResponse,
+    LibraryAlbumDetailResponse, LibraryAlbumListResponse, LibraryAlbumTagsPatchRequest,
+    LibraryScanLatestResponse, LibraryScanRunSummary, LibraryScanStartResponse,
+    LibraryTrackDetailResponse, LibraryTrackItem, LibraryTrackTagsPatchRequest,
 };
-use crate::db::{albums, artists, convert_jobs, library_scan_runs, tracks};
+use crate::db::{albums, artists, convert_jobs, cue_jobs, library_scan_runs, tracks};
 use crate::error::ApiError;
 use crate::library::covers;
+use crate::library::cue;
 use crate::library::stream;
 use crate::library::tags::{
     self, AlbumTagsPatch, TrackTagsPatch, apply_album_patch, apply_patch, is_audio_file,
@@ -142,6 +144,7 @@ pub async fn list_library_albums(
             year: r.year,
             track_count: r.track_count,
             cover_path,
+            has_cue_files: cue::album_has_cue_files(&state.config.library_path, r.path.as_deref()),
         });
     }
     Ok(Json(LibraryAlbumListResponse {
@@ -195,6 +198,7 @@ pub async fn get_library_album(
         })
         .collect();
     let has_convertible_tracks = tracks::album_has_convertible_tracks(&state.db, id).await?;
+    let has_cue_files = cue::album_has_cue_files(&state.config.library_path, album.path.as_deref());
     Ok(Json(LibraryAlbumDetailResponse {
         id: album.id,
         title: album.title,
@@ -203,6 +207,7 @@ pub async fn get_library_album(
         cover_path,
         genre: album_tags_from_file.as_ref().and_then(|t| t.genre.clone()),
         has_convertible_tracks,
+        has_cue_files,
         track_total: album_tags_from_file
             .as_ref()
             .and_then(|t| t.track_total.map(|n| n as i32)),
@@ -503,6 +508,201 @@ pub async fn post_library_album_convert(
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let job_id = start_album_convert(&state.db, id, &state.convert_job_tx).await?;
     Ok((StatusCode::ACCEPTED, Json(ConvertAlbumResponse { job_id })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CueQuery {
+    pub cue_path: Option<String>,
+}
+
+pub async fn get_library_album_cue(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Query(q): Query<CueQuery>,
+) -> Result<Json<CueAlbumResponse>, ApiError> {
+    let album = albums::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("album not found".into()))?;
+    let album_path = album
+        .path
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("album has no directory path"))?;
+    let response = cue::load_album_cue(
+        &state.config.library_path,
+        album_path,
+        q.cue_path.as_deref(),
+    )?;
+    Ok(Json(response))
+}
+
+pub async fn validate_library_album_cue(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<CueValidateRequest>,
+) -> Result<Json<CueValidationResponse>, ApiError> {
+    albums::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("album not found".into()))?;
+    Ok(Json(cue::validate_api_document(&body.document)))
+}
+
+pub async fn split_library_album_cue(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(body): Json<CueSplitRequest>,
+) -> Result<(StatusCode, Json<CueSplitResponse>), ApiError> {
+    let album = albums::get_by_id(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::Message("album not found".into()))?;
+    let album_path = album.path.clone();
+    let validation = cue::validate_api_document(&body.document);
+    if !validation.valid {
+        return Err(ApiError::bad_request("CUE has validation errors"));
+    }
+    if !matches!(
+        body.source_file_policy.as_str(),
+        "keep" | "delete_after_success"
+    ) {
+        return Err(ApiError::bad_request("invalid source_file_policy"));
+    }
+    let cue_abs =
+        covers::resolve_library_relative_file(&state.config.library_path, &body.document.cue_path)?;
+    reject_unsafe_cue_audio_path(&body.document.audio_path)?;
+    let payload = cue_jobs::CueJobPayload {
+        cue_path: body.document.cue_path.clone(),
+        audio_path: body.document.audio_path.clone(),
+        source_file_policy: body.source_file_policy.clone(),
+    };
+    let payload_json =
+        serde_json::to_string(&payload).map_err(|e| ApiError::Message(e.to_string()))?;
+    let tracks_total = body.document.tracks.iter().filter(|t| t.selected).count() as i64;
+    let job_id = cue_jobs::create_queued(&state.db, id, tracks_total, Some(&payload_json)).await?;
+    spawn_cue_split_job(state, job_id, body, cue_abs, album_path);
+    Ok((StatusCode::ACCEPTED, Json(CueSplitResponse { job_id })))
+}
+
+fn reject_unsafe_cue_audio_path(audio_path: &str) -> Result<(), ApiError> {
+    let path = std::path::Path::new(audio_path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(ApiError::bad_request("invalid CUE audio path"));
+    }
+    Ok(())
+}
+
+fn spawn_cue_split_job(
+    state: AppState,
+    job_id: i64,
+    body: CueSplitRequest,
+    cue_abs: std::path::PathBuf,
+    album_path: Option<String>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = run_cue_split_job(state, job_id, body, cue_abs, album_path).await {
+            tracing::error!(job_id, error = %e, "CUE split job failed");
+        }
+    });
+}
+
+async fn run_cue_split_job(
+    state: AppState,
+    job_id: i64,
+    body: CueSplitRequest,
+    cue_abs: std::path::PathBuf,
+    album_path: Option<String>,
+) -> Result<(), ApiError> {
+    cue_jobs::mark_running(&state.db, job_id).await?;
+    let document = cue::document_to_core(&body.document);
+    let selected_total = document.tracks.iter().filter(|t| t.selected).count() as i64;
+    let source_file_policy = if body.source_file_policy == "delete_after_success" {
+        euterpe_cue::SourceFilePolicy::DeleteAfterSuccess
+    } else {
+        euterpe_cue::SourceFilePolicy::Keep
+    };
+    let progress_pool = state.db.clone();
+    let progress_handle = tokio::runtime::Handle::current();
+    let on_progress = std::sync::Arc::new(move |p: euterpe_cue::SplitProgress| {
+        let pool = progress_pool.clone();
+        let tracks_done = p.tracks_done as i64;
+        let tracks_total = p.tracks_total as i64;
+        let _ = progress_handle.block_on(cue_jobs::update_progress(
+            &pool,
+            job_id,
+            tracks_done,
+            tracks_total,
+        ));
+    });
+    let options = euterpe_cue::SplitOptions {
+        source_file_policy,
+        file_mask: body.file_mask.clone(),
+        on_progress: Some(on_progress),
+    };
+    let cue_dir = cue_abs
+        .parent()
+        .ok_or_else(|| ApiError::Message("CUE file has no parent directory".into()))?
+        .to_path_buf();
+    let output_dir = cue_dir.clone();
+    let split = tokio::task::spawn_blocking(move || {
+        euterpe_cue::split_flac_image(&document, &cue_dir, &output_dir, &options)
+    })
+    .await
+    .map_err(|e| ApiError::Message(e.to_string()))?;
+
+    match split {
+        Ok(result) => {
+            cue_jobs::finish_success(
+                &state.db,
+                job_id,
+                selected_total.min(result.output_paths.len() as i64),
+            )
+            .await?;
+            if body.source_file_policy == "delete_after_success" {
+                let _ = tokio::fs::remove_file(&cue_abs).await;
+            }
+            if let Some(album_path) = album_path
+                && let Ok(scan_root) = library_scan::resolve_scan_root_query(
+                    &state.config.library_path,
+                    Some(album_path.as_str()),
+                )
+            {
+                let scan_cfg = state
+                    .runtime
+                    .read()
+                    .await
+                    .library_scan_config(state.config.debug)?;
+                let _ = library_scan::start_scan(
+                    &state.db,
+                    state.config.library_path.clone(),
+                    state.scan_events.clone(),
+                    scan_cfg,
+                    scan_root,
+                    Some(state.convert_job_tx.clone()),
+                    Some(state.runtime.clone()),
+                )
+                .await;
+            }
+        }
+        Err(e) => {
+            cue_jobs::finish_failed(&state.db, job_id, &e.to_string()).await?;
+        }
+    }
+    Ok(())
+}
+
+pub async fn get_library_album_cue_latest(
+    State(state): State<AppState>,
+    Path(album_id): Path<i64>,
+) -> Result<Json<CueJobResponse>, ApiError> {
+    albums::get_by_id(&state.db, album_id)
+        .await?
+        .ok_or_else(|| ApiError::Message("album not found".into()))?;
+    let job = cue_jobs::latest_for_album(&state.db, album_id)
+        .await?
+        .map(cue::cue_job_to_api);
+    Ok(Json(CueJobResponse { job }))
 }
 
 pub async fn get_library_album_convert_latest(

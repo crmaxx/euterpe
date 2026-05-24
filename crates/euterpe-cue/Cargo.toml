@@ -1,0 +1,21 @@
+[package]
+name = "euterpe-cue"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "CUE sheet parsing, validation, and FLAC image splitting for Euterpe"
+
+[dependencies]
+claxon = "0.4.3"
+cue_lib = { version = "0.1.0", features = ["alloc", "metadata"] }
+euterpe-converter = { path = "../euterpe-converter" }
+lofty = "0.22"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+hound = "3.5"
+tempfile = "3"
+
+[lib]
+doctest = false

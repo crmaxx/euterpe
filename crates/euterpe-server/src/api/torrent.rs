@@ -21,6 +21,8 @@ pub struct TorrentInspectResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub free_space_bytes: Option<u64>,
     pub files: Vec<TorrentInspectFile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_download_capability: Option<TorrentPostDownloadCapability>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -40,6 +42,38 @@ pub struct TorrentConfirmRequest {
     pub files: Vec<TorrentConfirmFile>,
     pub copy_to_library: bool,
     pub auto_index_after_import: bool,
+    #[serde(default)]
+    pub post_download: Option<TorrentPostDownloadOptions>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TorrentCueCandidate {
+    pub cue_path: String,
+    pub audio_path: String,
+    pub audio_format: String,
+    pub direct_split_supported: bool,
+    pub convert_required_for_split: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TorrentPostDownloadCapability {
+    pub cue_candidates: Vec<TorrentCueCandidate>,
+    pub has_flac_image_cue: bool,
+    pub has_convertible_image_cue: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TorrentPostDownloadOptions {
+    #[serde(default)]
+    pub convert_after_download: bool,
+    #[serde(default)]
+    pub split_after_download: bool,
+    #[serde(default)]
+    pub split_after_conversion: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cue_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file_policy: Option<String>,
 }
 
 /// Persisted torrent session options (maps to librqbit `disable_upload` + ratelimits).

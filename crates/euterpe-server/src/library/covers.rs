@@ -169,6 +169,73 @@ fn is_album_cover_filename(name: &str) -> bool {
     false
 }
 
+fn cover_candidate_ext(name: &str) -> Option<&str> {
+    let ext = Path::new(name).extension()?.to_str()?;
+    let lower = ext.to_ascii_lowercase();
+    match lower.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" => Some(ext),
+        _ => None,
+    }
+}
+
+fn normalized_cover_name_tokens(value: &str) -> Vec<String> {
+    let stem = Path::new(value)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(value);
+    stem.split(|ch: char| !ch.is_alphanumeric())
+        .filter_map(|part| {
+            let token = part.trim().to_ascii_lowercase();
+            if token.is_empty() {
+                return None;
+            }
+            if token.len() == 4 && token.chars().all(|ch| ch.is_ascii_digit()) {
+                return None;
+            }
+            Some(token)
+        })
+        .collect()
+}
+
+fn contains_album_title_tokens(file_name: &str, album_title: &str) -> bool {
+    let album_tokens = normalized_cover_name_tokens(album_title);
+    if album_tokens.is_empty() {
+        return false;
+    }
+    let file_tokens = normalized_cover_name_tokens(file_name);
+    file_tokens
+        .windows(album_tokens.len())
+        .any(|window| window == album_tokens.as_slice())
+}
+
+fn rename_album_title_cover_candidate(
+    album_dir: &Path,
+    album_rel: &str,
+    album_title: &str,
+) -> Option<String> {
+    let mut candidates: Vec<String> = std::fs::read_dir(album_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_file())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            cover_candidate_ext(name).is_some() && contains_album_title_tokens(name, album_title)
+        })
+        .collect();
+    candidates.sort();
+
+    let name = candidates.first()?;
+    let ext = cover_candidate_ext(name)?;
+    let target_name = format!("cover.{ext}");
+    let source = album_dir.join(name);
+    let target = album_dir.join(&target_name);
+    if target.is_file() || std::fs::rename(&source, &target).is_ok() {
+        Some(format!("{album_rel}/{target_name}"))
+    } else {
+        None
+    }
+}
+
 /// Find `cover.<ext>` or legacy `folder.jpg` under an album directory (relative to library root).
 pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Option<String> {
     let album_rel = album_rel_dir
@@ -203,7 +270,12 @@ pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Opt
         .filter(|n| is_album_cover_filename(n))
         .collect();
     names.sort();
-    names.first().map(|name| format!("{album_rel}/{name}"))
+    if let Some(name) = names.first() {
+        return Some(format!("{album_rel}/{name}"));
+    }
+
+    let album_title = album_rel.rsplit('/').next().unwrap_or(&album_rel);
+    rename_album_title_cover_candidate(&album_dir, &album_rel, album_title)
 }
 
 /// If `cover_path` is missing or stale, discover a file on disk and persist it on the album row.
@@ -610,6 +682,61 @@ mod path_tests {
         std::fs::write(album.join("01 - Song.flac"), b"x").unwrap();
         let rel = discover_album_cover_rel(dir.path(), "Artist/Album").unwrap();
         assert_eq!(rel, "Artist/Album/cover.jpg");
+    }
+
+    #[test]
+    fn discover_renames_album_title_image_to_cover() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("Album.jpg"), b"img").unwrap();
+
+        let rel = discover_album_cover_rel(dir.path(), "Artist/Album").unwrap();
+
+        assert_eq!(rel, "Artist/Album/cover.jpg");
+        assert!(album.join("cover.jpg").is_file());
+        assert!(!album.join("Album.jpg").exists());
+    }
+
+    #[test]
+    fn discover_renames_album_title_image_with_artist_and_year_to_cover() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Scorpions").join("Lonesome Crow");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("Scorpions - Lonesome Crow - 1972.png"), b"img").unwrap();
+
+        let rel = discover_album_cover_rel(dir.path(), "Scorpions/Lonesome Crow").unwrap();
+
+        assert_eq!(rel, "Scorpions/Lonesome Crow/cover.png");
+        assert!(album.join("cover.png").is_file());
+        assert!(!album.join("Scorpions - Lonesome Crow - 1972.png").exists());
+    }
+
+    #[test]
+    fn discover_does_not_rename_unrelated_image() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("booklet.jpg"), b"img").unwrap();
+
+        let rel = discover_album_cover_rel(dir.path(), "Artist/Album");
+
+        assert!(rel.is_none());
+        assert!(album.join("booklet.jpg").is_file());
+    }
+
+    #[test]
+    fn discover_prefers_existing_cover_over_album_title_image() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("cover.jpg"), b"cover").unwrap();
+        std::fs::write(album.join("Album.png"), b"title").unwrap();
+
+        let rel = discover_album_cover_rel(dir.path(), "Artist/Album").unwrap();
+
+        assert_eq!(rel, "Artist/Album/cover.jpg");
+        assert!(album.join("Album.png").is_file());
     }
 
     #[test]

@@ -29,7 +29,9 @@ pub use integrations::{
     IntegrationsListResponse,
 };
 pub use library::{
-    AlbumCoverUploadResponse, LibraryAlbumDetailResponse, LibraryAlbumItem,
+    AlbumCoverUploadResponse, CueAlbumResponse, CueDocument, CueExtraField, CueFileChoice,
+    CueIssue, CueJobResponse, CueJobSummary, CueSplitRequest, CueSplitResponse, CueTrack,
+    CueValidateRequest, CueValidationResponse, LibraryAlbumDetailResponse, LibraryAlbumItem,
     LibraryAlbumListResponse, LibraryAlbumTagsPatchRequest, LibraryScanLatestResponse,
     LibraryScanRunSummary, LibraryScanStartResponse, LibraryTrackDetailResponse, LibraryTrackItem,
     LibraryTrackTagsPatchRequest, ScanProgressEvent,
@@ -48,6 +50,7 @@ pub use settings::{
     UiLocale, UiPreferences, UiPreferencesPatch, UiPreferencesResponse, UiTheme,
 };
 pub use torrent::{
-    TorrentConfirmRequest, TorrentInspectFile, TorrentInspectMagnetRequest, TorrentInspectResponse,
+    TorrentConfirmRequest, TorrentCueCandidate, TorrentInspectFile, TorrentInspectMagnetRequest,
+    TorrentInspectResponse, TorrentPostDownloadCapability, TorrentPostDownloadOptions,
     TorrentSettings, TorrentSettingsPatch, TorrentSettingsResponse,
 };

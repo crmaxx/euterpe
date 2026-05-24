@@ -1,6 +1,9 @@
 import { useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
-import type { TorrentInspectResponse } from "@/api/client";
+import type {
+  TorrentInspectResponse,
+  TorrentPostDownloadOptions,
+} from "@/api/client";
 import {
   useConfirmTorrentDownload,
   useInspectTorrentFile,
@@ -32,6 +35,8 @@ export function TorrentAddDialog({ open, onClose }: Props) {
   const [selection, setSelection] = useState<Record<number, boolean>>({});
   const [copyToLibrary, setCopyToLibrary] = useState(true);
   const [autoIndex, setAutoIndex] = useState(true);
+  const [postDownload, setPostDownload] =
+    useState<TorrentPostDownloadOptions | null>(null);
 
   const busy =
     inspectMagnet.isPending || inspectFile.isPending || confirm.isPending;
@@ -42,6 +47,7 @@ export function TorrentAddDialog({ open, onClose }: Props) {
     setSelection({});
     setCopyToLibrary(true);
     setAutoIndex(true);
+    setPostDownload(null);
   };
 
   const handleClose = () => {
@@ -57,6 +63,17 @@ export function TorrentAddDialog({ open, onClose }: Props) {
       sel[f.index] = f.selected;
     }
     setSelection(sel);
+    setPostDownload(
+      result.post_download_capability
+        ? {
+            convert_after_download: false,
+            split_after_download: false,
+            split_after_conversion: false,
+            cue_path: result.post_download_capability.cue_candidates[0]?.cue_path ?? null,
+            source_file_policy: "delete_after_success",
+          }
+        : null,
+    );
   };
 
   const runInspectMagnet = async () => {
@@ -100,6 +117,7 @@ export function TorrentAddDialog({ open, onClose }: Props) {
         files,
         copy_to_library: copyToLibrary,
         auto_index_after_import: autoIndex,
+        post_download: postDownload ?? undefined,
       });
       toast({ title: t("sources.torrent.queued") });
       handleClose();
@@ -163,6 +181,7 @@ export function TorrentAddDialog({ open, onClose }: Props) {
           selection={selection}
           copyToLibrary={copyToLibrary}
           autoIndex={autoIndex}
+          postDownload={postDownload}
           busy={busy || confirm.isPending}
           onSelectionChange={setSelection}
           onCopyToLibraryChange={(v) => {
@@ -170,6 +189,7 @@ export function TorrentAddDialog({ open, onClose }: Props) {
             if (!v) setAutoIndex(false);
           }}
           onAutoIndexChange={setAutoIndex}
+          onPostDownloadChange={setPostDownload}
           onCancel={handleClose}
           onConfirm={() => void handleConfirm()}
         />

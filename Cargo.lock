@@ -761,6 +761,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cue_lib"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d814a6c68b6d19e46ddd0fccf80208e69e13f485eeea825a5c97c46071dcc2f5"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1015,6 +1024,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "euterpe-cue"
+version = "0.1.0"
+dependencies = [
+ "claxon",
+ "cue_lib",
+ "euterpe-converter",
+ "hound",
+ "lofty",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "euterpe-hawk"
 version = "0.1.0"
 dependencies = [
@@ -1068,6 +1091,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "euterpe-converter",
+ "euterpe-cue",
  "euterpe-hawk",
  "euterpe-qobuz",
  "euterpe-torrent",

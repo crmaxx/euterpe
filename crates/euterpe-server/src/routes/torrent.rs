@@ -140,6 +140,7 @@ pub async fn inspect_torrent_magnet(
         })
         .collect();
 
+    let post_download_capability = detect_post_download_capability(&files);
     let response = TorrentInspectResponse {
         inspect_id: inspect_id.clone(),
         name: result.name.clone(),
@@ -149,6 +150,7 @@ pub async fn inspect_torrent_magnet(
         comment: result.comment.clone(),
         free_space_bytes: free_space_bytes(incoming).await,
         files: files.clone(),
+        post_download_capability,
     };
 
     state.torrent_staging.insert(
@@ -194,6 +196,16 @@ pub async fn inspect_torrent_file(
             ApiError::Message(e.to_string())
         })?;
 
+    let files: Vec<_> = result
+        .files
+        .into_iter()
+        .map(|f| crate::api::TorrentInspectFile {
+            index: f.index,
+            path: f.path,
+            size_bytes: f.size_bytes,
+            selected: f.selected,
+        })
+        .collect();
     let response = TorrentInspectResponse {
         inspect_id: inspect_id.clone(),
         name: result.name.clone(),
@@ -202,16 +214,8 @@ pub async fn inspect_torrent_file(
         info_hash_v2: None,
         comment: result.comment.clone(),
         free_space_bytes: free_space_bytes(incoming).await,
-        files: result
-            .files
-            .into_iter()
-            .map(|f| crate::api::TorrentInspectFile {
-                index: f.index,
-                path: f.path,
-                size_bytes: f.size_bytes,
-                selected: f.selected,
-            })
-            .collect(),
+        post_download_capability: detect_post_download_capability(&files),
+        files,
     };
 
     state.torrent_staging.insert(
@@ -251,6 +255,26 @@ pub async fn confirm_torrent(
     if selected.is_empty() {
         return Err(ApiError::bad_request("at least one file must be selected"));
     }
+    if let Some(post) = &body.post_download {
+        if (post.split_after_conversion || post.split_after_download) && post.cue_path.is_none() {
+            return Err(ApiError::bad_request("cue_path is required for CUE split"));
+        }
+        if post.split_after_conversion && !post.convert_after_download {
+            return Err(ApiError::bad_request(
+                "split_after_conversion requires convert_after_download",
+            ));
+        }
+        if post.split_after_download && post.split_after_conversion {
+            return Err(ApiError::bad_request(
+                "choose direct split or split after conversion, not both",
+            ));
+        }
+        if let Some(policy) = &post.source_file_policy
+            && !matches!(policy.as_str(), "keep" | "delete_after_success")
+        {
+            return Err(ApiError::bad_request("invalid source_file_policy"));
+        }
+    }
 
     let (_engine, incoming) = require_torrent(&state)?;
 
@@ -260,6 +284,7 @@ pub async fn confirm_torrent(
         selected_file_indices: selected,
         copy_to_library: body.copy_to_library,
         auto_index_after_import: body.auto_index_after_import,
+        post_download: body.post_download.clone(),
         magnet: staging.magnet.clone(),
         save_dir_incoming: String::new(),
         library_dest_rel: None,
@@ -329,4 +354,68 @@ async fn staging_dir_has_torrent(dir: &std::path::Path) -> bool {
 
 async fn free_space_bytes(_path: &std::path::Path) -> Option<u64> {
     None
+}
+
+fn detect_post_download_capability(
+    files: &[crate::api::TorrentInspectFile],
+) -> Option<crate::api::TorrentPostDownloadCapability> {
+    use std::path::Path;
+    let cue_files = files
+        .iter()
+        .filter(|f| {
+            Path::new(&f.path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("cue"))
+        })
+        .collect::<Vec<_>>();
+    if cue_files.is_empty() {
+        return None;
+    }
+    let audio_files = files
+        .iter()
+        .filter_map(|f| audio_format(&f.path).map(|fmt| (f, fmt)))
+        .collect::<Vec<_>>();
+    let mut candidates = Vec::new();
+    for cue in cue_files {
+        let cue_parent = Path::new(&cue.path).parent();
+        let matching = audio_files
+            .iter()
+            .find(|(audio, _)| Path::new(&audio.path).parent() == cue_parent)
+            .or_else(|| audio_files.first());
+        if let Some((audio, fmt)) = matching {
+            candidates.push(crate::api::TorrentCueCandidate {
+                cue_path: cue.path.clone(),
+                audio_path: audio.path.clone(),
+                audio_format: (*fmt).to_string(),
+                direct_split_supported: *fmt == "flac",
+                convert_required_for_split: *fmt != "flac",
+            });
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    let has_flac_image_cue = candidates.iter().any(|c| c.direct_split_supported);
+    let has_convertible_image_cue = candidates.iter().any(|c| c.convert_required_for_split);
+    Some(crate::api::TorrentPostDownloadCapability {
+        cue_candidates: candidates,
+        has_flac_image_cue,
+        has_convertible_image_cue,
+    })
+}
+
+fn audio_format(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "flac" => Some("flac"),
+        "wav" | "wave" => Some("wav"),
+        "ape" => Some("ape"),
+        "m4a" | "mp4" => Some("m4a"),
+        "wv" | "wavpack" => Some("wv"),
+        _ => None,
+    }
 }

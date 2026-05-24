@@ -9,3 +9,5 @@ compose.yml
 # project
 docs/references/
 data/
+.superpowers/
+.playwright-mcp/

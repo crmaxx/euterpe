@@ -3,12 +3,11 @@ import {
   isConvertiblePath,
   normalizeTrackPath,
 } from "@/lib/convertible";
-export type TrackConvertStatus = "pending" | "running" | "success" | "failed";
+export type TrackConvertStatus = "pending" | "running" | "failed";
 
 const TRACK_STATUSES = new Set<string>([
   "pending",
   "running",
-  "success",
   "failed",
 ]);
 
@@ -24,6 +23,7 @@ export function findTrackConvertProgress(
   const norm = normalizeTrackPath(trackPath);
   const row = files.find((f) => normalizeTrackPath(f.path) === norm);
   if (!row || !TRACK_STATUSES.has(row.status)) return null;
+  if (row.status === "success") return null;
   const progressPct =
     row.progress_pct != null && Number.isFinite(row.progress_pct)
       ? Math.min(100, Math.max(0, row.progress_pct))
