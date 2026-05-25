@@ -396,6 +396,75 @@ export interface paths {
         patch: operations["patchDownloadsSettings"];
         trace?: never;
     };
+    "/api/v1/settings/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Library storage settings */
+        get: operations["getStorageSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update library storage settings */
+        patch: operations["patchStorageSettings"];
+        trace?: never;
+    };
+    "/api/v1/settings/storage/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test a storage location */
+        post: operations["testStorageSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/storage/browse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Browse configured library storage */
+        get: operations["browseStorage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/storage/smb-shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** List shares exposed by an SMB server */
+        post: operations["listSmbShares"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/downloads/purge": {
         parameters: {
             query?: never;
@@ -954,7 +1023,7 @@ export interface components {
         };
         ServerInfoResponse: {
             version: string;
-            library_path: string;
+            library_storage: components["schemas"]["StorageLocationView"] | null;
             credentials_configured: boolean;
             admin_auth_required: boolean;
             ui: components["schemas"]["UiPreferences"];
@@ -963,6 +1032,98 @@ export interface components {
              *     Null when torrent API is disabled.
              */
             torrent_incoming_dir?: string | null;
+        };
+        StorageLocationView: components["schemas"]["LocalStorageLocation"] | components["schemas"]["SmbStorageLocationView"];
+        LocalStorageLocation: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "local";
+            path: string;
+            watch_status: components["schemas"]["StorageWatchStatusView"];
+        };
+        SmbStorageLocationView: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "smb";
+            host: string;
+            port: number;
+            share: string;
+            path: string;
+            watch_status: components["schemas"]["StorageWatchStatusView"];
+            username?: string | null;
+            workgroup?: string | null;
+        };
+        StorageWatchStatusView: {
+            state: components["schemas"]["StorageWatchState"];
+            degraded_reason?: string | null;
+        };
+        /** @enum {string} */
+        StorageWatchState: "disabled" | "connected" | "degraded" | "reconnecting";
+        StorageSettingsResponse: {
+            settings: components["schemas"]["StorageSettingsView"];
+        };
+        StorageSettingsView: {
+            library: components["schemas"]["StorageLocationView"] | null;
+        };
+        StorageSettingsPatch: {
+            library: components["schemas"]["StorageLocationPatch"];
+        };
+        StorageLocationPatch: components["schemas"]["LocalStorageLocationPatch"] | components["schemas"]["SmbStorageLocationPatch"];
+        LocalStorageLocationPatch: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "local";
+            path: string;
+        };
+        SmbStorageLocationPatch: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "smb";
+            host: string;
+            /** @default 445 */
+            port: number;
+            share: string;
+            /** @default  */
+            path: string;
+            username?: string | null;
+            /** @description Plaintext only in write requests; encrypted at rest. */
+            password?: string | null;
+            workgroup?: string | null;
+        };
+        StorageTestRequest: {
+            location: components["schemas"]["StorageLocationPatch"];
+        };
+        StorageTestResponse: {
+            ok: boolean;
+        };
+        StorageBrowseResponse: {
+            entries: components["schemas"]["StorageBrowseEntry"][];
+        };
+        StorageBrowseEntry: {
+            name: string;
+            path: string;
+            is_dir: boolean;
+            /** Format: int64 */
+            size?: number;
+        };
+        SmbSharesRequest: {
+            host: string;
+            /** @default 445 */
+            port: number;
+            username?: string | null;
+            password?: string | null;
+            workgroup?: string | null;
+        };
+        SmbSharesResponse: {
+            shares: string[];
         };
         QobuzSyncRunSummary: {
             /** Format: int64 */
@@ -2340,6 +2501,126 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DownloadsSettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    getStorageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Storage settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSettingsResponse"];
+                };
+            };
+        };
+    };
+    patchStorageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated storage settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    testStorageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Storage location is reachable */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageTestResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            502: components["responses"]["BadGateway"];
+        };
+    };
+    browseStorage: {
+        parameters: {
+            query: {
+                target: "library";
+                path?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Directory listing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageBrowseResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    listSmbShares: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SmbSharesRequest"];
+            };
+        };
+        responses: {
+            /** @description SMB shares */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmbSharesResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

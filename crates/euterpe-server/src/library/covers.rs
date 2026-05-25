@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
+use bytes::Bytes;
 use euterpe_qobuz::Image;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
@@ -9,13 +10,15 @@ use image::{DynamicImage, GenericImageView, ImageReader};
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::MimeType;
+use lofty::probe::Probe;
 use lofty::read_from_path;
 use reqwest::Client;
 use reqwest::header::CONTENT_TYPE;
 
 use crate::db::{albums, tracks};
 use crate::error::ApiError;
-use crate::library::paths::track_path;
+use crate::library::paths::{track_path, track_relative_path};
+use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 use crate::library::tags;
 use euterpe_qobuz::{AlbumDetail, Quality};
 
@@ -33,6 +36,20 @@ const EMBED_JPEG_QUALITIES: [u8; 5] = [95, 85, 75, 65, EMBED_MIN_JPEG_QUALITY];
 pub struct WriteAlbumCoverResult {
     pub cover_path: String,
     pub tracks_embedded: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CoverStorageWriteInput {
+    pub album_rel: String,
+    pub bytes: Bytes,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CoverStorageWriteResult {
+    pub cover_path: String,
+    pub bytes: Bytes,
+    pub mime: MimeType,
 }
 
 /// Strip `; charset=...` and trim from `Content-Type`.
@@ -236,6 +253,162 @@ fn rename_album_title_cover_candidate(
     }
 }
 
+fn is_supported_storage_cover_ext(name: &str) -> bool {
+    matches!(
+        Path::new(name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("jpg" | "jpeg" | "png" | "webp" | "bmp")
+    )
+}
+
+async fn remove_previous_album_cover_files_storage(
+    storage: &dyn LibraryStorage,
+    album: &StoragePath,
+) -> Result<(), ApiError> {
+    for entry in storage.list_dir(album).await? {
+        if entry.kind != StorageEntryKind::File {
+            continue;
+        }
+        let name = entry.name.to_ascii_lowercase();
+        if name == "folder.jpg" || (name.starts_with("cover.") && name.len() > "cover.".len()) {
+            let _ = storage.delete(&entry.path).await;
+        }
+    }
+    Ok(())
+}
+
+pub async fn write_album_cover_file_storage(
+    storage: &dyn LibraryStorage,
+    input: CoverStorageWriteInput,
+) -> Result<CoverStorageWriteResult, ApiError> {
+    if input.bytes.is_empty() {
+        return Err(ApiError::bad_request("cover image is empty"));
+    }
+    if input.bytes.len() > MAX_ALBUM_COVER_BYTES {
+        return Err(ApiError::payload_too_large(format!(
+            "cover image exceeds {} bytes",
+            MAX_ALBUM_COVER_BYTES
+        )));
+    }
+    validate_upload_content_type_header(input.content_type.as_deref())?;
+    let mime = detect_cover_mime_type(input.content_type.as_deref(), &input.bytes);
+    if !is_allowed_upload_cover_mime(&mime) {
+        return Err(ApiError::bad_request("unsupported cover image type"));
+    }
+
+    let album = StoragePath::parse(&input.album_rel)?;
+    if album.is_root() {
+        return Err(ApiError::bad_request("invalid album path"));
+    }
+    let meta = storage.metadata(&album).await?;
+    if meta.kind != StorageEntryKind::Directory {
+        return Err(ApiError::bad_request("album directory not found on disk"));
+    }
+
+    remove_previous_album_cover_files_storage(storage, &album).await?;
+    storage.create_dir_all(&album).await?;
+    let ext = cover_file_extension(&mime);
+    let cover = album.join(&format!("cover.{ext}"))?;
+    storage.atomic_write(&cover, input.bytes.clone()).await?;
+
+    Ok(CoverStorageWriteResult {
+        cover_path: cover.as_str().to_string(),
+        bytes: input.bytes,
+        mime,
+    })
+}
+
+pub async fn write_album_cover_from_bytes_storage(
+    pool: &sqlx::SqlitePool,
+    storage: &dyn LibraryStorage,
+    album_id: i64,
+    album_rel: &str,
+    bytes: Bytes,
+    content_type: Option<String>,
+) -> Result<WriteAlbumCoverResult, ApiError> {
+    let result = write_album_cover_file_storage(
+        storage,
+        CoverStorageWriteInput {
+            album_rel: album_rel.to_string(),
+            bytes,
+            content_type,
+        },
+    )
+    .await?;
+    albums::set_cover_path(pool, album_id, &result.cover_path).await?;
+
+    let mut tracks_embedded = 0u32;
+    let track_rows = tracks::list_by_album(pool, album_id).await?;
+    for t in track_rows {
+        let rel = StoragePath::parse(&t.path)?;
+        if storage.metadata(&rel).await.is_ok() {
+            match embed_cover_in_track_storage(storage, rel.as_str(), &result.bytes, &result.mime)
+                .await
+            {
+                Ok(()) => tracks_embedded += 1,
+                Err(e) => {
+                    tracing::warn!(
+                        track_id = t.id,
+                        path = %t.path,
+                        error = %e,
+                        "failed to embed uploaded album cover"
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(WriteAlbumCoverResult {
+        cover_path: result.cover_path,
+        tracks_embedded,
+    })
+}
+
+pub async fn discover_album_cover_rel_storage(
+    storage: &dyn LibraryStorage,
+    album_path: &str,
+) -> Result<Option<String>, ApiError> {
+    let album = StoragePath::parse(album_path)?;
+    if album.is_root() {
+        return Ok(None);
+    }
+    let mut entries = storage.list_dir(&album).await?;
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    let files: Vec<_> = entries
+        .into_iter()
+        .filter(|entry| entry.kind == StorageEntryKind::File)
+        .filter(|entry| is_supported_storage_cover_ext(&entry.name))
+        .collect();
+
+    for priority in [
+        "cover.jpg",
+        "cover.jpeg",
+        "cover.png",
+        "cover.webp",
+        "cover.bmp",
+    ] {
+        if let Some(entry) = files
+            .iter()
+            .find(|entry| entry.name.eq_ignore_ascii_case(priority))
+        {
+            return Ok(Some(entry.path.as_str().to_string()));
+        }
+    }
+
+    let album_title = album.file_name().unwrap_or(album.as_str());
+    if let Some(entry) = files
+        .iter()
+        .find(|entry| contains_album_title_tokens(&entry.name, album_title))
+    {
+        return Ok(Some(entry.path.as_str().to_string()));
+    }
+
+    Ok(files.first().map(|entry| entry.path.as_str().to_string()))
+}
+
 /// Find `cover.<ext>` or legacy `folder.jpg` under an album directory (relative to library root).
 pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Option<String> {
     let album_rel = album_rel_dir
@@ -413,6 +586,25 @@ pub async fn download_album_cover(
     album_dir: &Path,
     image: &Image,
 ) -> Result<(PathBuf, MimeType), ApiError> {
+    let (bytes, mime, _) = download_album_cover_bytes(http, image).await?;
+    let ext = cover_file_extension(&mime);
+
+    remove_previous_album_cover_files(album_dir).await?;
+
+    tokio::fs::create_dir_all(album_dir)
+        .await
+        .map_err(|e| ApiError::Message(e.to_string()))?;
+    let cover_path = album_dir.join(format!("cover.{ext}"));
+    tokio::fs::write(&cover_path, &bytes)
+        .await
+        .map_err(|e| ApiError::Message(e.to_string()))?;
+    Ok((cover_path, mime))
+}
+
+async fn download_album_cover_bytes(
+    http: &Client,
+    image: &Image,
+) -> Result<(Bytes, MimeType, Option<String>), ApiError> {
     let url = cover_url(image).ok_or_else(|| ApiError::Message("no cover url".into()))?;
     let response = http
         .get(url)
@@ -431,18 +623,7 @@ pub async fn download_album_cover(
         .await
         .map_err(|e| ApiError::Message(e.to_string()))?;
     let mime = detect_cover_mime_type(content_type.as_deref(), &bytes);
-    let ext = cover_file_extension(&mime);
-
-    remove_previous_album_cover_files(album_dir).await?;
-
-    tokio::fs::create_dir_all(album_dir)
-        .await
-        .map_err(|e| ApiError::Message(e.to_string()))?;
-    let cover_path = album_dir.join(format!("cover.{ext}"));
-    tokio::fs::write(&cover_path, &bytes)
-        .await
-        .map_err(|e| ApiError::Message(e.to_string()))?;
-    Ok((cover_path, mime))
+    Ok((bytes, mime, content_type))
 }
 
 /// Optimize cover bytes for ID3/Vorbis picture embedding (resize if >2 MiB and large;
@@ -534,6 +715,87 @@ pub fn embed_cover_in_track(
     Ok(())
 }
 
+pub async fn embed_cover_in_track_storage(
+    storage: &dyn LibraryStorage,
+    track_rel: &str,
+    cover_bytes: &[u8],
+    mime: &MimeType,
+) -> Result<(), ApiError> {
+    let track_path = StoragePath::parse(track_rel)?;
+    if !tags::is_audio_file(Path::new(track_path.as_str())) {
+        return Ok(());
+    }
+
+    let max_bytes = storage_cover_rewrite_max_bytes();
+    let meta = storage.metadata(&track_path).await?;
+    if meta.size > max_bytes {
+        return Err(ApiError::payload_too_large(format!(
+            "STORAGE_COVER_EMBED_TOO_LARGE: {} is {} bytes, max is {} bytes",
+            track_path.as_str(),
+            meta.size,
+            max_bytes
+        )));
+    }
+
+    let audio_bytes = storage.read(&track_path).await?;
+    if audio_bytes.len() as u64 > max_bytes {
+        return Err(ApiError::payload_too_large(format!(
+            "STORAGE_COVER_EMBED_TOO_LARGE: {} is {} bytes, max is {} bytes",
+            track_path.as_str(),
+            audio_bytes.len(),
+            max_bytes
+        )));
+    }
+
+    let embed_bytes = optimize_cover_for_embed(cover_bytes);
+    let embed_mime = match &embed_bytes {
+        Cow::Borrowed(_) => mime.clone(),
+        Cow::Owned(_) => MimeType::Jpeg,
+    };
+    let mut tagged = Probe::new(Cursor::new(audio_bytes.to_vec()))
+        .guess_file_type()
+        .map_err(|e| ApiError::Message(format!("read {}: {e}", track_path.as_str())))?
+        .read()
+        .map_err(|e| ApiError::Message(format!("read {}: {e}", track_path.as_str())))?;
+    let tag_type = tagged.primary_tag_type();
+    let mut tag = tagged
+        .primary_tag()
+        .cloned()
+        .unwrap_or_else(|| lofty::tag::Tag::new(tag_type));
+    let picture = lofty::picture::Picture::new_unchecked(
+        lofty::picture::PictureType::CoverFront,
+        Some(embed_mime),
+        None,
+        embed_bytes.into_owned(),
+    );
+    tag.set_picture(0, picture);
+    tagged.insert_tag(tag);
+    let mut cursor = Cursor::new(audio_bytes.to_vec());
+    tagged
+        .save_to(&mut cursor, WriteOptions::default())
+        .map_err(|e| ApiError::Message(format!("embed cover {}: {e}", track_path.as_str())))?;
+    let rewritten = cursor.into_inner();
+    if rewritten.len() as u64 > max_bytes {
+        return Err(ApiError::payload_too_large(format!(
+            "STORAGE_COVER_EMBED_TOO_LARGE: {} rewritten size is {} bytes, max is {} bytes",
+            track_path.as_str(),
+            rewritten.len(),
+            max_bytes
+        )));
+    }
+    storage
+        .atomic_write(&track_path, Bytes::from(rewritten))
+        .await
+}
+
+fn storage_cover_rewrite_max_bytes() -> u64 {
+    const DEFAULT_MAX_BYTES: u64 = 536_870_912;
+    std::env::var("EUTERPE_STORAGE_TAG_REWRITE_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_MAX_BYTES)
+}
+
 pub async fn apply_album_cover_after_download(
     http: &Client,
     pool: &sqlx::SqlitePool,
@@ -573,6 +835,55 @@ pub async fn apply_album_cover_after_download(
             let path = track_path(library_root, album, track, quality.format_id());
             if path.is_file() {
                 let _ = embed_cover_in_track(&path, &bytes, &mime);
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn apply_album_cover_after_download_storage(
+    http: &Client,
+    pool: &sqlx::SqlitePool,
+    storage: &dyn LibraryStorage,
+    album: &AlbumDetail,
+    quality: Quality,
+    download_job_catalog_id: Option<u64>,
+) -> Result<(), ApiError> {
+    let Some(ref image) = album.summary.image else {
+        return Ok(());
+    };
+    let Some(first_track) = album.tracks.as_ref().and_then(|t| t.items.first()) else {
+        return Ok(());
+    };
+    let first_track_rel = track_relative_path(album, first_track, quality.format_id());
+    let album_rel = StoragePath::parse(&first_track_rel)?
+        .parent()
+        .ok_or_else(|| ApiError::Message("track has no parent dir".into()))?;
+    let (bytes, _, content_type) = download_album_cover_bytes(http, image).await?;
+    let result = write_album_cover_file_storage(
+        storage,
+        CoverStorageWriteInput {
+            album_rel: album_rel.as_str().to_string(),
+            bytes,
+            content_type,
+        },
+    )
+    .await?;
+
+    for qid in qobuz_catalog_ids_for_cover(download_job_catalog_id, album) {
+        if let Some(album_id) = albums::find_id_by_qobuz_album_id(pool, qid as i64).await? {
+            albums::set_cover_path(pool, album_id, &result.cover_path).await?;
+            break;
+        }
+    }
+
+    if let Some(tracks) = album.tracks.as_ref() {
+        for track in &tracks.items {
+            let path = track_relative_path(album, track, quality.format_id());
+            let storage_path = StoragePath::parse(&path)?;
+            if storage.metadata(&storage_path).await.is_ok() {
+                let _ =
+                    embed_cover_in_track_storage(storage, &path, &result.bytes, &result.mime).await;
             }
         }
     }
@@ -671,6 +982,7 @@ mod mime_tests {
 #[cfg(test)]
 mod path_tests {
     use super::*;
+    use crate::library::storage::LocalStorage;
     use std::io::Write;
 
     #[test]
@@ -784,6 +1096,74 @@ mod path_tests {
         assert!(album_path.join("cover.png").is_file());
         let row = albums::get_by_id(&pool, album_id).await.unwrap().unwrap();
         assert_eq!(row.cover_path.as_deref(), Some("Artist/Album/cover.png"));
+    }
+
+    #[tokio::test]
+    async fn write_album_cover_file_storage_writes_canonical_png() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("cover.jpg"), b"old").unwrap();
+        std::fs::write(album.join("folder.jpg"), b"legacy").unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        let result = write_album_cover_file_storage(
+            &storage,
+            CoverStorageWriteInput {
+                album_rel: "Artist/Album".to_string(),
+                bytes: Bytes::from_static(b"\x89PNG\r\n\x1a\n"),
+                content_type: Some("image/png".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.cover_path, "Artist/Album/cover.png");
+        assert!(matches!(result.mime, MimeType::Png));
+        assert_eq!(result.bytes.as_ref(), b"\x89PNG\r\n\x1a\n");
+        assert!(album.join("cover.png").is_file());
+        assert!(!album.join("cover.jpg").exists());
+        assert!(!album.join("folder.jpg").exists());
+    }
+
+    #[tokio::test]
+    async fn discover_album_cover_rel_storage_prefers_cover_priority() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        std::fs::write(album.join("cover.bmp"), b"bmp").unwrap();
+        std::fs::write(album.join("cover.jpeg"), b"jpeg").unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        let rel = discover_album_cover_rel_storage(&storage, "Artist/Album")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(rel, "Artist/Album/cover.jpeg");
+    }
+
+    #[tokio::test]
+    async fn discover_album_cover_rel_storage_finds_title_without_rename() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let album = dir.path().join("Scorpions").join("Lonesome Crow");
+        std::fs::create_dir_all(&album).unwrap();
+        let title_image = album.join("Scorpions - Lonesome Crow - 1972.png");
+        std::fs::write(&title_image, b"img").unwrap();
+        std::fs::write(album.join("booklet.jpg"), b"book").unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        let rel = discover_album_cover_rel_storage(&storage, "Scorpions/Lonesome Crow")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            rel,
+            "Scorpions/Lonesome Crow/Scorpions - Lonesome Crow - 1972.png"
+        );
+        assert!(title_image.is_file());
+        assert!(!album.join("cover.png").exists());
     }
 
     #[test]

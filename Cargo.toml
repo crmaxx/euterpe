@@ -5,11 +5,12 @@ members = [
     "crates/euterpe-converter",
     "crates/euterpe-hawk",
     "crates/euterpe-qobuz",
+    "crates/euterpe-smb",
     "crates/euterpe-torrent",
     "crates/euterpe-server",
 ]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 license = "Apache-2.0"

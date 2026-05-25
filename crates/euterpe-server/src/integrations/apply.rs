@@ -1,14 +1,15 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use reqwest::Client;
 use sqlx::SqlitePool;
 
-use crate::config::AppConfig;
 use crate::db::{albums, artists, tracks};
 use crate::error::ApiError;
 use crate::integrations::types::{AlbumLookupContext, AlbumLookupTrack, AlbumMetadataRelease};
 use crate::library::covers;
 use crate::library::paths::library_path_hints;
+use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 use crate::library::tags::{self, TrackTagsPatch, apply_patch};
 
 fn path_hints_for_album(
@@ -90,8 +91,13 @@ pub struct ApplyAlbumMetadataResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone)]
+pub struct ApplyStorageDeps {
+    pub storage: Arc<dyn LibraryStorage>,
+}
+
 pub async fn apply_release_to_album(
-    config: &AppConfig,
+    deps: &ApplyStorageDeps,
     pool: &SqlitePool,
     http: &Client,
     album_id: i64,
@@ -106,8 +112,13 @@ pub async fn apply_release_to_album(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| ApiError::bad_request("album has no directory path on disk"))?;
-    let album_dir = config.library_path.join(album_rel);
-    if !album_dir.is_dir() {
+    let album_storage_path = StoragePath::parse(album_rel)?;
+    let album_meta = deps
+        .storage
+        .metadata(&album_storage_path)
+        .await
+        .map_err(|_| ApiError::bad_request("album directory not found on disk"))?;
+    if album_meta.kind != StorageEntryKind::Directory {
         return Err(ApiError::bad_request("album directory not found on disk"));
     }
 
@@ -137,12 +148,8 @@ pub async fn apply_release_to_album(
                 continue;
             }
         };
-        let file_path = config.library_path.join(&db_track.path);
-        if !file_path.is_file() {
-            warnings.push(format!("file missing: {}", db_track.path));
-            continue;
-        }
-        let current = tags::read_tags(&file_path)?;
+        let track_path = existing_track_storage_path(deps.storage.as_ref(), &db_track.path).await?;
+        let current = tags::read_tags_storage(deps.storage.as_ref(), &track_path).await?;
         let patch = TrackTagsPatch {
             title: Some(meta.title.clone()),
             artist: Some(release.artist_name.clone()),
@@ -153,7 +160,7 @@ pub async fn apply_release_to_album(
             genre: meta.genre.clone().or_else(|| release.genre.clone()),
         };
         let updated = apply_patch(&current, &patch);
-        tags::write_tags(&file_path, &updated)?;
+        tags::write_tags_storage(deps.storage.as_ref(), &track_path, &updated).await?;
         tracks::update_metadata(
             pool,
             db_track.id,
@@ -172,7 +179,7 @@ pub async fn apply_release_to_album(
 
     let mut cover_applied = false;
     if let Some(ref url) = release.cover_url {
-        match apply_cover(http, pool, config, &album_dir, album_rel, album_id, url).await {
+        match apply_cover(http, pool, deps.storage.as_ref(), album_rel, album_id, url).await {
             Ok(()) => cover_applied = true,
             Err(e) => warnings.push(format!("cover: {e}")),
         }
@@ -199,6 +206,22 @@ pub async fn apply_release_to_album(
         cover_applied,
         warnings,
     })
+}
+
+async fn existing_track_storage_path(
+    storage: &dyn LibraryStorage,
+    track_rel: &str,
+) -> Result<StoragePath, ApiError> {
+    let path = StoragePath::parse(track_rel)?;
+    let meta = storage.metadata(&path).await.map_err(|_| {
+        ApiError::bad_request(format!("INTEGRATION_TRACK_FILE_NOT_FOUND:{track_rel}"))
+    })?;
+    if meta.kind != StorageEntryKind::File {
+        return Err(ApiError::bad_request(format!(
+            "INTEGRATION_TRACK_FILE_NOT_FOUND:{track_rel}"
+        )));
+    }
+    Ok(path)
 }
 
 fn normalize_track_title(s: &str) -> String {
@@ -244,8 +267,7 @@ fn match_track<'a>(
 async fn apply_cover(
     http: &Client,
     pool: &SqlitePool,
-    config: &AppConfig,
-    _album_dir: &Path,
+    storage: &dyn LibraryStorage,
     album_rel: &str,
     album_id: i64,
     url: &str,
@@ -266,13 +288,13 @@ async fn apply_cover(
         .bytes()
         .await
         .map_err(|e| ApiError::Message(e.to_string()))?;
-    covers::write_album_cover_from_bytes(
+    covers::write_album_cover_from_bytes_storage(
         pool,
-        &config.library_path,
+        storage,
         album_id,
         album_rel,
-        &bytes,
-        content_type.as_deref(),
+        bytes,
+        content_type,
     )
     .await?;
     Ok(())
@@ -280,8 +302,16 @@ async fn apply_cover(
 
 #[cfg(test)]
 mod tests {
-    use super::{match_track, path_hints_for_album};
-    use crate::integrations::types::AlbumMetadataTrack;
+    use std::sync::Arc;
+
+    use super::{
+        ApplyStorageDeps, apply_release_to_album, existing_track_storage_path, match_track,
+        path_hints_for_album,
+    };
+    use crate::db::{albums, tracks};
+    use crate::integrations::types::{AlbumMetadataRelease, AlbumMetadataTrack};
+    use crate::library::storage::{LocalStorage, StoragePath};
+    use crate::library::tags::{self, TrackTags};
 
     fn meta_tracks() -> Vec<AlbumMetadataTrack> {
         vec![
@@ -339,5 +369,173 @@ mod tests {
         assert_eq!(h.album_title, "In Never Out");
         assert_eq!(h.year, Some(2009));
         assert_eq!(h.track_title.as_deref(), Some("Prahanien"));
+    }
+
+    #[tokio::test]
+    async fn existing_track_storage_path_accepts_local_file() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("Artist/Album"))
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("Artist/Album/01.flac"), b"audio")
+            .await
+            .unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        let path = existing_track_storage_path(&storage, "Artist/Album/01.flac")
+            .await
+            .unwrap();
+
+        assert_eq!(path.as_str(), "Artist/Album/01.flac");
+    }
+
+    #[tokio::test]
+    async fn existing_track_storage_path_errors_for_missing_local_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        let err = existing_track_storage_path(&storage, "Artist/Album/01.flac")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "INTEGRATION_TRACK_FILE_NOT_FOUND:Artist/Album/01.flac"
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_track_storage_path_errors_for_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::create_dir_all(dir.path().join("Artist/Album"))
+            .await
+            .unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        let err = existing_track_storage_path(&storage, "Artist/Album")
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "INTEGRATION_TRACK_FILE_NOT_FOUND:Artist/Album"
+        );
+    }
+
+    fn write_minimal_wav(path: &std::path::Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 44100,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for _ in 0..64 {
+            writer.write_sample(0i16).unwrap();
+        }
+        writer.finalize().unwrap();
+    }
+
+    #[tokio::test]
+    async fn apply_release_writes_track_tags_through_storage() {
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(LocalStorage::new(dir.path()));
+        let track_rel = "Apply Artist/Apply Album/01 - Old.wav";
+        write_minimal_wav(&dir.path().join(track_rel));
+        tags::write_tags(
+            &dir.path().join(track_rel),
+            &TrackTags {
+                title: "Old".into(),
+                artist: "Old Artist".into(),
+                album: "Old Album".into(),
+                track_number: Some(1),
+                year: None,
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        )
+        .unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: None,
+                title: "Apply Album",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("Apply Artist/Apply Album"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        let track_id = tracks::upsert(
+            &pool,
+            tracks::TrackUpsert {
+                album_id,
+                title: "Old",
+                track_number: Some(1),
+                year: None,
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path: track_rel,
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: None,
+            },
+        )
+        .await
+        .unwrap();
+        let release = AlbumMetadataRelease {
+            title: "Apply Album Remastered".into(),
+            artist_name: "Apply Artist".into(),
+            year: Some(2024),
+            genre: Some("Post Rock".into()),
+            tracks: vec![AlbumMetadataTrack {
+                title: "New Title".into(),
+                track_number: Some(1),
+                disc_number: Some(1),
+                year: Some(2024),
+                genre: None,
+            }],
+            cover_url: None,
+        };
+
+        let result = apply_release_to_album(
+            &ApplyStorageDeps {
+                storage: storage.clone(),
+            },
+            &pool,
+            &reqwest::Client::new(),
+            album_id,
+            &release,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.tracks_updated, 1);
+        assert!(result.warnings.is_empty());
+        let updated =
+            tags::read_tags_storage(storage.as_ref(), &StoragePath::parse(track_rel).unwrap())
+                .await
+                .unwrap();
+        assert_eq!(updated.title, "New Title");
+        assert_eq!(updated.album, "Apply Album Remastered");
+        assert_eq!(updated.genre.as_deref(), Some("Post Rock"));
+        let row = tracks::get_by_id(&pool, track_id).await.unwrap().unwrap();
+        assert_eq!(row.title, "New Title");
+        assert_eq!(row.year, Some(2024));
     }
 }

@@ -17,7 +17,7 @@ flowchart LR
 - **User** — владелец библиотеки, домашняя сеть
 - **Euterpe** — Docker на NAS/PC
 - **Qobuz** — облачный каталог, избранное, signed URLs
-- **FS** — FLAC/MP3 на volume `/music`
+- **Storage** — FLAC/MP3 в локальном пути или SMB-ресурсе из Settings
 
 ## Level 2 — Containers
 
@@ -37,7 +37,7 @@ flowchart TB
   API --> DB
   Worker --> Lib
   Worker --> DB
-  Worker --> Music[/music volume/]
+  Worker --> Music[Library storage]
   API --> Music
   Lib --> Qobuz[Qobuz HTTPS]
 ```

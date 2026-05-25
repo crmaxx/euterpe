@@ -67,6 +67,8 @@ export const queryKeys = {
   converterSettings: ["converterSettings"] as const,
   libraryScanSettings: ["libraryScanSettings"] as const,
   downloadsSettings: ["downloadsSettings"] as const,
+  storageSettings: ["storageSettings"] as const,
+  storageBrowse: (path?: string) => ["storageBrowse", path ?? ""] as const,
   albumConvertLatest: (albumId: number) =>
     ["albumConvertLatest", albumId] as const,
   albumCue: (albumId: number) => ["albumCue", albumId] as const,
@@ -757,6 +759,44 @@ export function usePatchDownloadsSettings() {
     onSuccess: (res) => {
       qc.setQueryData(queryKeys.downloadsSettings, res.settings);
     },
+  });
+}
+
+export function useStorageSettings() {
+  return useQuery({
+    queryKey: queryKeys.storageSettings,
+    queryFn: async () => (await api.storageSettings()).settings,
+  });
+}
+
+export function usePatchStorageSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchStorageSettings,
+    onSuccess: (res) => {
+      qc.setQueryData(queryKeys.storageSettings, res.settings);
+      void qc.invalidateQueries({ queryKey: queryKeys.serverInfo });
+      void qc.invalidateQueries({ queryKey: ["libraryAlbums"] });
+    },
+  });
+}
+
+export function useTestStorageSettings() {
+  return useMutation({
+    mutationFn: api.testStorageSettings,
+  });
+}
+
+export function useBrowseStorage(path?: string) {
+  return useQuery({
+    queryKey: queryKeys.storageBrowse(path),
+    queryFn: () => api.browseStorage({ target: "library", path }),
+  });
+}
+
+export function useListSmbShares() {
+  return useMutation({
+    mutationFn: api.listSmbShares,
   });
 }
 

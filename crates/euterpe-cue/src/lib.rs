@@ -1,16 +1,13 @@
 //! CUE sheet parsing, validation, and FLAC image splitting.
 
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use cue_lib::core::CueTimestamp;
 use cue_lib::error::{CueLibError, CueLibErrorKind};
 use cue_lib::parse::CuesheetParser;
-use euterpe_converter::{FlacEncodeSettings, encode_interleaved_pcm_to_flac};
-use lofty::config::WriteOptions;
-use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::probe::Probe;
-use lofty::tag::{Accessor, Tag};
+use euterpe_converter::{FlacEncodeSettings, encode_interleaved_pcm_to_flac_bytes};
 
 pub type Result<T> = std::result::Result<T, CueError>;
 
@@ -115,6 +112,12 @@ pub struct SplitProgress {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SplitResult {
     pub output_paths: Vec<PathBuf>,
+}
+
+pub trait SplitIo {
+    fn read_source(&mut self, audio_path: &Path) -> Result<Vec<u8>>;
+    fn write_output(&mut self, rel_path: &Path, bytes: Vec<u8>) -> Result<()>;
+    fn delete_source(&mut self, rel_path: &Path) -> Result<()>;
 }
 
 #[derive(Debug, Default)]
@@ -276,6 +279,39 @@ pub fn split_flac_image(
     output_dir: &Path,
     options: &SplitOptions,
 ) -> Result<SplitResult> {
+    let mut io = LocalSplitIo {
+        cue_dir: cue_dir.to_path_buf(),
+    };
+    split_flac_image_io(document, &mut io, output_dir, options)
+}
+
+struct LocalSplitIo {
+    cue_dir: PathBuf,
+}
+
+impl SplitIo for LocalSplitIo {
+    fn read_source(&mut self, audio_path: &Path) -> Result<Vec<u8>> {
+        fs::read(self.cue_dir.join(audio_path)).map_err(CueError::Io)
+    }
+
+    fn write_output(&mut self, rel_path: &Path, bytes: Vec<u8>) -> Result<()> {
+        if let Some(parent) = rel_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(rel_path, bytes).map_err(CueError::Io)
+    }
+
+    fn delete_source(&mut self, rel_path: &Path) -> Result<()> {
+        fs::remove_file(self.cue_dir.join(rel_path)).map_err(CueError::Io)
+    }
+}
+
+pub fn split_flac_image_io(
+    document: &CueDocument,
+    io: &mut impl SplitIo,
+    output_dir_rel: &Path,
+    options: &SplitOptions,
+) -> Result<SplitResult> {
     let validation = validate_document(document);
     if !validation.valid {
         return Err(CueError::Invalid("document has validation errors".into()));
@@ -284,18 +320,18 @@ pub fn split_flac_image(
         return Err(CueError::Invalid("CUE split input must be FLAC".into()));
     }
 
-    let source = cue_dir.join(&document.audio_path);
-    let mut reader = claxon::FlacReader::open(&source)?;
+    let source_rel = Path::new(&document.audio_path);
+    let source_bytes = io.read_source(source_rel)?;
+    let mut reader = claxon::FlacReader::new(Cursor::new(source_bytes))?;
     let info = reader.streaminfo();
     let channels = info.channels as usize;
     let sample_rate = info.sample_rate;
-    let bits_per_sample = info.bits_per_sample as u16;
+    let bits_per_sample = info.bits_per_sample;
     let samples = reader
         .samples()
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let frames_total = samples.len() / channels;
 
-    fs::create_dir_all(output_dir)?;
     let mut output_paths = Vec::new();
     let selected = document
         .tracks
@@ -313,17 +349,17 @@ pub fn split_flac_image(
             .min(frames_total)
             .max(start);
         let stem = output_stem(document, track, options.file_mask.as_deref());
-        let output_path = output_dir.join(format!("{stem}.flac"));
-        encode_interleaved_pcm_to_flac(
+        let output_path = output_dir_rel.join(format!("{stem}.flac"));
+        let encoded = encode_interleaved_pcm_to_flac_bytes(
             &samples[start * channels..end * channels],
             channels,
             bits_per_sample as usize,
             sample_rate as usize,
-            &output_path,
             &FlacEncodeSettings::default(),
             None,
         )?;
-        write_track_tags(document, track, &output_path)?;
+        let tagged = write_track_tags_to_flac_bytes(encoded, document, track)?;
+        io.write_output(&output_path, tagged)?;
         output_paths.push(output_path.clone());
         if let Some(on_progress) = &options.on_progress {
             on_progress(SplitProgress {
@@ -336,7 +372,7 @@ pub fn split_flac_image(
     }
 
     if options.source_file_policy == SourceFilePolicy::DeleteAfterSuccess {
-        fs::remove_file(&source)?;
+        io.delete_source(source_rel)?;
     }
 
     Ok(SplitResult { output_paths })
@@ -489,41 +525,241 @@ fn sanitize_file_name(name: &str) -> String {
     }
 }
 
-fn write_track_tags(document: &CueDocument, track: &CueTrack, path: &Path) -> Result<()> {
-    let mut tagged = Probe::open(path)
-        .map_err(|e| CueError::Tags(format!("probe {}: {e}", path.display())))?
-        .guess_file_type()
-        .map_err(|e| CueError::Tags(format!("guess type {}: {e}", path.display())))?
-        .read()
-        .map_err(|e| CueError::Tags(format!("read {}: {e}", path.display())))?;
-    let tag_type = tagged.primary_tag_type();
-    let mut tag = tagged
-        .primary_tag()
-        .cloned()
-        .unwrap_or_else(|| Tag::new(tag_type));
-    tag.set_title(track.title.clone());
-    tag.set_artist(
-        track
-            .artist
-            .clone()
-            .unwrap_or_else(|| document.album_artist.clone()),
-    );
-    tag.set_album(document.album_title.clone());
-    tag.set_track(track.number);
-    tag.set_track_total(document.tracks.len() as u32);
-    if let Some(year) = document.year {
-        tag.set_year(year);
+#[derive(Debug)]
+struct FlacMetadataBlock {
+    block_type: u8,
+    body: Vec<u8>,
+}
+
+fn write_track_tags_to_flac_bytes(
+    flac: Vec<u8>,
+    document: &CueDocument,
+    track: &CueTrack,
+) -> Result<Vec<u8>> {
+    let (mut blocks, audio_start) = read_flac_metadata_blocks(&flac)?;
+    upsert_vorbis_comment(&mut blocks, &track_tag_lines(document, track))?;
+
+    let mut out = Vec::with_capacity(flac.len() + 4096);
+    out.extend_from_slice(b"fLaC");
+    write_flac_metadata_blocks(&mut out, &blocks)?;
+    out.extend_from_slice(&flac[audio_start..]);
+    Ok(out)
+}
+
+fn read_flac_metadata_blocks(flac: &[u8]) -> Result<(Vec<FlacMetadataBlock>, usize)> {
+    if flac.get(0..4) != Some(b"fLaC".as_slice()) {
+        return Err(CueError::Tags("not a FLAC file".into()));
     }
-    let genre = track.genre.as_ref().or(document.genre.as_ref());
-    if let Some(genre) = genre {
-        tag.set_genre(genre.clone());
+    let mut pos = 4usize;
+    let mut blocks = Vec::new();
+    loop {
+        if pos + 4 > flac.len() {
+            return Err(CueError::Tags("truncated FLAC metadata".into()));
+        }
+        let header = flac[pos];
+        let is_last = (header & 0x80) != 0;
+        let block_type = header & 0x7f;
+        let length = u32::from_be_bytes([0, flac[pos + 1], flac[pos + 2], flac[pos + 3]]) as usize;
+        pos += 4;
+        if pos + length > flac.len() {
+            return Err(CueError::Tags(format!(
+                "metadata block {block_type} overruns file"
+            )));
+        }
+        blocks.push(FlacMetadataBlock {
+            block_type,
+            body: flac[pos..pos + length].to_vec(),
+        });
+        pos += length;
+        if is_last {
+            break;
+        }
+    }
+    if blocks.first().map(|b| b.block_type) != Some(0) {
+        return Err(CueError::Tags("missing FLAC STREAMINFO".into()));
+    }
+    Ok((blocks, pos))
+}
+
+fn upsert_vorbis_comment(blocks: &mut Vec<FlacMetadataBlock>, lines: &[String]) -> Result<()> {
+    const BLOCK_VORBIS_COMMENT: u8 = 4;
+    const BLOCK_PADDING: u8 = 1;
+    const PADDING_SIZE: usize = 4096;
+
+    let comment = FlacMetadataBlock {
+        block_type: BLOCK_VORBIS_COMMENT,
+        body: vorbis_comment_body(lines),
+    };
+    if let Some(pos) = blocks
+        .iter()
+        .position(|b| b.block_type == BLOCK_VORBIS_COMMENT)
+    {
+        blocks[pos] = comment;
+        let mut seen = false;
+        blocks.retain(|b| {
+            if b.block_type != BLOCK_VORBIS_COMMENT {
+                return true;
+            }
+            if seen {
+                false
+            } else {
+                seen = true;
+                true
+            }
+        });
+    } else {
+        blocks.push(comment);
+    }
+    if blocks.last().map(|b| b.block_type) == Some(BLOCK_VORBIS_COMMENT) {
+        blocks.push(FlacMetadataBlock {
+            block_type: BLOCK_PADDING,
+            body: vec![0u8; PADDING_SIZE],
+        });
+    }
+    Ok(())
+}
+
+fn write_flac_metadata_blocks(out: &mut Vec<u8>, blocks: &[FlacMetadataBlock]) -> Result<()> {
+    if blocks.is_empty() {
+        return Err(CueError::Tags("missing FLAC metadata".into()));
+    }
+    for (idx, block) in blocks.iter().enumerate() {
+        if block.body.len() > 16_777_215 {
+            return Err(CueError::Tags("metadata block too large".into()));
+        }
+        let is_last = idx + 1 == blocks.len();
+        let len = (block.body.len() as u32).to_be_bytes();
+        out.push(block.block_type | if is_last { 0x80 } else { 0 });
+        out.extend_from_slice(&len[1..4]);
+        out.extend_from_slice(&block.body);
+    }
+    Ok(())
+}
+
+fn track_tag_lines(document: &CueDocument, track: &CueTrack) -> Vec<String> {
+    let mut lines = Vec::new();
+    push_tag_line(&mut lines, "TITLE", &track.title);
+    push_tag_line(
+        &mut lines,
+        "ARTIST",
+        track.artist.as_deref().unwrap_or(&document.album_artist),
+    );
+    push_tag_line(&mut lines, "ALBUM", &document.album_title);
+    push_tag_line(&mut lines, "TRACKNUMBER", &track.number.to_string());
+    push_tag_line(&mut lines, "TRACKTOTAL", &document.tracks.len().to_string());
+    if let Some(year) = document.year {
+        push_tag_line(&mut lines, "DATE", &year.to_string());
+    }
+    if let Some(genre) = track.genre.as_ref().or(document.genre.as_ref()) {
+        push_tag_line(&mut lines, "GENRE", genre);
     }
     if let Some(comment) = &document.comment {
-        tag.insert_text(lofty::prelude::ItemKey::Comment, comment.clone());
+        push_tag_line(&mut lines, "COMMENT", comment);
     }
-    tagged.insert_tag(tag);
-    tagged
-        .save_to_path(path, WriteOptions::default())
-        .map_err(|e| CueError::Tags(format!("write {}: {e}", path.display())))?;
-    Ok(())
+    lines
+}
+
+fn push_tag_line(lines: &mut Vec<String>, key: &str, value: &str) {
+    if !value.is_empty() {
+        lines.push(format!("{key}={value}"));
+    }
+}
+
+fn vorbis_comment_body(lines: &[String]) -> Vec<u8> {
+    let vendor = b"reference libFLAC 1.3.3";
+    let mut body = Vec::new();
+    body.extend_from_slice(&(vendor.len() as u32).to_le_bytes());
+    body.extend_from_slice(vendor);
+    body.extend_from_slice(&(lines.len() as u32).to_le_bytes());
+    for line in lines {
+        let bytes = line.as_bytes();
+        body.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        body.extend_from_slice(bytes);
+    }
+    body
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[derive(Default)]
+    struct MemorySplitIo {
+        sources: BTreeMap<PathBuf, Vec<u8>>,
+        outputs: BTreeMap<PathBuf, Vec<u8>>,
+        deleted: Vec<PathBuf>,
+    }
+
+    impl SplitIo for MemorySplitIo {
+        fn read_source(&mut self, audio_path: &Path) -> Result<Vec<u8>> {
+            self.sources.get(audio_path).cloned().ok_or_else(|| {
+                CueError::Invalid(format!("missing source {}", audio_path.display()))
+            })
+        }
+
+        fn write_output(&mut self, rel_path: &Path, bytes: Vec<u8>) -> Result<()> {
+            self.outputs.insert(rel_path.to_path_buf(), bytes);
+            Ok(())
+        }
+
+        fn delete_source(&mut self, rel_path: &Path) -> Result<()> {
+            self.deleted.push(rel_path.to_path_buf());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn split_flac_image_io_writes_relative_output_paths() {
+        let cue = r#"
+REM GENRE "Dance"
+REM DATE 2007
+PERFORMER "Album Artist"
+TITLE "Album Title"
+FILE "album.flac" FLAC
+  TRACK 01 AUDIO
+    TITLE "First"
+    PERFORMER "Track Artist 1"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Second"
+    PERFORMER "Track Artist 2"
+    INDEX 01 00:00:37
+"#;
+        let doc = parse_cue(cue, Path::new("album.cue")).unwrap();
+        let mut io = MemorySplitIo::default();
+        io.sources.insert(
+            PathBuf::from("album.flac"),
+            include_bytes!("../../../crates/euterpe-server/tests/fixtures/silent.flac").to_vec(),
+        );
+
+        let result = split_flac_image_io(
+            &doc,
+            &mut io,
+            Path::new("split"),
+            &SplitOptions {
+                source_file_policy: SourceFilePolicy::DeleteAfterSuccess,
+                file_mask: None,
+                on_progress: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.output_paths,
+            vec![
+                PathBuf::from("split/01 - Track Artist 1 - First.flac"),
+                PathBuf::from("split/02 - Track Artist 2 - Second.flac"),
+            ]
+        );
+        assert!(
+            io.outputs
+                .contains_key(Path::new("split/01 - Track Artist 1 - First.flac"))
+        );
+        assert!(
+            io.outputs
+                .contains_key(Path::new("split/02 - Track Artist 2 - Second.flac"))
+        );
+        assert_eq!(io.deleted, vec![PathBuf::from("album.flac")]);
+    }
 }

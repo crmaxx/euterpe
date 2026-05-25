@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use flac_bound::FlacEncoder;
+use flac_bound::{FlacEncoder, WriteWrapper};
 
 use crate::encode::EncodeProgress;
 use crate::error::{ConvertError, Result};
@@ -146,4 +146,76 @@ pub fn encode_interleaved_pcm_to_flac(
         settings,
         on_progress,
     )
+}
+
+pub fn encode_interleaved_pcm_to_flac_bytes(
+    samples: &[i32],
+    channels: usize,
+    bits_per_sample: usize,
+    sample_rate: usize,
+    settings: &FlacEncodeSettings,
+    mut on_progress: Option<&mut dyn FnMut(EncodeProgress)>,
+) -> Result<Vec<u8>> {
+    if channels == 0 || !samples.len().is_multiple_of(channels) {
+        return Err(ConvertError::Encode("PCM sample/channel mismatch".into()));
+    }
+    settings.validate()?;
+    let total_samples = (samples.len() / channels) as u64;
+    let compression_level = match settings.preset {
+        FlacPreset::Fast => 0,
+        FlacPreset::Balanced => 5,
+        FlacPreset::Best => 8,
+    };
+    let block_size = settings.block_size.unwrap_or(0) as u32;
+
+    let config = FlacEncoder::new()
+        .ok_or_else(|| ConvertError::Encode("libFLAC encoder allocation failed".into()))?
+        .verify(true)
+        .streamable_subset(true)
+        .channels(channels as u32)
+        .bits_per_sample(bits_per_sample as u32)
+        .sample_rate(sample_rate as u32)
+        .compression_level(compression_level)
+        .blocksize(block_size)
+        .total_samples_estimate(total_samples);
+
+    let mut out = Vec::new();
+    {
+        let mut wrapper = WriteWrapper(&mut out);
+        let mut encoder = config
+            .init_write(&mut wrapper)
+            .map_err(|e| ConvertError::Encode(format!("libFLAC write init failed: {e:?}")))?;
+
+        let mut frames_done = 0u64;
+        let mut samples_done = 0u64;
+        let chunk_frames = settings.block_size.unwrap_or(16_384);
+        let mut cursor = 0usize;
+        while cursor < samples.len() {
+            let remaining_frames = (samples.len() - cursor) / channels;
+            let read = remaining_frames.min(chunk_frames);
+            let end = cursor + read * channels;
+            encoder
+                .process_interleaved(&samples[cursor..end], read as u32)
+                .map_err(|()| {
+                    ConvertError::Encode(format!("libFLAC encode failed: {:?}", encoder.state()))
+                })?;
+            cursor = end;
+            frames_done += 1;
+            samples_done += read as u64;
+            if let Some(cb) = on_progress.as_mut()
+                && (frames_done == 1 || frames_done.is_multiple_of(32))
+            {
+                cb(EncodeProgress {
+                    flac_frames_encoded: frames_done,
+                    pcm_samples_read: samples_done,
+                    pcm_samples_total: Some(total_samples),
+                });
+            }
+        }
+
+        encoder.finish().map_err(|enc| {
+            ConvertError::Encode(format!("libFLAC finish failed: {:?}", enc.state()))
+        })?;
+    }
+    Ok(out)
 }

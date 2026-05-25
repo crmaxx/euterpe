@@ -6,7 +6,7 @@
 |----------|-------------|
 | `/data/library.db` | Средняя (восстановима rescan + Qobuz sync) |
 | `/data/library.db-wal`, `-shm` | При hot backup — см. ниже |
-| `/music/**` | **Высокая** (source of truth) |
+| Library storage | **Высокая** (source of truth) |
 | Qobuz credentials в settings | Средняя (можно re-login) |
 
 ## Hot backup SQLite (WAL)
@@ -37,7 +37,7 @@ BACKUP TO '/backup/library.db';
 
 1. Stop Euterpe
 2. Replace `library.db` from backup
-3. Ensure `/music` intact
+3. Ensure library storage is intact
 4. Start Euterpe
 5. Run Qobuz sync from UI
 
@@ -50,7 +50,7 @@ BACKUP TO '/backup/library.db';
 3. `POST /api/v1/library/scan` (Phase 5)
 4. `POST /api/v1/qobuz/sync`
 
-Если потерян `/music` — восстановление только из файлового бэкапа; Qobuz re-download via jobs.
+Если потеряно хранилище библиотеки — восстановление только из файлового бэкапа; Qobuz re-download via jobs.
 
 ## TDD
 

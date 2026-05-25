@@ -24,11 +24,13 @@ export const mockFavorites = {
   has_more: false,
 };
 
+const watchDisabled = { state: "disabled", degraded_reason: null };
+
 export const handlers = [
   http.get("/api/v1/server/info", () =>
     HttpResponse.json({
       version: "0.1.0",
-      library_path: "/music",
+      library_storage: { kind: "local", path: "/music", watch_status: watchDisabled },
       credentials_configured: true,
       admin_auth_required: false,
       torrent_incoming_dir: "/data/torrent-incoming",
@@ -120,6 +122,37 @@ export const handlers = [
       settings: { concurrency: (body.concurrency as number) ?? 3 },
     });
   }),
+
+  http.get("/api/v1/settings/storage", () =>
+    HttpResponse.json({
+      settings: { library: { kind: "local", path: "/music", watch_status: watchDisabled } },
+    }),
+  ),
+
+  http.patch("/api/v1/settings/storage", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    const library = (body.library ?? { kind: "local", path: "/music" }) as Record<string, unknown>;
+    return HttpResponse.json({
+      settings: { library: { ...library, watch_status: watchDisabled } },
+    });
+  }),
+
+  http.post("/api/v1/settings/storage/test", () =>
+    HttpResponse.json({ ok: true }),
+  ),
+
+  http.get("/api/v1/settings/storage/browse", () =>
+    HttpResponse.json({
+      entries: [
+        { name: "Musik", path: "Musik", is_dir: true },
+        { name: "track.flac", path: "track.flac", is_dir: false, size: 1024 },
+      ],
+    }),
+  ),
+
+  http.post("/api/v1/settings/storage/smb-shares", () =>
+    HttpResponse.json({ shares: ["Music", "Backup"] }),
+  ),
 
   http.get("/api/v1/settings/torrent", () =>
     HttpResponse.json({

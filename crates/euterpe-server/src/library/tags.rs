@@ -1,5 +1,7 @@
+use std::io::Cursor;
 use std::path::Path;
 
+use bytes::Bytes;
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::ItemKey;
@@ -8,6 +10,7 @@ use lofty::tag::{Accessor, Tag};
 
 use crate::error::ApiError;
 use crate::library::paths::{library_path_hints, parse_album_dir_component, parse_track_file_stem};
+use crate::library::storage::{LibraryStorage, StoragePath};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackTags {
@@ -121,6 +124,32 @@ pub fn read_tags_with_rel(path: &Path, path_rel: Option<&str>) -> Result<TrackTa
     }
 }
 
+pub fn read_tags_from_bytes_with_rel(
+    bytes: Vec<u8>,
+    path_rel: Option<&str>,
+) -> Result<TrackTags, ApiError> {
+    let display_path = path_rel.unwrap_or("<storage-bytes>");
+    match read_tags_lofty_reader(Cursor::new(bytes), display_path) {
+        Ok(tags) => Ok(tags),
+        Err(e) => {
+            tracing::warn!(
+                path = display_path,
+                error = %e,
+                "lofty tag read failed; indexing from path/filename hints"
+            );
+            Ok(tags_from_path(Path::new(display_path), path_rel))
+        }
+    }
+}
+
+pub async fn read_tags_storage(
+    storage: &dyn LibraryStorage,
+    path: &StoragePath,
+) -> Result<TrackTags, ApiError> {
+    let bytes = storage.read(path).await?;
+    read_tags_from_bytes_with_rel(bytes.to_vec(), Some(path.as_str()))
+}
+
 fn read_tags_lofty(path: &Path) -> Result<TrackTags, ApiError> {
     let tagged = Probe::open(path)
         .map_err(|e| ApiError::Message(format!("probe {}: {e}", path.display())))?
@@ -129,6 +158,26 @@ fn read_tags_lofty(path: &Path) -> Result<TrackTags, ApiError> {
         .read()
         .map_err(|e| ApiError::Message(format!("read tags {}: {e}", path.display())))?;
 
+    tags_from_tagged_file(&tagged, path, None)
+}
+
+fn read_tags_lofty_reader(
+    reader: Cursor<Vec<u8>>,
+    display_path: &str,
+) -> Result<TrackTags, ApiError> {
+    let tagged = Probe::new(reader)
+        .guess_file_type()
+        .map_err(|e| ApiError::Message(format!("guess type {display_path}: {e}")))?
+        .read()
+        .map_err(|e| ApiError::Message(format!("read tags {display_path}: {e}")))?;
+    tags_from_tagged_file(&tagged, Path::new(display_path), Some(display_path))
+}
+
+fn tags_from_tagged_file(
+    tagged: &lofty::file::TaggedFile,
+    path: &Path,
+    path_rel: Option<&str>,
+) -> Result<TrackTags, ApiError> {
     let tag = tagged.primary_tag().or_else(|| tagged.tags().first());
 
     let (title, artist, album, track_number, year, disc_number, track_total, disc_total, genre) =
@@ -151,7 +200,7 @@ fn read_tags_lofty(path: &Path) -> Result<TrackTags, ApiError> {
                 tag.genre().map(|g| g.to_string()),
             )
         } else {
-            let fallback = tags_from_path(path, None);
+            let fallback = tags_from_path(path, path_rel);
             (
                 fallback.title,
                 fallback.artist,
@@ -359,12 +408,24 @@ pub fn apply_patch(tags: &TrackTags, patch: &TrackTagsPatch) -> TrackTags {
 }
 
 pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
-    let mut tagged = Probe::open(path)
-        .map_err(|e| ApiError::Message(format!("probe {}: {e}", path.display())))?
-        .guess_file_type()
-        .map_err(|e| ApiError::Message(format!("guess type {}: {e}", path.display())))?
-        .read()
+    let bytes = std::fs::read(path)
         .map_err(|e| ApiError::Message(format!("read {}: {e}", path.display())))?;
+    let rewritten = write_tags_to_bytes(bytes, &path.display().to_string(), tags)?;
+    std::fs::write(path, rewritten)
+        .map_err(|e| ApiError::Message(format!("write tags {}: {e}", path.display())))?;
+    Ok(())
+}
+
+pub fn write_tags_to_bytes(
+    bytes: Vec<u8>,
+    display_path: &str,
+    tags: &TrackTags,
+) -> Result<Vec<u8>, ApiError> {
+    let mut tagged = Probe::new(Cursor::new(bytes.clone()))
+        .guess_file_type()
+        .map_err(|e| ApiError::Message(format!("guess type {display_path}: {e}")))?
+        .read()
+        .map_err(|e| ApiError::Message(format!("read {display_path}: {e}")))?;
 
     let tag_type = tagged.primary_tag_type();
     let mut tag = tagged
@@ -372,6 +433,63 @@ pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
         .cloned()
         .unwrap_or_else(|| Tag::new(tag_type));
 
+    apply_tags_to_lofty_tag(&mut tag, tags);
+    tagged.insert_tag(tag);
+
+    let mut cursor = Cursor::new(bytes);
+    tagged
+        .save_to(&mut cursor, WriteOptions::default())
+        .map_err(|e| ApiError::Message(format!("write tags {display_path}: {e}")))?;
+    Ok(cursor.into_inner())
+}
+
+pub async fn write_tags_storage(
+    storage: &dyn LibraryStorage,
+    path: &StoragePath,
+    tags: &TrackTags,
+) -> Result<(), ApiError> {
+    let max_bytes = storage_tag_rewrite_max_bytes();
+    let meta = storage.metadata(path).await?;
+    if meta.size > max_bytes {
+        return Err(ApiError::payload_too_large(format!(
+            "STORAGE_TAG_REWRITE_TOO_LARGE: {} is {} bytes, max is {} bytes",
+            path.as_str(),
+            meta.size,
+            max_bytes
+        )));
+    }
+
+    let bytes = storage.read(path).await?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ApiError::payload_too_large(format!(
+            "STORAGE_TAG_REWRITE_TOO_LARGE: {} is {} bytes, max is {} bytes",
+            path.as_str(),
+            bytes.len(),
+            max_bytes
+        )));
+    }
+
+    let rewritten = write_tags_to_bytes(bytes.to_vec(), path.as_str(), tags)?;
+    if rewritten.len() as u64 > max_bytes {
+        return Err(ApiError::payload_too_large(format!(
+            "STORAGE_TAG_REWRITE_TOO_LARGE: {} rewritten size is {} bytes, max is {} bytes",
+            path.as_str(),
+            rewritten.len(),
+            max_bytes
+        )));
+    }
+    storage.atomic_write(path, Bytes::from(rewritten)).await
+}
+
+fn storage_tag_rewrite_max_bytes() -> u64 {
+    const DEFAULT_MAX_BYTES: u64 = 536_870_912;
+    std::env::var("EUTERPE_STORAGE_TAG_REWRITE_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_MAX_BYTES)
+}
+
+fn apply_tags_to_lofty_tag(tag: &mut Tag, tags: &TrackTags) {
     tag.set_title(tags.title.clone());
     tag.set_artist(tags.artist.clone());
     tag.set_album(tags.album.clone());
@@ -427,12 +545,6 @@ pub fn write_tags(path: &Path, tags: &TrackTags) -> Result<(), ApiError> {
     {
         tag.insert_text(ItemKey::Composer, composer.clone());
     }
-
-    tagged.insert_tag(tag);
-    tagged
-        .save_to_path(path, WriteOptions::default())
-        .map_err(|e| ApiError::Message(format!("write tags {}: {e}", path.display())))?;
-    Ok(())
 }
 
 pub async fn write_qobuz_tags_async(path: &Path, tags: TrackTags) -> Result<(), ApiError> {
@@ -508,6 +620,106 @@ mod tests {
         let flac_read = read_tags(&flac_path).unwrap();
         assert_eq!(flac_read.qobuz_track_id, Some(999));
         assert_eq!(flac_read.qobuz_album_id, Some(4242));
+    }
+
+    #[test]
+    fn write_tags_to_bytes_round_trips_wav() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("01.wav");
+        let original = TrackTags {
+            title: "Original Song".into(),
+            artist: "Original Artist".into(),
+            album: "Original Album".into(),
+            track_number: Some(1),
+            year: Some(2023),
+            disc_number: Some(1),
+            track_total: Some(9),
+            disc_total: Some(1),
+            genre: Some("Pop".into()),
+            duration_sec: None,
+            qobuz_track_id: Some(101),
+            qobuz_album_id: Some(202),
+            label: Some("Original Label".into()),
+            isrc: Some("USRC17607840".into()),
+            composer: Some("Original Composer".into()),
+        };
+        write_test_wav(&path, &original);
+        let bytes = std::fs::read(&path).unwrap();
+        let before = read_tags_from_bytes_with_rel(bytes.clone(), Some("01.wav")).unwrap();
+        let patched = apply_patch(
+            &before,
+            &TrackTagsPatch {
+                title: Some("Patched Song".into()),
+                artist: Some("Patched Artist".into()),
+                album: Some("Patched Album".into()),
+                track_number: Some(7),
+                year: Some(2025),
+                disc_number: Some(2),
+                genre: Some("Jazz".into()),
+            },
+        );
+
+        let rewritten = write_tags_to_bytes(bytes, "01.wav", &patched).unwrap();
+        let read = read_tags_from_bytes_with_rel(rewritten, Some("01.wav")).unwrap();
+
+        assert_eq!(read.title, "Patched Song");
+        assert_eq!(read.artist, "Patched Artist");
+        assert_eq!(read.album, "Patched Album");
+        assert_eq!(read.track_number, Some(7));
+        assert_eq!(read.year, Some(2025));
+        assert_eq!(read.disc_number, Some(2));
+        assert_eq!(read.track_total, Some(9));
+        assert_eq!(read.disc_total, Some(1));
+        assert_eq!(read.genre.as_deref(), Some("Jazz"));
+        assert_eq!(read.qobuz_track_id, Some(101));
+        assert_eq!(read.qobuz_album_id, Some(202));
+        assert_eq!(read.label.as_deref(), Some("Original Label"));
+        assert_eq!(read.isrc.as_deref(), Some("USRC17607840"));
+        assert_eq!(read.composer.as_deref(), Some("Original Composer"));
+    }
+
+    #[tokio::test]
+    async fn read_write_tags_storage_round_trips_wav() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("01.wav");
+        let original = TrackTags {
+            title: "Storage Song".into(),
+            artist: "Storage Artist".into(),
+            album: "Storage Album".into(),
+            track_number: Some(2),
+            year: Some(2024),
+            disc_number: Some(1),
+            track_total: Some(8),
+            disc_total: Some(1),
+            genre: Some("Folk".into()),
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        };
+        write_test_wav(&path, &original);
+        let storage = crate::library::storage::LocalStorage::new(dir.path());
+        let storage_path = crate::library::storage::StoragePath::parse("01.wav").unwrap();
+        let current = read_tags_storage(&storage, &storage_path).await.unwrap();
+        let patched = apply_patch(
+            &current,
+            &TrackTagsPatch {
+                title: Some("Storage Patched".into()),
+                genre: Some("Ambient".into()),
+                ..Default::default()
+            },
+        );
+
+        write_tags_storage(&storage, &storage_path, &patched)
+            .await
+            .unwrap();
+        let read = read_tags_storage(&storage, &storage_path).await.unwrap();
+
+        assert_eq!(read.title, "Storage Patched");
+        assert_eq!(read.artist, "Storage Artist");
+        assert_eq!(read.genre.as_deref(), Some("Ambient"));
     }
 
     #[test]

@@ -13,9 +13,10 @@ use crate::api::ScanProgressEvent;
 use crate::config::LibraryScanConfig;
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
-use crate::library::covers::discover_album_cover_rel;
+use crate::library::covers::{discover_album_cover_rel, discover_album_cover_rel_storage};
 use crate::library::fs::file_stat_sync;
 use crate::library::paths::resolve_scan_subdirectory;
+use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 use crate::library::tags::{self, TrackTags, is_audio_file};
 
 const PROGRESS_EVERY: usize = 5;
@@ -823,6 +824,132 @@ pub fn spawn_scan(scan_id: i64, deps: ScanDeps) {
     });
 }
 
+#[derive(Clone)]
+pub struct StorageScanDeps {
+    pub pool: SqlitePool,
+    pub storage: Arc<dyn LibraryStorage>,
+    pub events: broadcast::Sender<ScanProgressEvent>,
+    pub scan: LibraryScanConfig,
+    pub scan_root: Option<StoragePath>,
+    pub convert_job_tx: Option<tokio::sync::mpsc::Sender<i64>>,
+    pub runtime:
+        Option<std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>>,
+}
+
+async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), ApiError> {
+    let counters = ScanProgressCounters {
+        files_seen: Arc::new(AtomicI64::new(0)),
+        files_processed: Arc::new(AtomicI64::new(0)),
+        files_indexed: Arc::new(AtomicI64::new(0)),
+        files_total_final: Arc::new(Mutex::new(None)),
+        events: deps.events.clone(),
+    };
+    let mut dirs = vec![deps.scan_root.clone().unwrap_or_else(StoragePath::root)];
+    let mut jobs = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+            return Ok(());
+        }
+        for entry in deps.storage.list_dir(&dir).await? {
+            if entry.kind == StorageEntryKind::Directory {
+                dirs.push(entry.path);
+                continue;
+            }
+            if !is_audio_file(std::path::Path::new(entry.path.as_str())) {
+                continue;
+            }
+            let seen = counters.files_seen.fetch_add(1, Ordering::Relaxed) + 1;
+            let path_rel = entry.path.as_str().to_string();
+            if let Some((db_mtime, db_size)) =
+                tracks::get_fingerprint_by_path(&deps.pool, &path_rel).await?
+            {
+                let size_i64 = entry.size.and_then(|s| i64::try_from(s).ok());
+                if db_mtime.is_none() && db_size.is_some() && db_size == size_i64 {
+                    counters.files_processed.fetch_add(1, Ordering::Relaxed);
+                    counters.files_indexed.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+            }
+            let bytes = deps.storage.read(&entry.path).await?;
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            let tags = tags::read_tags_from_bytes_with_rel(bytes.to_vec(), Some(&path_rel))?;
+            let album_path_rel = entry
+                .path
+                .parent()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default();
+            let cover_path =
+                discover_album_cover_rel_storage(deps.storage.as_ref(), &album_path_rel)
+                    .await
+                    .ok()
+                    .flatten();
+            jobs.push(ScanIndexJob {
+                path_rel,
+                album_path_rel,
+                tags,
+                file_mtime: None,
+                file_hash: Some(hex::encode(hasher.finalize())),
+                file_size: entry.size.and_then(|s| i64::try_from(s).ok()),
+                cover_path,
+            });
+            if (seen as usize).is_multiple_of(PROGRESS_EVERY) {
+                flush_scan_progress(
+                    scan_id,
+                    &deps.pool,
+                    seen,
+                    counters.files_processed.load(Ordering::Relaxed),
+                    counters.files_indexed.load(Ordering::Relaxed),
+                    counters.files_total_final.as_ref(),
+                    &deps.events,
+                )
+                .await?;
+            }
+        }
+    }
+    let total = counters.files_seen.load(Ordering::Relaxed);
+    *counters
+        .files_total_final
+        .lock()
+        .expect("scan files_total lock poisoned") = Some(total);
+
+    let scan_deps = ScanDeps {
+        pool: deps.pool.clone(),
+        library_path: PathBuf::new(),
+        events: deps.events.clone(),
+        scan: deps.scan.clone(),
+        scan_root: None,
+        convert_job_tx: deps.convert_job_tx.clone(),
+        runtime: deps.runtime.clone(),
+    };
+    for job in jobs {
+        let path_rel = job.path_rel.clone();
+        persist_index(&deps.pool, job, &scan_deps).await?;
+        counters.files_processed.fetch_add(1, Ordering::Relaxed);
+        counters.files_indexed.fetch_add(1, Ordering::Relaxed);
+        scan_debug!(
+            deps.scan.debug,
+            scan_id,
+            path = %path_rel,
+            "persisted storage track"
+        );
+    }
+    flush_scan_progress(
+        scan_id,
+        &deps.pool,
+        total,
+        counters.files_processed.load(Ordering::Relaxed),
+        counters.files_indexed.load(Ordering::Relaxed),
+        counters.files_total_final.as_ref(),
+        &deps.events,
+    )
+    .await?;
+    if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+        return Ok(());
+    }
+    library_scan_runs::finish_success(&deps.pool, scan_id).await
+}
+
 pub async fn start_scan(
     pool: &SqlitePool,
     library_path: PathBuf,
@@ -853,6 +980,39 @@ pub async fn start_scan(
     Ok(scan_id)
 }
 
+pub async fn start_scan_storage(
+    pool: &SqlitePool,
+    storage: Arc<dyn LibraryStorage>,
+    events: broadcast::Sender<ScanProgressEvent>,
+    scan: LibraryScanConfig,
+    scan_root: Option<StoragePath>,
+    convert_job_tx: Option<tokio::sync::mpsc::Sender<i64>>,
+    runtime: Option<
+        std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>,
+    >,
+) -> Result<i64, ApiError> {
+    if library_scan_runs::has_running(pool).await? {
+        return Err(ApiError::Message("SCAN_ALREADY_RUNNING".into()));
+    }
+    let scan_id = library_scan_runs::start(pool).await?;
+    let deps = StorageScanDeps {
+        pool: pool.clone(),
+        storage,
+        events,
+        scan,
+        scan_root,
+        convert_job_tx,
+        runtime,
+    };
+    tokio::spawn(async move {
+        if let Err(e) = run_storage_scan(scan_id, deps.clone()).await {
+            tracing::error!(scan_id, error = %e, "storage library scan failed");
+            let _ = library_scan_runs::finish_failed(&deps.pool, scan_id, &e.to_string()).await;
+        }
+    });
+    Ok(scan_id)
+}
+
 pub fn resolve_scan_root_query(
     library_path: &Path,
     root: Option<&str>,
@@ -867,9 +1027,11 @@ pub fn resolve_scan_root_query(
 mod tests {
     use super::*;
     use crate::config::LibraryScanConfig;
-    use crate::db::{connect, migrate};
+    use crate::db::{connect, convert_jobs, migrate};
+    use crate::library::storage::LocalStorage;
+    use crate::services::app_settings::{RuntimeSettings, StorageSettings};
     use tempfile::TempDir;
-    use tokio::sync::broadcast;
+    use tokio::sync::{RwLock, broadcast, mpsc};
 
     fn write_test_wav_with_tags(
         album_dir: &Path,
@@ -974,6 +1136,99 @@ mod tests {
         .unwrap();
         assert_eq!(page.items.len(), 1);
         assert_eq!(page.items[0].title, "Album One");
+    }
+
+    #[tokio::test]
+    async fn storage_scan_auto_enqueues_convert_job_with_relative_db_path() {
+        let dir = TempDir::new().unwrap();
+        let artist_dir = dir.path().join("Artist A").join("Album One");
+        write_test_wav_with_tags(
+            &artist_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let (events, _) = broadcast::channel(8);
+        let (convert_tx, mut convert_rx) = mpsc::channel(1);
+        let mut runtime = RuntimeSettings::default();
+        runtime.converter.auto_enabled = true;
+        runtime.storage = StorageSettings::local(dir.path().display().to_string());
+        let runtime = std::sync::Arc::new(RwLock::new(runtime));
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: None,
+                convert_job_tx: Some(convert_tx),
+                runtime: Some(runtime),
+            },
+        )
+        .await
+        .unwrap();
+
+        let run = library_scan_runs::get_by_id(&pool, scan_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, "success", "run: {run:?}");
+        let album = albums::list_keyset(
+            &pool,
+            albums::AlbumsListParams {
+                sort: albums::AlbumsSort::Title,
+                order: crate::api::SortOrder::Asc,
+                limit: 10,
+                q: None,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap()
+        .items
+        .pop()
+        .unwrap();
+        let track = tracks::list_by_album(&pool, album.id)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(track.path, "Artist A/Album One/01.wav");
+        assert!(
+            !track
+                .path
+                .starts_with(dir.path().to_string_lossy().as_ref())
+        );
+
+        let job_id = convert_jobs::next_queued_id(&pool).await.unwrap().unwrap();
+        let job = convert_jobs::get_by_id(&pool, job_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.status, "queued");
+        assert_eq!(job.trigger, "auto");
+        assert_eq!(job.files_total, 1);
+        assert_eq!(convert_rx.try_recv().unwrap(), 0);
     }
 
     #[tokio::test]

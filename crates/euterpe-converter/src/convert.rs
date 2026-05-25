@@ -1,13 +1,16 @@
 use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::encode::EncodeProgress;
-use crate::encode::libflac::encode_flac_with_libflac;
+use crate::encode::libflac::encode_interleaved_pcm_to_flac_bytes;
 use crate::error::{ConvertError, Result};
 use crate::settings::{FilePolicy, FlacEncodeSettings};
-use crate::source::open_pcm_source;
+use crate::source::collect::VecFill;
+use crate::source::open_pcm_source_bytes;
+use crate::source::traits::PcmRead;
 use crate::tags::{ensure_libflac_metadata_tail, transfer_tags};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -42,11 +45,79 @@ pub struct ConvertResult {
     pub bytes_written: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConvertInput {
+    pub rel_path: PathBuf,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConvertOutput {
+    pub rel_path: PathBuf,
+    pub bytes: Vec<u8>,
+    pub source_delete_rel: Option<PathBuf>,
+}
+
 pub fn output_path_for(src: &Path, policy: FilePolicy) -> PathBuf {
     match policy {
         FilePolicy::ReplaceInPlace => src.with_extension("flac"),
         FilePolicy::SiblingThenDelete => src.with_extension("flac"),
     }
+}
+
+pub fn convert_bytes(input: ConvertInput, opts: ConvertOptions<'_>) -> Result<ConvertOutput> {
+    tracing::info!(path = %input.rel_path.display(), "convert bytes start");
+
+    let out_path = output_path_for(&input.rel_path, opts.file_policy);
+    let mut pcm_src = open_pcm_source_bytes(&input.rel_path, input.bytes)?;
+    let channels = pcm_src.channels();
+    let bits_per_sample = pcm_src.bits_per_sample();
+    let sample_rate = pcm_src.sample_rate();
+
+    let mut fill = VecFill {
+        samples: Vec::new(),
+        channels,
+        bits_per_sample: bits_per_sample as u8,
+    };
+    let block_size = opts.flac_encode.block_size.unwrap_or(16_384);
+    loop {
+        let read = pcm_src.read_samples(block_size, &mut fill)?;
+        if read == 0 {
+            break;
+        }
+    }
+
+    let mut progress_cb = |p: EncodeProgress| {
+        if let Some(cb) = &opts.on_progress {
+            cb(p.into());
+        }
+    };
+    let bytes = encode_interleaved_pcm_to_flac_bytes(
+        &fill.samples,
+        channels,
+        bits_per_sample,
+        sample_rate,
+        opts.flac_encode,
+        Some(&mut progress_cb),
+    )?;
+    let source_delete_rel = if out_path != input.rel_path {
+        Some(input.rel_path)
+    } else {
+        None
+    };
+
+    tracing::info!(
+        path = %source_delete_rel.as_deref().unwrap_or(&out_path).display(),
+        out = %out_path.display(),
+        bytes = bytes.len(),
+        "convert bytes done"
+    );
+
+    Ok(ConvertOutput {
+        rel_path: out_path,
+        bytes,
+        source_delete_rel,
+    })
 }
 
 fn create_temp_file(parent: &Path) -> Result<(PathBuf, File)> {
@@ -78,32 +149,27 @@ pub fn convert_file(src: &Path, opts: ConvertOptions<'_>) -> Result<ConvertResul
 
     tracing::info!(path = %src.display(), "convert start");
 
-    let pcm_src = open_pcm_source(src)?;
-    let out_path = output_path_for(src, opts.file_policy);
+    let input = ConvertInput {
+        rel_path: src.to_path_buf(),
+        bytes: fs::read(src).map_err(ConvertError::Io)?,
+    };
+    let output = convert_bytes(input, opts.clone())?;
+    let out_path = output.rel_path;
     let parent = out_path
         .parent()
         .ok_or_else(|| ConvertError::Io(std::io::Error::other("no parent")))?;
     fs::create_dir_all(parent).map_err(ConvertError::Io)?;
 
-    let (temp_path, temp_file) = create_temp_file(parent)?;
-
-    drop(temp_file);
-
-    let mut progress_cb = |p: EncodeProgress| {
-        if let Some(cb) = &opts.on_progress {
-            cb(p.into());
-        }
-    };
-    let encode_result = encode_flac_with_libflac(
-        pcm_src,
-        &temp_path,
-        opts.flac_encode,
-        Some(&mut progress_cb),
-    );
-    if let Err(e) = encode_result {
+    let (temp_path, mut temp_file) = create_temp_file(parent)?;
+    if let Err(e) = temp_file.write_all(&output.bytes) {
         let _ = fs::remove_file(&temp_path);
-        return Err(e);
+        return Err(ConvertError::Io(e));
     }
+    if let Err(e) = temp_file.sync_all() {
+        let _ = fs::remove_file(&temp_path);
+        return Err(ConvertError::Io(e));
+    }
+    drop(temp_file);
 
     fs::rename(&temp_path, &out_path).map_err(|e| {
         let _ = fs::remove_file(&temp_path);
@@ -113,8 +179,10 @@ pub fn convert_file(src: &Path, opts: ConvertOptions<'_>) -> Result<ConvertResul
     ensure_libflac_metadata_tail(&out_path)?;
     transfer_tags(src, &out_path)?;
 
-    if out_path != src {
-        let _ = fs::remove_file(src);
+    if let Some(source_delete_rel) = output.source_delete_rel
+        && source_delete_rel != out_path
+    {
+        let _ = fs::remove_file(source_delete_rel);
     }
 
     let bytes_written = fs::metadata(&out_path).map_err(ConvertError::Io)?.len();
