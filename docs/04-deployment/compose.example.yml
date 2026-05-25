@@ -16,7 +16,6 @@ services:
       RUST_LOG: euterpe=info,euterpe_qobuz=debug
       EUTERPE_BIND: 0.0.0.0:8080
       EUTERPE_DATABASE_URL: sqlite:/data/library.db?mode=rwc
-      EUTERPE_LIBRARY_PATH: /music
       EUTERPE_DOWNLOAD_CONCURRENCY: 3
       # Set in .env file (never commit):
       EUTERPE_MASTER_KEY: ${EUTERPE_MASTER_KEY}
@@ -25,7 +24,6 @@ services:
       # EUTERPE_ADMIN_PASSWORD: ${EUTERPE_ADMIN_PASSWORD}
     volumes:
       - euterpe-data:/data
-      - euterpe-music:/music
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/health"]
       interval: 30s
@@ -35,4 +33,3 @@ services:
 
 volumes:
   euterpe-data:
-  euterpe-music:

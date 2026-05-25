@@ -8,7 +8,7 @@
 | **App secret** | Секрет для подписи `track/getFileUrl` (не путать с appSecret в bundle regex) |
 | **Bundle** | JS-бандл `play.qobuz.com/resources/.../bundle.js` с credentials |
 | **format_id** | Код качества потока: 5, 6, 7, 27 |
-| **Source of truth** | Файлы в `/music`; БД — индекс |
+| **Source of truth** | Файлы в настроенном хранилище библиотеки; БД — индекс |
 | **Job** | Задача скачивания в `download_jobs` |
 | **Sync run** | Запись в `qobuz_sync_runs` о проходе синхронизации избранного |
 | **euterpe-qobuz** | Rust crate — клиент Qobuz API без Axum/SQLite |

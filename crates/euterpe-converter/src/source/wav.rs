@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor, Read};
 use std::path::Path;
 
 use hound::{SampleFormat, WavIntoSamples, WavReader};
@@ -10,8 +10,8 @@ use crate::pcm_push::clamp_sample;
 use crate::source::traits::{Fill, PcmRead};
 
 enum WavSampleIter {
-    Int(WavIntoSamples<BufReader<File>, i32>),
-    Float(WavIntoSamples<BufReader<File>, f32>),
+    Int(WavIntoSamples<Box<dyn Read + Send>, i32>),
+    Float(WavIntoSamples<Box<dyn Read + Send>, f32>),
 }
 
 impl WavSampleIter {
@@ -35,7 +35,20 @@ pub struct WavSource {
 
 impl WavSource {
     pub fn open(path: &Path) -> Result<Self> {
-        let reader = WavReader::open(path).map_err(|e| ConvertError::Decode(e.to_string()))?;
+        let file = File::open(path).map_err(ConvertError::Io)?;
+        Self::from_reader(BufReader::new(file))
+    }
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        Self::from_reader(Cursor::new(bytes))
+    }
+
+    pub fn from_reader<R>(reader: R) -> Result<Self>
+    where
+        R: Read + Send + 'static,
+    {
+        let reader = WavReader::new(Box::new(reader) as Box<dyn Read + Send>)
+            .map_err(|e| ConvertError::Decode(e.to_string()))?;
         let spec = reader.spec();
         let channels = spec.channels as usize;
         let bits_per_sample = spec.bits_per_sample as usize;

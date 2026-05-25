@@ -102,11 +102,17 @@ pub async fn album_metadata_apply(
     if row.enabled == 0 {
         return Err(ApiError::bad_request("integration is disabled"));
     }
+    let storage = state.library_storage().await?;
     let provider = build_tag_source(&row, state.config.master_key.as_ref())?;
     let release = provider.load_release(&body.candidate_id).await?;
-    let result =
-        apply::apply_release_to_album(&state.config, &state.db, &state.http, album_id, &release)
-            .await?;
+    let result = apply::apply_release_to_album(
+        &apply::ApplyStorageDeps { storage },
+        &state.db,
+        &state.http,
+        album_id,
+        &release,
+    )
+    .await?;
     Ok(Json(AlbumMetadataApplyResponse {
         tracks_updated: result.tracks_updated,
         cover_applied: result.cover_applied,

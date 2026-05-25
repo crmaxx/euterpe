@@ -545,7 +545,7 @@ mod tests {
 
     #[test]
     fn transfer_tags_does_not_truncate_flac() {
-        let samples: Vec<i32> = (0..8000).map(|i| (i % 1000) as i32 - 500).collect();
+        let samples: Vec<i32> = (0..8000).map(|i| (i % 1000) - 500).collect();
         let mut flac = encode_test_flac(samples);
         let size_before = flac.len();
         assert!(size_before > 1000);
@@ -563,7 +563,7 @@ mod tests {
 
     #[test]
     fn transfer_tags_after_empty_tail_keeps_single_last_metadata_block() {
-        let samples: Vec<i32> = (0..8000).map(|i| (i % 1000) as i32 - 500).collect();
+        let samples: Vec<i32> = (0..8000).map(|i| (i % 1000) - 500).collect();
         let mut flac = keep_only_streaminfo_metadata(encode_test_flac(samples));
         let empty = TagFields {
             vendor: "test".into(),

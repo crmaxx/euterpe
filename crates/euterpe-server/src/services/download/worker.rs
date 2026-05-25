@@ -1,20 +1,26 @@
+#[cfg(test)]
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use euterpe_qobuz::{AlbumDetail, DEFAULT_USER_AGENT, QobuzApi, QobuzError, Quality, TrackSummary};
 use euterpe_torrent::TorrentEngine;
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::StreamExt;
+#[cfg(test)]
+use futures_util::TryStreamExt;
 use reqwest::Client;
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
+#[cfg(test)]
 use tokio_util::io::StreamReader;
 
 use crate::api::{JobProgressEvent, ScanProgressEvent};
 use crate::config::AppConfig;
 use crate::db::{download_jobs, favorites};
 use crate::error::ApiError;
-use crate::library::paths::track_path;
+use crate::library::paths::{track_path, track_relative_path};
+use crate::library::storage::{self, StoragePath};
+use crate::services::app_settings::StorageLocation;
 use crate::services::download::format_album_display_title;
 use crate::services::download::resolve::{push_album_api_candidate, resolve_from_qobuz_favorites};
 
@@ -441,15 +447,43 @@ async fn run_album_job(
         });
     }
 
-    if let Err(e) = crate::library::register_download::register_album_from_qobuz_download(
-        &deps.pool,
-        &deps.config.library_path,
-        album_id,
-        &album,
-        quality,
-    )
-    .await
-    {
+    let storage_location = deps
+        .runtime
+        .read()
+        .await
+        .storage
+        .library
+        .clone()
+        .ok_or_else(|| {
+            ApiError::Message(
+                "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+            )
+        })?;
+    let register_result = match &storage_location {
+        StorageLocation::Local { path } => {
+            crate::library::register_download::register_album_from_qobuz_download(
+                &deps.pool,
+                &std::path::PathBuf::from(path),
+                album_id,
+                &album,
+                quality,
+            )
+            .await
+        }
+        StorageLocation::Smb { .. } => {
+            let storage =
+                storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
+            crate::library::register_download::register_album_from_qobuz_download_storage(
+                &deps.pool,
+                storage.as_ref(),
+                album_id,
+                &album,
+                quality,
+            )
+            .await
+        }
+    };
+    if let Err(e) = register_result {
         tracing::warn!(
             job_id,
             error = %e,
@@ -457,16 +491,33 @@ async fn run_album_job(
         );
     }
 
-    if let Err(e) = crate::library::covers::apply_album_cover_after_download(
-        &deps.http,
-        &deps.pool,
-        &deps.config.library_path,
-        &album,
-        quality,
-        Some(album_id),
-    )
-    .await
-    {
+    let cover_result = match &storage_location {
+        StorageLocation::Local { path } => {
+            crate::library::covers::apply_album_cover_after_download(
+                &deps.http,
+                &deps.pool,
+                &std::path::PathBuf::from(path),
+                &album,
+                quality,
+                Some(album_id),
+            )
+            .await
+        }
+        StorageLocation::Smb { .. } => {
+            let storage =
+                storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
+            crate::library::covers::apply_album_cover_after_download_storage(
+                &deps.http,
+                &deps.pool,
+                storage.as_ref(),
+                &album,
+                quality,
+                Some(album_id),
+            )
+            .await
+        }
+    };
+    if let Err(e) = cover_result {
         tracing::warn!(job_id, error = %e, "album cover download/embed failed");
     }
 
@@ -545,13 +596,25 @@ async fn download_track(
 ) -> Result<u64, ApiError> {
     let cdn_headers = QobuzCdnHeaders::from_config(&deps.config);
 
-    let dest = track_path(&deps.config.library_path, album, track, quality.format_id());
+    let storage_location = deps
+        .runtime
+        .read()
+        .await
+        .storage
+        .library
+        .clone()
+        .ok_or_else(|| {
+            ApiError::Message(
+                "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+            )
+        })?;
+    let storage =
+        storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
+    let rel = track_relative_path(album, track, quality.format_id());
+    let dest_path = StoragePath::parse(&rel)?;
 
-    if dest.is_file() {
-        let local_len = tokio::fs::metadata(&dest)
-            .await
-            .map_err(|e| ApiError::Message(format!("stat {}: {e}", dest.display())))?
-            .len();
+    if let Ok(meta) = storage.metadata(&dest_path).await {
+        let local_len = meta.size;
         let stream = {
             let mut guard = deps.qobuz.lock().await;
             guard.track_stream_url(track.id, quality).await?
@@ -566,7 +629,7 @@ async fn download_track(
                 deps,
                 job_id,
                 track_id = track.id,
-                path = %dest.display(),
+                path = %rel,
                 local_len,
                 remote_len = remote_len.unwrap(),
                 "track file exists with matching size, skipping download"
@@ -577,23 +640,21 @@ async fn download_track(
             deps,
             job_id,
             track_id = track.id,
-            path = %dest.display(),
+            path = %rel,
             local_len,
             ?remote_len,
             "track file exists but size differs or unknown, re-downloading"
         );
     }
 
-    if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| ApiError::Message(format!("mkdir {}: {e}", parent.display())))?;
+    if let Some(parent) = dest_path.parent() {
+        storage.create_dir_all(&parent).await?;
     }
 
-    let part = dest.with_extension("part");
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err: Option<ApiError> = None;
     let started = Instant::now();
+    let mut downloaded: Option<bytes::Bytes> = None;
 
     for attempt in 1..=MAX_ATTEMPTS {
         if download_jobs::is_stopped(&deps.pool, job_id).await? {
@@ -614,12 +675,13 @@ async fn download_track(
             job_id,
             track_id = track.id,
             attempt,
-            path = %dest.display(),
+            path = %rel,
             "fetching stream and writing file"
         );
 
-        match download_url_to_file(&deps.http, &url, &part, &cdn_headers).await {
-            Ok(()) => {
+        match download_url_to_bytes(&deps.http, &url, &cdn_headers).await {
+            Ok(bytes) => {
+                downloaded = Some(bytes);
                 last_err = None;
                 break;
             }
@@ -631,7 +693,6 @@ async fn download_track(
                     error = %e,
                     "track CDN download failed"
                 );
-                let _ = tokio::fs::remove_file(&part).await;
                 last_err = Some(e);
                 if attempt < MAX_ATTEMPTS {
                     tokio::time::sleep(Duration::from_millis(400 * attempt as u64)).await;
@@ -644,31 +705,74 @@ async fn download_track(
         return Err(e);
     }
 
-    tokio::fs::rename(&part, &dest)
-        .await
-        .map_err(|e| ApiError::Message(format!("rename {}: {e}", dest.display())))?;
-    let size = tokio::fs::metadata(&dest)
-        .await
-        .map_err(|e| ApiError::Message(format!("stat {}: {e}", dest.display())))?
-        .len();
+    let bytes = downloaded.ok_or_else(|| ApiError::Message("download produced no data".into()))?;
+    let size = bytes.len() as u64;
+    storage.atomic_write(&dest_path, bytes).await?;
     let elapsed = started.elapsed().as_secs_f64().max(0.001);
     let speed_bps = (size as f64 / elapsed) as u64;
 
     let tags = crate::library::qobuz_tags::track_tags_from_qobuz(album, track, catalog_album_id);
-    if let Err(e) = crate::library::tags::write_qobuz_tags_async(&dest, tags).await {
-        tracing::warn!(
+    if let StorageLocation::Local { path } = &storage_location {
+        let library_path = std::path::PathBuf::from(path);
+        let dest = track_path(&library_path, album, track, quality.format_id());
+        if let Err(e) = crate::library::tags::write_qobuz_tags_async(&dest, tags).await {
+            tracing::warn!(
+                job_id,
+                track_id = track.id,
+                path = %rel,
+                error = %e,
+                "write qobuz tags after download failed"
+            );
+        }
+    } else {
+        tracing::debug!(
             job_id,
             track_id = track.id,
-            path = %dest.display(),
-            error = %e,
-            "write qobuz tags after download failed"
+            path = %rel,
+            "SMB download written; tag rewrite deferred to storage-native tag writer"
         );
     }
 
-    tracing::info!(job_id, track_id = track.id, path = %dest.display(), "track downloaded");
+    tracing::info!(job_id, track_id = track.id, path = %rel, "track downloaded");
     Ok(speed_bps)
 }
 
+async fn download_url_to_bytes(
+    http: &Client,
+    url: &str,
+    headers: &QobuzCdnHeaders,
+) -> Result<bytes::Bytes, ApiError> {
+    let response = apply_qobuz_cdn_headers(http.get(url), headers)
+        .send()
+        .await
+        .map_err(|e| {
+            let safe = redacted_url(url);
+            ApiError::Message(format!("CDN GET {safe}: {}", e.without_url()))
+        })?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.bytes().await.unwrap_or_default();
+        let preview = String::from_utf8_lossy(&body[..body.len().min(512)]);
+        let safe = redacted_url(url);
+        return Err(ApiError::Message(format!(
+            "CDN HTTP {status} for {safe}: {preview}"
+        )));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| ApiError::Message(format!("CDN read {}: {e}", redacted_url(url))))?;
+    if bytes.is_empty() {
+        return Err(ApiError::Message(format!(
+            "CDN returned empty body for {}",
+            redacted_url(url)
+        )));
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
 async fn download_url_to_file(
     http: &Client,
     url: &str,
@@ -755,6 +859,9 @@ mod tests {
             converter: app_settings::converter_defaults(),
             library_scan: app_settings::library_scan_defaults(config),
             downloads: app_settings::downloads_defaults(config),
+            storage: app_settings::StorageSettings::local(
+                config.library_path.display().to_string(),
+            ),
         }))
     }
 

@@ -145,6 +145,22 @@ pub fn app(state: AppState) -> Router {
             "/api/v1/settings/downloads",
             get(settings_ext::get_downloads_settings).patch(settings_ext::patch_downloads_settings),
         )
+        .route(
+            "/api/v1/settings/storage",
+            get(settings_ext::get_storage_settings).patch(settings_ext::patch_storage_settings),
+        )
+        .route(
+            "/api/v1/settings/storage/test",
+            post(settings_ext::test_storage_settings),
+        )
+        .route(
+            "/api/v1/settings/storage/browse",
+            get(settings_ext::browse_storage),
+        )
+        .route(
+            "/api/v1/settings/storage/smb-shares",
+            post(settings_ext::list_smb_shares),
+        )
         .route("/api/v1/library/scan", post(library::start_library_scan))
         .route(
             "/api/v1/library/scan/latest",
@@ -274,7 +290,6 @@ pub async fn serve(
     config: AppConfig,
     hawk: Option<std::sync::Arc<euterpe_hawk::Hawk>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    config.ensure_library_root()?;
     config.ensure_torrent_incoming_dir()?;
 
     let pool = db::connect(&config.database_url).await?;
@@ -301,6 +316,7 @@ pub async fn serve(
         hawk.clone(),
     )
     .await?;
+    state.storage_watch.restart().await;
 
     let worker_deps = WorkerDeps {
         pool: pool.clone(),
@@ -361,9 +377,15 @@ async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoRes
         .await?
         .is_some();
     let ui = state.runtime.read().await.ui.clone();
+    let storage = state.runtime.read().await.storage.clone();
+    let watch_status = state.storage_watch.status().await;
     Ok(Json(ServerInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        library_path: state.config.library_path.display().to_string(),
+        library_storage: crate::api::StorageSettingsView::from_with_watch_status(
+            &storage,
+            watch_status,
+        )
+        .library,
         torrent_incoming_dir: state
             .config
             .torrent_incoming_dir
@@ -541,6 +563,14 @@ pub mod test_support {
         let config = test_config();
         let pool = db::connect(&config.database_url).await.unwrap();
         db::migrate(&pool).await.unwrap();
+        crate::services::app_settings::save_storage(
+            &pool,
+            &crate::services::app_settings::StorageSettings::local(
+                config.library_path.display().to_string(),
+            ),
+        )
+        .await
+        .unwrap();
 
         let (job_tx, job_rx) = mpsc::channel(32);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(32);

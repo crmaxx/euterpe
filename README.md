@@ -75,7 +75,6 @@ EUTERPE_STATIC_DIR=frontend/dist cargo run -p euterpe-server
 | Qobuz client | Rust crate `euterpe-qobuz` (reqwest, rustls) |
 | API server | Axum, SQLite (WAL), sqlx |
 | UI | Vite, React, Tailwind, TanStack Query/Table, shadcn/ui |
-| Deploy | Docker (`/data` + `/music` volumes) |
 
 ## Qobuz authentication (2026)
 
@@ -120,7 +119,9 @@ Qobuz integration is informed by community tools (unofficial API):
 - Connect to network share
 - ~~Rework "Sources" page~~
 - ~~CUE split~~
-- (Incremental?) Backups
+- Rework "Settings" page (+ Migrate from old MASTER_KEY to new)
+- Rework README.md
+- (Incremental?) Backups (sqlite)
 
 ## Disclaimer
 

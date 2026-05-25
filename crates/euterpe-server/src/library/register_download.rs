@@ -8,8 +8,10 @@ use sqlx::SqlitePool;
 use crate::db::{albums, artists, tracks};
 use crate::error::ApiError;
 use crate::library::fs::file_stat_sync;
+use crate::library::paths::track_relative_path;
 use crate::library::paths::{track_path, year_from_release_date};
 use crate::library::qobuz_tags::track_db_fields_from_qobuz;
+use crate::library::storage::{LibraryStorage, StoragePath};
 
 fn relative_path(library_root: &Path, absolute: &Path) -> Result<String, ApiError> {
     absolute
@@ -72,6 +74,79 @@ pub async fn register_album_from_qobuz_download(
         upsert_track_from_api(pool, library_root, album_id, album, track, format_id, year).await?;
     }
 
+    Ok(())
+}
+
+pub async fn register_album_from_qobuz_download_storage(
+    pool: &SqlitePool,
+    storage: &dyn LibraryStorage,
+    favorite_catalog_id: u64,
+    album: &AlbumDetail,
+    quality: Quality,
+) -> Result<(), ApiError> {
+    let track_items = album
+        .tracks
+        .as_ref()
+        .map(|t| t.items.as_slice())
+        .unwrap_or(&[]);
+    if track_items.is_empty() {
+        return Ok(());
+    }
+
+    let first_track = &track_items[0];
+    let first_rel = track_relative_path(album, first_track, quality.format_id());
+    let album_path_str = StoragePath::parse(&first_rel)?
+        .parent()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+
+    let artist_name = album
+        .summary
+        .artist
+        .as_ref()
+        .map(|a| a.name.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("Unknown Artist");
+    let artist_id = artists::upsert_by_name(pool, artist_name, None).await?;
+    let year = year_from_release_date(album.summary.release_date_original.as_deref());
+    let album_id = albums::upsert(
+        pool,
+        albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: &album.summary.title,
+            year,
+            qobuz_album_id: Some(favorite_catalog_id as i64),
+            path: Some(&album_path_str),
+            cover_path: None,
+        },
+    )
+    .await?;
+
+    let format_id = quality.format_id();
+    for track in track_items {
+        let path_str = track_relative_path(album, track, format_id);
+        let meta = storage.metadata(&StoragePath::parse(&path_str)?).await.ok();
+        let file_size = meta.and_then(|m| i64::try_from(m.size).ok());
+        let (disc_number, genre) = track_db_fields_from_qobuz(album, track);
+        tracks::upsert(
+            pool,
+            tracks::TrackUpsert {
+                album_id,
+                title: &track.title,
+                track_number: track.track_number.map(|n| n as i32),
+                year,
+                disc_number,
+                genre: genre.as_deref(),
+                qobuz_track_id: Some(track.id as i64),
+                path: &path_str,
+                duration_sec: track.duration.map(|d| d as i32),
+                file_mtime: None,
+                file_hash: None,
+                file_size,
+            },
+        )
+        .await?;
+    }
     Ok(())
 }
 

@@ -67,11 +67,13 @@ EUTERPE_PUBLIC_BASE_URL=http://127.0.0.1:8080
 
 `compose.example.yml` уже подхватывает `${EUTERPE_MASTER_KEY}` из `.env`.
 
-## 4. Тома: данные и музыка
+## 4. Тома и библиотека
 
-По умолчанию в примере compose — **именованные тома** Docker (`euterpe-data`, `euterpe-music`).
+По умолчанию в примере compose остаётся только **именованный том** Docker `euterpe-data` для SQLite и настроек.
 
-Чтобы использовать папку на диске Windows, замените монтирование музыки в `compose.yml`:
+Музыкальную библиотеку настройте в web UI: **Settings → Library storage**. Можно указать локальный путь внутри контейнера или SMB-ресурс.
+
+Если нужен локальный путь Windows вместо SMB, добавьте монтирование в `compose.yml`, например:
 
 ```yaml
     volumes:
@@ -79,14 +81,14 @@ EUTERPE_PUBLIC_BASE_URL=http://127.0.0.1:8080
       - C:/Music:/music
 ```
 
-- Путь лучше указывать со слэшами вперёд: `C:/Music`.
+- В Settings укажите локальный путь `/music`.
+- Путь Windows в compose лучше указывать со слэшами вперёд: `C:/Music`.
 - В **Docker Desktop → Settings → Resources → File sharing** должна быть разрешена буква диска.
 
 В контейнере:
 
 | Переменная | Значение по умолчанию | Назначение |
 |------------|----------------------|------------|
-| `EUTERPE_LIBRARY_PATH` | `/music` | Корень библиотеки (скан, загрузки) |
 | `EUTERPE_DATABASE_URL` | `sqlite:/data/library.db?mode=rwc` | SQLite в томе `/data` |
 
 ## 5. Собрать образ и запустить
@@ -166,7 +168,7 @@ docker compose down -v
 |----------|-------------|
 | `build` падает на `npm ci` / `cargo` | Контекст сборки — **корень репо** (должны быть `frontend/`, `crates/`, `migrations/`) |
 | Очень долгая первая сборка | Нормально; повторные сборки быстрее за счёт кэша слоёв Docker |
-| Нет доступа к `C:\Music` | File sharing в Docker Desktop + путь `C:/Music:/music` |
+| Нет доступа к `C:\Music` | File sharing в Docker Desktop + путь `C:/Music:/music`; в Settings выбран `/music` |
 | OAuth Qobuz не срабатывает | Совпадение `EUTERPE_PUBLIC_BASE_URL` и адреса в браузере |
 | WSL2 не включён | Docker Desktop предложит включить; может потребоваться перезагрузка |
 

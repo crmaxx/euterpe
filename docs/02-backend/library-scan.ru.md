@@ -1,6 +1,6 @@
 # Library scan (FP-9 / FP-9e / FP-9b / FP-9d / FP-7e)
 
-`POST /api/v1/library/scan` запускает фоновый обход `EUTERPE_LIBRARY_PATH` в `services/library_scan.rs`.
+`POST /api/v1/library/scan` запускает фоновый обход хранилища библиотеки, настроенного в Settings.
 
 Опциональный query **`root`**: относительный путь под корнем библиотеки (например `Artist/Album`) — сканируется только это поддерево (FP-7e). Валидация: без `..`, не absolute, каталог существует и лежит под `library_path` после `canonicalize`.
 

@@ -31,7 +31,9 @@ async fn server_info_returns_config_snapshot() {
         &schema::schema_from_spec(&spec, "ServerInfoResponse"),
         &json,
     );
-    assert!(json["library_path"].is_string());
+    assert_eq!(json["library_storage"]["kind"], "local");
+    assert!(json["library_storage"]["path"].is_string());
+    assert!(json.get("library_path").is_none());
     assert!(json["credentials_configured"].is_boolean());
     assert!(json["admin_auth_required"].is_boolean());
 }

@@ -101,6 +101,26 @@ export type DownloadsSettingsPatch =
   components["schemas"]["DownloadsSettingsPatch"];
 export type DownloadsSettingsResponse =
   components["schemas"]["DownloadsSettingsResponse"];
+export type StorageSettingsResponse =
+  components["schemas"]["StorageSettingsResponse"];
+export type StorageSettingsView =
+  components["schemas"]["StorageSettingsView"];
+export type StorageSettingsPatch =
+  components["schemas"]["StorageSettingsPatch"];
+export type StorageLocationView =
+  components["schemas"]["StorageLocationView"];
+export type StorageLocationPatch =
+  components["schemas"]["StorageLocationPatch"];
+export type StorageBrowseResponse =
+  components["schemas"]["StorageBrowseResponse"];
+export type StorageBrowseEntry =
+  components["schemas"]["StorageBrowseEntry"];
+export type StorageTestRequest =
+  components["schemas"]["StorageTestRequest"];
+export type StorageTestResponse =
+  components["schemas"]["StorageTestResponse"];
+export type SmbSharesRequest = components["schemas"]["SmbSharesRequest"];
+export type SmbSharesResponse = components["schemas"]["SmbSharesResponse"];
 export type ConvertAlbumResponse =
   components["schemas"]["ConvertAlbumResponse"];
 export type ConvertJobResponse = components["schemas"]["ConvertJobResponse"];
@@ -304,6 +324,37 @@ export const api = {
   patchDownloadsSettings: (body: DownloadsSettingsPatch) =>
     fetchJson<DownloadsSettingsResponse>("/settings/downloads", {
       method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  storageSettings: () =>
+    fetchJson<StorageSettingsResponse>("/settings/storage"),
+
+  patchStorageSettings: (body: StorageSettingsPatch) =>
+    fetchJson<StorageSettingsResponse>("/settings/storage", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  testStorageSettings: (body: StorageTestRequest) =>
+    fetchJson<StorageTestResponse>("/settings/storage/test", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  browseStorage: (params: { target: "library"; path?: string }) => {
+    const search = new URLSearchParams({ target: params.target });
+    if (params.path) {
+      search.set("path", params.path);
+    }
+    return fetchJson<StorageBrowseResponse>(
+      `/settings/storage/browse?${search.toString()}`,
+    );
+  },
+
+  listSmbShares: (body: SmbSharesRequest) =>
+    fetchJson<SmbSharesResponse>("/settings/storage/smb-shares", {
+      method: "POST",
       body: JSON.stringify(body),
     }),
 

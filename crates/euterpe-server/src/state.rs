@@ -36,6 +36,7 @@ pub struct AppState {
     pub scan_events: broadcast::Sender<ScanProgressEvent>,
     pub convert_events: broadcast::Sender<ConvertProgressEvent>,
     pub runtime: RuntimeSettingsHandle,
+    pub storage_watch: crate::services::storage_watch::StorageWatchHandle,
     pub hawk: Option<Arc<euterpe_hawk::Hawk>>,
     pub torrent: Option<Arc<dyn TorrentEngine>>,
     pub torrent_staging: Arc<TorrentStaging>,
@@ -82,6 +83,16 @@ impl AppState {
             None
         };
 
+        let storage_watch = crate::services::storage_watch::StorageWatchHandle::new(
+            crate::services::storage_watch::StorageWatchDeps {
+                pool: db.clone(),
+                config: config.clone(),
+                runtime: runtime.clone(),
+                scan_events: channels.scan_events.clone(),
+                convert_job_tx: channels.convert_job_tx.clone(),
+            },
+        );
+
         Ok(Self {
             db,
             config,
@@ -93,6 +104,7 @@ impl AppState {
             scan_events: channels.scan_events,
             convert_events: channels.convert_events,
             runtime,
+            storage_watch,
             hawk,
             torrent,
             torrent_staging: Arc::new(TorrentStaging::new()),
@@ -122,6 +134,22 @@ impl AppState {
         self.config.master_key.as_ref().ok_or_else(|| {
             ApiError::Message("EUTERPE_MASTER_KEY is required for this operation".into())
         })
+    }
+
+    pub async fn require_local_library_path(&self) -> Result<std::path::PathBuf, ApiError> {
+        app_settings::require_local_library_path(&self.runtime).await
+    }
+
+    pub async fn library_storage(
+        &self,
+    ) -> Result<std::sync::Arc<dyn crate::library::storage::LibraryStorage>, ApiError> {
+        let storage = self.runtime.read().await.storage.library.clone();
+        let location = storage.ok_or_else(|| {
+            ApiError::Message(
+                "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+            )
+        })?;
+        crate::library::storage::storage_from_location(&location, self.config.master_key.as_ref())
     }
 }
 

@@ -39,6 +39,30 @@ impl PcmSource {
             InputFormat::WavPack => Self::WavPack(Box::new(WavPackSource::open(path)?)),
         })
     }
+
+    pub fn open_bytes(path: &Path, bytes: Vec<u8>) -> Result<Self> {
+        let format = detect_format(path)
+            .ok_or_else(|| ConvertError::UnsupportedFormat(path.display().to_string()))?;
+        Ok(match format {
+            InputFormat::Wav => Self::Wav(WavSource::from_bytes(bytes)?),
+            InputFormat::Alac => {
+                return Err(ConvertError::UnsupportedFormat(
+                    "CONVERTER_NATIVE_IO_UNSUPPORTED:alac".into(),
+                ));
+            }
+            InputFormat::Ape => {
+                return Err(ConvertError::UnsupportedFormat(
+                    "CONVERTER_NATIVE_IO_UNSUPPORTED:ape".into(),
+                ));
+            }
+            #[cfg(feature = "wavpack")]
+            InputFormat::WavPack => {
+                return Err(ConvertError::UnsupportedFormat(
+                    "CONVERTER_NATIVE_IO_UNSUPPORTED:wavpack".into(),
+                ));
+            }
+        })
+    }
 }
 
 impl PcmRead for PcmSource {
@@ -96,6 +120,11 @@ impl PcmRead for PcmSource {
 /// Open a streaming PCM source for the file format.
 pub fn open_pcm_source(path: &Path) -> Result<PcmSource> {
     PcmSource::open(path)
+}
+
+/// Open a streaming PCM source from bytes for formats with native reader support.
+pub fn open_pcm_source_bytes(path: &Path, bytes: Vec<u8>) -> Result<PcmSource> {
+    PcmSource::open_bytes(path, bytes)
 }
 
 /// Full-buffer decode (tests and legacy callers).

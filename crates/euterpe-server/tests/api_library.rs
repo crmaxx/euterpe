@@ -743,6 +743,112 @@ async fn library_patch_album_tags_updates_all_track_files() {
 }
 
 #[tokio::test]
+async fn library_patch_track_tags_updates_storage_file() {
+    use euterpe_server::library::tags::{self, TrackTags};
+
+    let state = app::test_support::test_state().await;
+    let library = state.config.library_path.clone();
+    let dir = library.join("TrackTag Artist/TrackTag Album");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("01 Original.wav");
+    write_minimal_wav(&path);
+    tags::write_tags(
+        &path,
+        &TrackTags {
+            title: "Original".into(),
+            artist: "Old Artist".into(),
+            album: "Old Album".into(),
+            track_number: Some(1),
+            year: Some(2001),
+            disc_number: Some(1),
+            track_total: None,
+            disc_total: None,
+            genre: Some("Rock".into()),
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        },
+    )
+    .unwrap();
+
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "TrackTag Artist", None)
+        .await
+        .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "TrackTag Album",
+            year: Some(2001),
+            qobuz_album_id: None,
+            path: Some("TrackTag Artist/TrackTag Album"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let track_id = euterpe_server::db::tracks::upsert(
+        &state.db,
+        euterpe_server::db::tracks::TrackUpsert {
+            album_id,
+            title: "Original",
+            track_number: Some(1),
+            year: Some(2001),
+            disc_number: Some(1),
+            genre: Some("Rock"),
+            qobuz_track_id: None,
+            path: "TrackTag Artist/TrackTag Album/01 Original.wav",
+            duration_sec: Some(1),
+            file_mtime: None,
+            file_hash: None,
+            file_size: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let app = app::app(state);
+    let patch_body = serde_json::json!({
+        "title": "Patched",
+        "artist_name": "New Artist",
+        "album_title": "New Album",
+        "track_number": 7,
+        "year": 2026,
+        "disc_number": 2,
+        "genre": "Jazz"
+    });
+    let patch = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri(format!("/api/v1/library/tracks/{track_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(patch_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+    let detail: Value =
+        serde_json::from_slice(&patch.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(detail["title"], "Patched");
+    assert_eq!(detail["artist_name"], "New Artist");
+    assert_eq!(detail["album_title"], "New Album");
+
+    let read = tags::read_tags(&path).unwrap();
+    assert_eq!(read.title, "Patched");
+    assert_eq!(read.artist, "New Artist");
+    assert_eq!(read.album, "New Album");
+    assert_eq!(read.track_number, Some(7));
+    assert_eq!(read.year, Some(2026));
+    assert_eq!(read.disc_number, Some(2));
+    assert_eq!(read.genre.as_deref(), Some("Jazz"));
+}
+
+#[tokio::test]
 async fn library_track_stream_serves_audio() {
     let state = app::test_support::test_state().await;
     let library = state.config.library_path.clone();

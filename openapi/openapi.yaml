@@ -688,6 +688,124 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/v1/settings/storage:
+    get:
+      operationId: getStorageSettings
+      tags: [Settings, Storage]
+      summary: Library storage settings
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Storage settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageSettingsResponse"
+    patch:
+      operationId: patchStorageSettings
+      tags: [Settings, Storage]
+      summary: Update library storage settings
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageSettingsPatch"
+      responses:
+        "200":
+          description: Updated storage settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageSettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/settings/storage/test:
+    post:
+      operationId: testStorageSettings
+      tags: [Settings, Storage]
+      summary: Test a storage location
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageTestRequest"
+      responses:
+        "200":
+          description: Storage location is reachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageTestResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+
+  /api/v1/settings/storage/browse:
+    get:
+      operationId: browseStorage
+      tags: [Settings, Storage]
+      summary: Browse configured library storage
+      security:
+        - AdminBearer: []
+        - {}
+      parameters:
+        - name: target
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [library]
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Directory listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageBrowseResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/settings/storage/smb-shares:
+    post:
+      operationId: listSmbShares
+      tags: [Settings, Storage]
+      summary: List shares exposed by an SMB server
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SmbSharesRequest"
+      responses:
+        "200":
+          description: SMB shares
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmbSharesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /api/v1/downloads/purge:
     post:
       operationId: purgeFinishedDownloads
@@ -1881,7 +1999,7 @@ components:
       type: object
       required:
         - version
-        - library_path
+        - library_storage
         - credentials_configured
         - admin_auth_required
         - ui
@@ -1889,8 +2007,10 @@ components:
       properties:
         version:
           type: string
-        library_path:
-          type: string
+        library_storage:
+          oneOf:
+            - $ref: "#/components/schemas/StorageLocationView"
+            - type: "null"
         credentials_configured:
           type: boolean
         admin_auth_required:
@@ -1902,6 +2022,213 @@ components:
           description: |
             Absolute path for torrent staging/downloads when `EUTERPE_TORRENT_INCOMING_DIR` is set.
             Null when torrent API is disabled.
+
+    StorageLocationView:
+      oneOf:
+        - $ref: "#/components/schemas/LocalStorageLocation"
+        - $ref: "#/components/schemas/SmbStorageLocationView"
+      discriminator:
+        propertyName: kind
+        mapping:
+          local: "#/components/schemas/LocalStorageLocation"
+          smb: "#/components/schemas/SmbStorageLocationView"
+
+    LocalStorageLocation:
+      type: object
+      required: [kind, path, watch_status]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [local]
+        path:
+          type: string
+        watch_status:
+          $ref: "#/components/schemas/StorageWatchStatusView"
+
+    SmbStorageLocationView:
+      type: object
+      required: [kind, host, port, share, path, watch_status]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [smb]
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        share:
+          type: string
+        path:
+          type: string
+        watch_status:
+          $ref: "#/components/schemas/StorageWatchStatusView"
+        username:
+          type: ["string", "null"]
+        workgroup:
+          type: ["string", "null"]
+
+    StorageWatchStatusView:
+      type: object
+      required: [state]
+      additionalProperties: false
+      properties:
+        state:
+          $ref: "#/components/schemas/StorageWatchState"
+        degraded_reason:
+          type: ["string", "null"]
+
+    StorageWatchState:
+      type: string
+      enum: [disabled, connected, degraded, reconnecting]
+
+    StorageSettingsResponse:
+      type: object
+      required: [settings]
+      additionalProperties: false
+      properties:
+        settings:
+          $ref: "#/components/schemas/StorageSettingsView"
+
+    StorageSettingsView:
+      type: object
+      required: [library]
+      additionalProperties: false
+      properties:
+        library:
+          oneOf:
+            - $ref: "#/components/schemas/StorageLocationView"
+            - type: "null"
+
+    StorageSettingsPatch:
+      type: object
+      required: [library]
+      additionalProperties: false
+      properties:
+        library:
+          $ref: "#/components/schemas/StorageLocationPatch"
+
+    StorageLocationPatch:
+      oneOf:
+        - $ref: "#/components/schemas/LocalStorageLocationPatch"
+        - $ref: "#/components/schemas/SmbStorageLocationPatch"
+      discriminator:
+        propertyName: kind
+        mapping:
+          local: "#/components/schemas/LocalStorageLocationPatch"
+          smb: "#/components/schemas/SmbStorageLocationPatch"
+
+    LocalStorageLocationPatch:
+      type: object
+      required: [kind, path]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [local]
+        path:
+          type: string
+
+    SmbStorageLocationPatch:
+      type: object
+      required: [kind, host, share]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [smb]
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 445
+        share:
+          type: string
+        path:
+          type: string
+          default: ""
+        username:
+          type: ["string", "null"]
+        password:
+          type: ["string", "null"]
+          description: Plaintext only in write requests; encrypted at rest.
+        workgroup:
+          type: ["string", "null"]
+
+    StorageTestRequest:
+      type: object
+      required: [location]
+      additionalProperties: false
+      properties:
+        location:
+          $ref: "#/components/schemas/StorageLocationPatch"
+
+    StorageTestResponse:
+      type: object
+      required: [ok]
+      additionalProperties: false
+      properties:
+        ok:
+          type: boolean
+
+    StorageBrowseResponse:
+      type: object
+      required: [entries]
+      additionalProperties: false
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/StorageBrowseEntry"
+
+    StorageBrowseEntry:
+      type: object
+      required: [name, path, is_dir]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        path:
+          type: string
+        is_dir:
+          type: boolean
+        size:
+          type: integer
+          format: int64
+
+    SmbSharesRequest:
+      type: object
+      required: [host]
+      additionalProperties: false
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 445
+        username:
+          type: ["string", "null"]
+        password:
+          type: ["string", "null"]
+        workgroup:
+          type: ["string", "null"]
+
+    SmbSharesResponse:
+      type: object
+      required: [shares]
+      additionalProperties: false
+      properties:
+        shares:
+          type: array
+          items:
+            type: string
 
     QobuzSyncRunSummary:
       type: object

@@ -4,5 +4,6 @@ pub mod fs;
 pub mod paths;
 pub mod qobuz_tags;
 pub mod register_download;
+pub mod storage;
 pub mod stream;
 pub mod tags;

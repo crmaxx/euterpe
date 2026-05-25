@@ -37,7 +37,7 @@ Milestones M1–M5 ([implementation-plan.ru.md](../06-library-euterpe-qobuz/impl
 ## Phase 3 — Download pipeline ✅
 
 - `download_jobs` (migration `002_phase3_download_jobs.sql`), Tokio worker + `mpsc` queue
-- Album download: stream URL → `{EUTERPE_LIBRARY_PATH}/{artist}/{album}/…`
+- Album download: stream URL → configured library storage `{artist}/{album}/…`
 - REST: `POST/GET/DELETE /api/v1/downloads`, SSE `GET /api/v1/events`
 - TDD: state machine unit tests, `api_downloads`, `api_events`
 

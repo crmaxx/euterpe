@@ -35,7 +35,7 @@ UI → POST /api/v1/qobuz/favorites { album_ids: [42] }
 ```
 UI → POST /api/v1/downloads { job_type: "album", qobuz_id, quality }
    → insert download_job queued
-   → worker: album/get → for each track getFileUrl → HTTP GET url → write /music/...
+   → worker: album/get → for each track getFileUrl → HTTP GET url → write library storage...
    → SSE progress events
    → update job completed
    → optional: rescan track row
@@ -77,7 +77,7 @@ sequenceDiagram
 
 ```
 POST /api/v1/library/scan
-   → walk /music
+   → walk configured library storage
    → read tags lofty
    → upsert artists/albums/tracks
 ```
