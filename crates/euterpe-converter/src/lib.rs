@@ -13,14 +13,19 @@ mod settings;
 mod source;
 mod tags;
 
-pub use convert::{ConvertOptions, ConvertProgress, ConvertResult, convert_file, output_path_for};
+pub use convert::{
+    ConvertInput, ConvertOptions, ConvertOutput, ConvertProgress, ConvertResult, convert_bytes,
+    convert_file, output_path_for,
+};
 pub use encode::EncodeProgress;
-pub use encode::libflac::{encode_flac_with_libflac, encode_interleaved_pcm_to_flac};
+pub use encode::libflac::{
+    encode_flac_with_libflac, encode_interleaved_pcm_to_flac, encode_interleaved_pcm_to_flac_bytes,
+};
 pub use error::ConvertError;
 pub use format::{InputFormat, decode_to_pcm, detect_format, is_convertible_extension};
 pub use pcm::PcmBuffer;
 pub use settings::{FilePolicy, FlacEncodeSettings, FlacPreset};
-pub use source::{PcmSource, open_pcm_source};
+pub use source::{PcmSource, open_pcm_source, open_pcm_source_bytes};
 pub use tags::{ensure_libflac_metadata_tail, transfer_tags};
 
 #[cfg(test)]
@@ -145,6 +150,86 @@ mod tests {
         assert!(result.output_path.ends_with("track.flac"));
         assert!(!wav.exists());
         assert!(result.output_path.exists());
+    }
+
+    #[test]
+    fn convert_bytes_wav_to_flac_sibling() {
+        let dir = tempdir().unwrap();
+        let wav = dir.path().join("track.wav");
+        write_test_wav(&wav, 512);
+        let input_bytes = std::fs::read(&wav).unwrap();
+        let src_pcm = decode_to_pcm(&wav).unwrap();
+
+        let result = convert_bytes(
+            ConvertInput {
+                rel_path: "albums/demo/track.wav".into(),
+                bytes: input_bytes,
+            },
+            ConvertOptions {
+                flac_encode: &FlacEncodeSettings::default(),
+                file_policy: FilePolicy::SiblingThenDelete,
+                on_progress: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.rel_path,
+            std::path::PathBuf::from("albums/demo/track.flac")
+        );
+        assert_eq!(
+            result.source_delete_rel,
+            Some(std::path::PathBuf::from("albums/demo/track.wav"))
+        );
+        assert_eq!(flac_streaminfo_format(&result.bytes), (44_100, 2, 16));
+        let round = encode::decode_flac_bytes(&result.bytes).unwrap();
+        assert!(pcm_equal(&src_pcm, &round));
+    }
+
+    #[test]
+    fn convert_bytes_reports_explicit_unsupported_native_io_formats() {
+        for (path, code) in [
+            ("track.m4a", "CONVERTER_NATIVE_IO_UNSUPPORTED:alac"),
+            ("track.ape", "CONVERTER_NATIVE_IO_UNSUPPORTED:ape"),
+        ] {
+            let err = convert_bytes(
+                ConvertInput {
+                    rel_path: path.into(),
+                    bytes: Vec::new(),
+                },
+                ConvertOptions {
+                    flac_encode: &FlacEncodeSettings::default(),
+                    file_policy: FilePolicy::SiblingThenDelete,
+                    on_progress: None,
+                },
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string().contains(code),
+                "unexpected error for {path}: {err}"
+            );
+        }
+
+        #[cfg(feature = "wavpack")]
+        {
+            let err = convert_bytes(
+                ConvertInput {
+                    rel_path: "track.wv".into(),
+                    bytes: Vec::new(),
+                },
+                ConvertOptions {
+                    flac_encode: &FlacEncodeSettings::default(),
+                    file_policy: FilePolicy::SiblingThenDelete,
+                    on_progress: None,
+                },
+            )
+            .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("CONVERTER_NATIVE_IO_UNSUPPORTED:wavpack"),
+                "unexpected error for WavPack: {err}"
+            );
+        }
     }
 
     #[test]

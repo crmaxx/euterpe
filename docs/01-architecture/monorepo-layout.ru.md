@@ -35,7 +35,7 @@ members = ["crates/euterpe-qobuz", "crates/euterpe-server"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 license = "Apache-2.0"
 ```
 

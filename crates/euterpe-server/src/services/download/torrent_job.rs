@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use euterpe_converter::{ConvertOptions, FilePolicy, FlacEncodeSettings};
 use euterpe_torrent::StartJobRequest;
 use tokio::time::interval;
 
 use crate::api::{JobProgressEvent, TorrentEuterpePhase};
 use crate::db::download_jobs;
 use crate::error::ApiError;
+use crate::library::storage::{self, StoragePath};
 use crate::services::download::WorkerDeps;
 use crate::services::download::payload::{DownloadJobPayload, TorrentRuntimeSnapshot};
+use crate::services::library_scan;
 use crate::services::torrent_import;
 use crate::services::torrent_settings;
 
@@ -184,9 +185,23 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         )
         .await?;
 
-        let (dest, rel) = torrent_import::copy_to_library(
+        let storage_location = deps
+            .runtime
+            .read()
+            .await
+            .storage
+            .library
+            .clone()
+            .ok_or_else(|| {
+                ApiError::Message(
+                    "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+                )
+            })?;
+        let storage =
+            storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
+        let rel = torrent_import::copy_to_library_storage(
             &save_dir,
-            &deps.config.library_path,
+            storage.as_ref(),
             &payload.display_name,
         )
         .await?;
@@ -197,19 +212,31 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         };
         download_jobs::set_payload(&deps.pool, job_id, &wrapped).await?;
 
-        let post_processed = if let Some(post) = &payload.post_download {
-            run_torrent_post_download(&dest, post).await?
-        } else {
-            false
-        };
+        let post_processing_requested = payload.post_download.as_ref().is_some_and(|post| {
+            post.convert_after_download || post.split_after_download || post.split_after_conversion
+        });
+        if post_processing_requested {
+            tracing::warn!(
+                job_id,
+                library_dest_rel = %rel,
+                "torrent post-download CUE/convert is deferred until storage-native CUE/convert jobs"
+            );
+        }
 
-        if payload.auto_index_after_import || post_processed {
-            let _ = torrent_import::trigger_library_scan(
+        if payload.auto_index_after_import || post_processing_requested {
+            let scan_cfg = deps
+                .runtime
+                .read()
+                .await
+                .library_scan_config(deps.config.debug)?;
+            let _ = library_scan::start_scan_storage(
                 &deps.pool,
-                deps.config.library_path.clone(),
+                storage.clone(),
                 deps.scan_events.clone(),
-                deps.config.library_scan.clone(),
-                &rel,
+                scan_cfg,
+                Some(StoragePath::parse(&rel)?),
+                None,
+                Some(deps.runtime.clone()),
             )
             .await?;
         }
@@ -234,91 +261,6 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         torrent_detail: None,
     });
     Ok(())
-}
-
-async fn run_torrent_post_download(
-    dest: &std::path::Path,
-    post: &crate::api::TorrentPostDownloadOptions,
-) -> Result<bool, ApiError> {
-    if !post.convert_after_download && !post.split_after_download && !post.split_after_conversion {
-        return Ok(false);
-    }
-    let cue_rel = post
-        .cue_path
-        .as_deref()
-        .ok_or_else(|| ApiError::bad_request("post-download CUE path is required"))?;
-    let cue_abs = safe_post_download_path(dest, cue_rel)?;
-    let cue_text = std::fs::read_to_string(&cue_abs)
-        .map_err(|e| ApiError::Message(format!("read {}: {e}", cue_abs.display())))?;
-    let mut doc = euterpe_cue::parse_cue(&cue_text, std::path::Path::new(cue_rel))
-        .map_err(|e| ApiError::bad_request(e.to_string()))?;
-    let cue_dir = cue_abs
-        .parent()
-        .ok_or_else(|| ApiError::Message("CUE file has no parent directory".into()))?
-        .to_path_buf();
-
-    if post.convert_after_download {
-        let source = cue_dir.join(&doc.audio_path);
-        let converted = tokio::task::spawn_blocking(move || {
-            euterpe_converter::convert_file(
-                &source,
-                ConvertOptions {
-                    flac_encode: &FlacEncodeSettings::default(),
-                    file_policy: FilePolicy::SiblingThenDelete,
-                    on_progress: None,
-                },
-            )
-        })
-        .await
-        .map_err(|e| ApiError::Message(e.to_string()))?
-        .map_err(|e| ApiError::Message(e.to_string()))?;
-        doc.audio_path = converted
-            .output_path
-            .strip_prefix(&cue_dir)
-            .unwrap_or(&converted.output_path)
-            .to_string_lossy()
-            .replace('\\', "/");
-    }
-
-    if post.split_after_download || post.split_after_conversion {
-        let source_file_policy = if post.source_file_policy.as_deref() == Some("keep") {
-            euterpe_cue::SourceFilePolicy::Keep
-        } else {
-            euterpe_cue::SourceFilePolicy::DeleteAfterSuccess
-        };
-        let output_dir = cue_dir.clone();
-        tokio::task::spawn_blocking(move || {
-            euterpe_cue::split_flac_image(
-                &doc,
-                &cue_dir,
-                &output_dir,
-                &euterpe_cue::SplitOptions {
-                    source_file_policy,
-                    file_mask: Some("{$n} {$a} $t".into()),
-                    on_progress: None,
-                },
-            )
-        })
-        .await
-        .map_err(|e| ApiError::Message(e.to_string()))?
-        .map_err(|e| ApiError::Message(e.to_string()))?;
-        if source_file_policy == euterpe_cue::SourceFilePolicy::DeleteAfterSuccess {
-            let _ = tokio::fs::remove_file(&cue_abs).await;
-        }
-    }
-
-    Ok(true)
-}
-
-fn safe_post_download_path(root: &std::path::Path, rel: &str) -> Result<PathBuf, ApiError> {
-    let rel = rel.trim().trim_start_matches(['/', '\\']);
-    if rel.is_empty()
-        || rel.contains('\\')
-        || rel.split('/').any(|part| part.is_empty() || part == "..")
-    {
-        return Err(ApiError::bad_request("invalid post-download path"));
-    }
-    Ok(root.join(rel))
 }
 
 pub fn map_torrent_err(e: euterpe_torrent::TorrentError) -> ApiError {

@@ -11,7 +11,7 @@ ENV VITE_HAWK_TOKEN=$VITE_HAWK_TOKEN
 ENV VITE_HAWK_RELEASE=$VITE_HAWK_RELEASE
 RUN npm run generate:api && npm run build
 
-FROM rust:1-bookworm AS builder
+FROM rust:1.95-bookworm AS builder
 WORKDIR /app
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends cmake clang libclang-dev \
@@ -32,6 +32,6 @@ ENV EUTERPE_BIND=0.0.0.0:8080
 ENV EUTERPE_DATABASE_URL=sqlite:/data/library.db?mode=rwc
 ENV EUTERPE_STATIC_DIR=/usr/share/euterpe/static
 EXPOSE 8080
-VOLUME ["/data", "/music"]
+VOLUME ["/data"]
 USER 1000:1000
 ENTRYPOINT ["euterpe-server"]

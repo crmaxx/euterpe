@@ -4,6 +4,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
 use serde::Deserialize;
+use std::sync::Arc;
 
 use crate::api::{
     AlbumCoverUploadResponse, ConvertAlbumResponse, ConvertJobResponse, CueAlbumResponse,
@@ -16,10 +17,12 @@ use crate::db::{albums, artists, convert_jobs, cue_jobs, library_scan_runs, trac
 use crate::error::ApiError;
 use crate::library::covers;
 use crate::library::cue;
+use crate::library::storage::{LibraryStorage, StoragePath};
 use crate::library::stream;
 use crate::library::tags::{
     self, AlbumTagsPatch, TrackTagsPatch, apply_album_patch, apply_patch, is_audio_file,
 };
+use crate::services::app_settings::StorageLocation;
 use crate::services::convert::start_album_convert;
 use crate::services::library_scan;
 use crate::state::AppState;
@@ -34,23 +37,57 @@ pub async fn start_library_scan(
     State(state): State<AppState>,
     Query(q): Query<StartLibraryScanQuery>,
 ) -> Result<(StatusCode, Json<LibraryScanStartResponse>), ApiError> {
-    let scan_root =
-        library_scan::resolve_scan_root_query(&state.config.library_path, q.root.as_deref())?;
     let scan_cfg = state
         .runtime
         .read()
         .await
         .library_scan_config(state.config.debug)?;
-    let scan_id = library_scan::start_scan(
-        &state.db,
-        state.config.library_path.clone(),
-        state.scan_events.clone(),
-        scan_cfg,
-        scan_root,
-        Some(state.convert_job_tx.clone()),
-        Some(state.runtime.clone()),
-    )
-    .await?;
+    let location = state
+        .runtime
+        .read()
+        .await
+        .storage
+        .library
+        .clone()
+        .ok_or_else(|| {
+            ApiError::Message(
+                "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+            )
+        })?;
+    let scan_id = match location {
+        StorageLocation::Local { .. } => {
+            let library_path = state.require_local_library_path().await?;
+            let scan_root =
+                library_scan::resolve_scan_root_query(&library_path, q.root.as_deref())?;
+            library_scan::start_scan(
+                &state.db,
+                library_path,
+                state.scan_events.clone(),
+                scan_cfg,
+                scan_root,
+                Some(state.convert_job_tx.clone()),
+                Some(state.runtime.clone()),
+            )
+            .await?
+        }
+        StorageLocation::Smb { .. } => {
+            let storage = state.library_storage().await?;
+            let scan_root = match q.root.as_deref() {
+                Some(root) => Some(StoragePath::parse(root)?),
+                None => None,
+            };
+            library_scan::start_scan_storage(
+                &state.db,
+                storage,
+                state.scan_events.clone(),
+                scan_cfg,
+                scan_root,
+                Some(state.convert_job_tx.clone()),
+                Some(state.runtime.clone()),
+            )
+            .await?
+        }
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(LibraryScanStartResponse { scan_id }),
@@ -127,11 +164,12 @@ pub async fn list_library_albums(
         },
     )
     .await?;
+    let location = state.runtime.read().await.storage.library.clone();
     let mut items = Vec::with_capacity(page.items.len());
     for r in page.items {
-        let cover_path = covers::ensure_album_cover_path(
-            &state.db,
-            &state.config.library_path,
+        let cover_path = album_cover_path_for_state(
+            &state,
+            location.as_ref(),
             r.id,
             r.path.as_deref(),
             r.cover_path.as_deref(),
@@ -144,7 +182,12 @@ pub async fn list_library_albums(
             year: r.year,
             track_count: r.track_count,
             cover_path,
-            has_cue_files: cue::album_has_cue_files(&state.config.library_path, r.path.as_deref()),
+            has_cue_files: album_has_cue_files_for_state(
+                &state,
+                location.as_ref(),
+                r.path.as_deref(),
+            )
+            .await?,
         });
     }
     Ok(Json(LibraryAlbumListResponse {
@@ -158,6 +201,7 @@ pub async fn get_library_album(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<LibraryAlbumDetailResponse>, ApiError> {
+    let location = state.runtime.read().await.storage.library.clone();
     let album = albums::get_by_id(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
@@ -171,19 +215,21 @@ pub async fn get_library_album(
     } else {
         String::new()
     };
-    let cover_path = covers::ensure_album_cover_path(
-        &state.db,
-        &state.config.library_path,
+    let cover_path = album_cover_path_for_state(
+        &state,
+        location.as_ref(),
         album.id,
         album.path.as_deref(),
         album.cover_path.as_deref(),
     )
     .await?;
     let track_rows = tracks::list_by_album(&state.db, id).await?;
-    let album_tags_from_file = track_rows.first().and_then(|first| {
-        let file_path = state.config.library_path.join(&first.path);
-        tags::read_tags(&file_path).ok()
-    });
+    let album_tags_from_file = match track_rows.first() {
+        Some(first) => read_track_tags_for_state(&state, location.as_ref(), &first.path)
+            .await
+            .ok(),
+        None => None,
+    };
     let tracks_list: Vec<LibraryTrackItem> = track_rows
         .into_iter()
         .map(|t| LibraryTrackItem {
@@ -198,7 +244,8 @@ pub async fn get_library_album(
         })
         .collect();
     let has_convertible_tracks = tracks::album_has_convertible_tracks(&state.db, id).await?;
-    let has_cue_files = cue::album_has_cue_files(&state.config.library_path, album.path.as_deref());
+    let has_cue_files =
+        album_has_cue_files_for_state(&state, location.as_ref(), album.path.as_deref()).await?;
     Ok(Json(LibraryAlbumDetailResponse {
         id: album.id,
         title: album.title,
@@ -241,13 +288,15 @@ pub async fn patch_library_album_tags(
         track_total: body.track_total.map(|n| n as u32),
         disc_total: body.disc_total.map(|n| n as u32),
     };
+    let storage = state.library_storage().await?;
 
     for track in &track_rows {
-        let file_path = state.config.library_path.join(&track.path);
-        let current = tags::read_tags(&file_path)?;
+        let storage_path = StoragePath::parse(&track.path)?;
+        let current = tags::read_tags_storage(storage.as_ref(), &storage_path).await?;
         let updated = apply_album_patch(&current, &patch);
-        tags::write_tags(&file_path, &updated)?;
-        let mtime = file_metadata_iso(&file_path)?;
+        tags::write_tags_storage(storage.as_ref(), &storage_path, &updated).await?;
+        let meta = storage.metadata(&storage_path).await.ok();
+        let file_size = meta.and_then(|m| i64::try_from(m.size).ok());
         tracks::update_metadata(
             &state.db,
             track.id,
@@ -260,10 +309,17 @@ pub async fn patch_library_album_tags(
                     .genre
                     .as_deref()
                     .and_then(|g| if g.is_empty() { None } else { Some(g) }),
-                file_mtime: mtime.as_deref(),
+                file_mtime: None,
             },
         )
         .await?;
+        if let Some(file_size) = file_size {
+            sqlx::query("UPDATE tracks SET file_size = ? WHERE id = ?")
+                .bind(file_size)
+                .bind(track.id)
+                .execute(&state.db)
+                .await?;
+        }
     }
 
     let album_year = body.year.or(album.year);
@@ -318,13 +374,15 @@ pub async fn put_library_album_cover(
         .ok_or_else(|| ApiError::bad_request("album has no directory path on disk"))?;
     let content_type = headers
         .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok());
-    let result = covers::write_album_cover_from_bytes(
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let storage = state.library_storage().await?;
+    let result = covers::write_album_cover_from_bytes_storage(
         &state.db,
-        &state.config.library_path,
+        storage.as_ref(),
         id,
         album_rel,
-        &body,
+        body,
         content_type,
     )
     .await?;
@@ -338,23 +396,23 @@ pub async fn get_library_album_cover(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Response, ApiError> {
+    let location = state.runtime.read().await.storage.library.clone();
     let album = albums::get_by_id(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
-    let rel = covers::ensure_album_cover_path(
-        &state.db,
-        &state.config.library_path,
+    let rel = album_cover_path_for_state(
+        &state,
+        location.as_ref(),
         album.id,
         album.path.as_deref(),
         album.cover_path.as_deref(),
     )
     .await?
     .ok_or_else(|| ApiError::Message("album cover not found".into()))?;
-    let path = covers::resolve_library_relative_file(&state.config.library_path, &rel)?;
-    let bytes = tokio::fs::read(&path)
-        .await
-        .map_err(|_| ApiError::Message("cover file not found".into()))?;
-    let ct = covers::image_content_type(&path);
+    let storage = state.library_storage().await?;
+    let path = StoragePath::parse(&rel)?;
+    let bytes = storage.read(&path).await?;
+    let ct = covers::image_content_type(std::path::Path::new(path.as_str()));
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, ct)
@@ -386,11 +444,12 @@ pub async fn get_library_track_stream(
     if !is_audio_file(rel_path) {
         return Err(ApiError::bad_request("not an audio file"));
     }
-    let path = covers::resolve_library_relative_file(&state.config.library_path, rel)?;
+    let path = StoragePath::parse(rel)?;
+    let storage = state.library_storage().await?;
     let range = headers
         .get(axum::http::header::RANGE)
         .and_then(|v| v.to_str().ok());
-    stream::audio_file_response(&path, range).await
+    stream::audio_storage_response(storage.as_ref(), &path, range).await
 }
 
 pub async fn patch_library_track_tags(
@@ -401,8 +460,9 @@ pub async fn patch_library_track_tags(
     let track = tracks::get_by_id(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message("track not found".into()))?;
-    let file_path = state.config.library_path.join(&track.path);
-    let current = tags::read_tags(&file_path)?;
+    let storage = state.library_storage().await?;
+    let storage_path = StoragePath::parse(&track.path)?;
+    let current = tags::read_tags_storage(storage.as_ref(), &storage_path).await?;
     let artist_name = body.artist_name.clone();
     let album_title = body.album_title.clone();
     let patch = TrackTagsPatch {
@@ -415,7 +475,7 @@ pub async fn patch_library_track_tags(
         genre: body.genre.clone(),
     };
     let updated = apply_patch(&current, &patch);
-    tags::write_tags(&file_path, &updated)?;
+    tags::write_tags_storage(storage.as_ref(), &storage_path, &updated).await?;
 
     let album_year = body.year.or(updated.year.map(|y| y as i32));
 
@@ -456,7 +516,8 @@ pub async fn patch_library_track_tags(
         .await?;
     }
 
-    let mtime = file_metadata_iso(&file_path)?;
+    let meta = storage.metadata(&storage_path).await.ok();
+    let file_size = meta.and_then(|m| i64::try_from(m.size).ok());
     tracks::update_metadata(
         &state.db,
         id,
@@ -469,21 +530,28 @@ pub async fn patch_library_track_tags(
                 .genre
                 .as_deref()
                 .and_then(|g| if g.is_empty() { None } else { Some(g) }),
-            file_mtime: mtime.as_deref(),
+            file_mtime: None,
         },
     )
     .await?;
+    if let Some(file_size) = file_size {
+        sqlx::query("UPDATE tracks SET file_size = ? WHERE id = ?")
+            .bind(file_size)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
 
     let detail = track_detail(&state, id).await?;
     Ok(Json(detail))
 }
 
 async fn track_detail(state: &AppState, id: i64) -> Result<LibraryTrackDetailResponse, ApiError> {
+    let location = state.runtime.read().await.storage.library.clone();
     let track = tracks::get_by_id(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message("track not found".into()))?;
-    let file_path = state.config.library_path.join(&track.path);
-    let t = tags::read_tags(&file_path)?;
+    let t = read_track_tags_for_state(state, location.as_ref(), &track.path).await?;
     Ok(LibraryTrackDetailResponse {
         id: track.id,
         album_id: track.album_id,
@@ -527,11 +595,9 @@ pub async fn get_library_album_cue(
         .path
         .as_deref()
         .ok_or_else(|| ApiError::bad_request("album has no directory path"))?;
-    let response = cue::load_album_cue(
-        &state.config.library_path,
-        album_path,
-        q.cue_path.as_deref(),
-    )?;
+    let storage = state.library_storage().await?;
+    let response =
+        cue::load_album_cue_storage(storage.as_ref(), album_path, q.cue_path.as_deref()).await?;
     Ok(Json(response))
 }
 
@@ -555,6 +621,11 @@ pub async fn split_library_album_cue(
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let album_path = album.path.clone();
+    let album_rel = StoragePath::parse(
+        album_path
+            .as_deref()
+            .ok_or_else(|| ApiError::bad_request("album has no directory path"))?,
+    )?;
     let validation = cue::validate_api_document(&body.document);
     if !validation.valid {
         return Err(ApiError::bad_request("CUE has validation errors"));
@@ -565,9 +636,12 @@ pub async fn split_library_album_cue(
     ) {
         return Err(ApiError::bad_request("invalid source_file_policy"));
     }
-    let cue_abs =
-        covers::resolve_library_relative_file(&state.config.library_path, &body.document.cue_path)?;
+    let cue_rel = StoragePath::parse(&body.document.cue_path)?;
+    if !storage_path_is_under(&cue_rel, &album_rel) {
+        return Err(ApiError::bad_request("CUE path is outside album directory"));
+    }
     reject_unsafe_cue_audio_path(&body.document.audio_path)?;
+    state.library_storage().await?.metadata(&cue_rel).await?;
     let payload = cue_jobs::CueJobPayload {
         cue_path: body.document.cue_path.clone(),
         audio_path: body.document.audio_path.clone(),
@@ -577,7 +651,7 @@ pub async fn split_library_album_cue(
         serde_json::to_string(&payload).map_err(|e| ApiError::Message(e.to_string()))?;
     let tracks_total = body.document.tracks.iter().filter(|t| t.selected).count() as i64;
     let job_id = cue_jobs::create_queued(&state.db, id, tracks_total, Some(&payload_json)).await?;
-    spawn_cue_split_job(state, job_id, body, cue_abs, album_path);
+    spawn_cue_split_job(state, job_id, body, album_path);
     Ok((StatusCode::ACCEPTED, Json(CueSplitResponse { job_id })))
 }
 
@@ -593,15 +667,23 @@ fn reject_unsafe_cue_audio_path(audio_path: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+fn storage_path_is_under(path: &StoragePath, base: &StoragePath) -> bool {
+    if base.is_root() || path.as_str() == base.as_str() {
+        return true;
+    }
+    path.as_str()
+        .strip_prefix(base.as_str())
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
 fn spawn_cue_split_job(
     state: AppState,
     job_id: i64,
     body: CueSplitRequest,
-    cue_abs: std::path::PathBuf,
     album_path: Option<String>,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = run_cue_split_job(state, job_id, body, cue_abs, album_path).await {
+        if let Err(e) = run_cue_split_job(state, job_id, body, album_path).await {
             tracing::error!(job_id, error = %e, "CUE split job failed");
         }
     });
@@ -611,7 +693,6 @@ async fn run_cue_split_job(
     state: AppState,
     job_id: i64,
     body: CueSplitRequest,
-    cue_abs: std::path::PathBuf,
     album_path: Option<String>,
 ) -> Result<(), ApiError> {
     cue_jobs::mark_running(&state.db, job_id).await?;
@@ -640,13 +721,18 @@ async fn run_cue_split_job(
         file_mask: body.file_mask.clone(),
         on_progress: Some(on_progress),
     };
-    let cue_dir = cue_abs
-        .parent()
-        .ok_or_else(|| ApiError::Message("CUE file has no parent directory".into()))?
-        .to_path_buf();
-    let output_dir = cue_dir.clone();
+    let storage = state.library_storage().await?;
+    let cue_rel = StoragePath::parse(&body.document.cue_path)?;
+    let cue_dir_rel = cue_rel.parent().unwrap_or_else(StoragePath::root);
+    let output_dir_rel = std::path::PathBuf::from(cue_dir_rel.as_str());
+    let handle = tokio::runtime::Handle::current();
+    let mut split_io = StorageCueSplitIo {
+        storage: storage.clone(),
+        handle,
+        base_dir: cue_dir_rel.clone(),
+    };
     let split = tokio::task::spawn_blocking(move || {
-        euterpe_cue::split_flac_image(&document, &cue_dir, &output_dir, &options)
+        euterpe_cue::split_flac_image_io(&document, &mut split_io, &output_dir_rel, &options)
     })
     .await
     .map_err(|e| ApiError::Message(e.to_string()))?;
@@ -660,25 +746,22 @@ async fn run_cue_split_job(
             )
             .await?;
             if body.source_file_policy == "delete_after_success" {
-                let _ = tokio::fs::remove_file(&cue_abs).await;
+                let _ = storage.delete(&cue_rel).await;
             }
             if let Some(album_path) = album_path
-                && let Ok(scan_root) = library_scan::resolve_scan_root_query(
-                    &state.config.library_path,
-                    Some(album_path.as_str()),
-                )
+                && let Ok(scan_root) = StoragePath::parse(album_path)
             {
                 let scan_cfg = state
                     .runtime
                     .read()
                     .await
                     .library_scan_config(state.config.debug)?;
-                let _ = library_scan::start_scan(
+                let _ = library_scan::start_scan_storage(
                     &state.db,
-                    state.config.library_path.clone(),
+                    storage,
                     state.scan_events.clone(),
                     scan_cfg,
-                    scan_root,
+                    Some(scan_root),
                     Some(state.convert_job_tx.clone()),
                     Some(state.runtime.clone()),
                 )
@@ -690,6 +773,91 @@ async fn run_cue_split_job(
         }
     }
     Ok(())
+}
+
+struct StorageCueSplitIo {
+    storage: Arc<dyn LibraryStorage>,
+    handle: tokio::runtime::Handle,
+    base_dir: StoragePath,
+}
+
+impl StorageCueSplitIo {
+    fn cue_path_error(message: impl Into<String>) -> euterpe_cue::CueError {
+        euterpe_cue::CueError::Invalid(message.into())
+    }
+
+    fn api_error(error: ApiError) -> euterpe_cue::CueError {
+        euterpe_cue::CueError::Io(std::io::Error::other(error.to_string()))
+    }
+
+    fn rel_from_path(path: &std::path::Path) -> euterpe_cue::Result<String> {
+        if path.is_absolute() {
+            return Err(Self::cue_path_error("CUE path must be library-relative"));
+        }
+        let mut parts = Vec::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::Normal(part) => {
+                    let part = part.to_str().ok_or_else(|| {
+                        Self::cue_path_error("CUE path contains non-UTF-8 component")
+                    })?;
+                    parts.push(part);
+                }
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir
+                | std::path::Component::Prefix(_)
+                | std::path::Component::RootDir => {
+                    return Err(Self::cue_path_error(
+                        "CUE path must not escape library storage",
+                    ));
+                }
+            }
+        }
+        Ok(parts.join("/"))
+    }
+}
+
+impl euterpe_cue::SplitIo for StorageCueSplitIo {
+    fn read_source(&mut self, audio_path: &std::path::Path) -> euterpe_cue::Result<Vec<u8>> {
+        let rel = Self::rel_from_path(audio_path)?;
+        let path = self
+            .base_dir
+            .join(&rel)
+            .map_err(|e| Self::cue_path_error(e.to_string()))?;
+        let bytes = self
+            .handle
+            .block_on(self.storage.read(&path))
+            .map_err(Self::api_error)?;
+        Ok(bytes.to_vec())
+    }
+
+    fn write_output(
+        &mut self,
+        rel_path: &std::path::Path,
+        bytes: Vec<u8>,
+    ) -> euterpe_cue::Result<()> {
+        let rel = Self::rel_from_path(rel_path)?;
+        let path = StoragePath::parse(&rel).map_err(|e| Self::cue_path_error(e.to_string()))?;
+        if let Some(parent) = path.parent() {
+            self.handle
+                .block_on(self.storage.create_dir_all(&parent))
+                .map_err(Self::api_error)?;
+        }
+        self.handle
+            .block_on(self.storage.atomic_write(&path, Bytes::from(bytes)))
+            .map_err(Self::api_error)
+    }
+
+    fn delete_source(&mut self, rel_path: &std::path::Path) -> euterpe_cue::Result<()> {
+        let rel = Self::rel_from_path(rel_path)?;
+        let path = self
+            .base_dir
+            .join(&rel)
+            .map_err(|e| Self::cue_path_error(e.to_string()))?;
+        self.handle
+            .block_on(self.storage.delete(&path))
+            .map_err(Self::api_error)
+    }
 }
 
 pub async fn get_library_album_cue_latest(
@@ -727,10 +895,76 @@ pub async fn get_convert_job(
     Ok(Json(ConvertJobResponse { job }))
 }
 
-fn file_metadata_iso(path: &std::path::Path) -> Result<Option<String>, ApiError> {
-    let meta = std::fs::metadata(path).map_err(|e| ApiError::Message(e.to_string()))?;
-    Ok(meta.modified().ok().map(|t| {
-        let dt: chrono::DateTime<chrono::Utc> = t.into();
-        dt.format("%Y-%m-%d %H:%M:%S").to_string()
-    }))
+async fn album_cover_path_for_state(
+    state: &AppState,
+    location: Option<&StorageLocation>,
+    album_id: i64,
+    album_path: Option<&str>,
+    cover_path: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    match location {
+        Some(StorageLocation::Local { .. }) => {
+            let library_path = state.require_local_library_path().await?;
+            covers::ensure_album_cover_path(
+                &state.db,
+                &library_path,
+                album_id,
+                album_path,
+                cover_path,
+            )
+            .await
+        }
+        Some(StorageLocation::Smb { .. }) => {
+            if let Some(path) = cover_path.filter(|p| !p.trim().is_empty()) {
+                return Ok(Some(path.to_string()));
+            }
+            let Some(album_path) = album_path.filter(|p| !p.trim().is_empty()) else {
+                return Ok(None);
+            };
+            let storage = state.library_storage().await?;
+            covers::discover_album_cover_rel_storage(storage.as_ref(), album_path).await
+        }
+        None => Err(ApiError::Message(
+            "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+        )),
+    }
+}
+
+async fn album_has_cue_files_for_state(
+    state: &AppState,
+    location: Option<&StorageLocation>,
+    album_path: Option<&str>,
+) -> Result<bool, ApiError> {
+    match location {
+        Some(StorageLocation::Local { .. }) | Some(StorageLocation::Smb { .. }) => {
+            let storage = state.library_storage().await?;
+            cue::album_has_cue_files_storage(storage.as_ref(), album_path).await
+        }
+        None => Err(ApiError::Message(
+            "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+        )),
+    }
+}
+
+async fn read_track_tags_for_state(
+    state: &AppState,
+    location: Option<&StorageLocation>,
+    rel: &str,
+) -> Result<tags::TrackTags, ApiError> {
+    match location {
+        Some(StorageLocation::Local { .. }) => {
+            let library_path = state.require_local_library_path().await?;
+            let file_path = library_path.join(rel);
+            tags::read_tags(&file_path)
+        }
+        Some(StorageLocation::Smb { .. }) => {
+            let storage = state.library_storage().await?;
+            let path = StoragePath::parse(rel)?;
+            let bytes = storage.read(&path).await?;
+            tags::read_tags_from_bytes_with_rel(bytes.to_vec(), Some(rel))
+        }
+        None => Err(ApiError::Message(
+            "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+        )),
+    }
 }

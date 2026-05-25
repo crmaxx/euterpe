@@ -202,6 +202,35 @@ pub async fn update_path(pool: &SqlitePool, id: i64, path: &str) -> Result<(), A
     Ok(())
 }
 
+pub async fn update_path_fingerprint(
+    pool: &SqlitePool,
+    id: i64,
+    path: &str,
+    file_size: Option<i64>,
+    file_hash: Option<&str>,
+    file_mtime: Option<&str>,
+) -> Result<(), ApiError> {
+    let n = sqlx::query(
+        r#"
+        UPDATE tracks
+        SET path = ?, file_size = ?, file_hash = ?, file_mtime = ?, updated_at = datetime('now')
+        WHERE id = ?
+        "#,
+    )
+    .bind(path)
+    .bind(file_size)
+    .bind(file_hash)
+    .bind(file_mtime)
+    .bind(id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if n == 0 {
+        return Err(ApiError::Message("track not found".into()));
+    }
+    Ok(())
+}
+
 pub fn path_extension_lower(path: &str) -> Option<String> {
     std::path::Path::new(path)
         .extension()

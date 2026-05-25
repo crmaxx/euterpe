@@ -126,6 +126,23 @@ pub fn track_path(
     library_root.join(artist).join(album_dir).join(filename)
 }
 
+pub fn track_relative_path(album: &AlbumDetail, track: &TrackSummary, quality: u8) -> String {
+    let artist = album
+        .summary
+        .artist
+        .as_ref()
+        .map(|a| sanitize_component(&a.name))
+        .unwrap_or_else(|| "Unknown Artist".into());
+    let album_dir = album_dir_name(
+        &album.summary.title,
+        album.summary.release_date_original.as_deref(),
+    );
+    let track_num = track.track_number.unwrap_or(0);
+    let title = sanitize_component(&track.title);
+    let ext = extension_for_quality(quality);
+    format!("{artist}/{album_dir}/{track_num:02} - {title}.{ext}")
+}
+
 /// Resolve `root` query for subtree library scan: relative path under `library_root`, no `..`.
 pub fn resolve_scan_subdirectory(library_root: &Path, root: &str) -> Result<PathBuf, ApiError> {
     let trimmed = root.trim();

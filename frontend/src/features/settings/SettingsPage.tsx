@@ -20,6 +20,7 @@ import { ConverterSettingsSection } from "@/features/settings/ConverterSettingsS
 import { DownloadsSettingsSection } from "@/features/settings/DownloadsSettingsSection";
 import { IntegrationsSection } from "@/features/settings/IntegrationsSection";
 import { LibraryScanSettingsSection } from "@/features/settings/LibraryScanSettingsSection";
+import { StorageSettingsSection } from "@/features/settings/StorageSettingsSection";
 import { TorrentSettingsSection } from "@/features/settings/TorrentSettingsSection";
 import { useToast } from "@/hooks/use-toast";
 import { QUALITY_OPTIONS, type QualityId } from "@/lib/quality";
@@ -247,11 +248,16 @@ export function SettingsPage() {
           </Select>
         </div>
         <div className="space-y-1 text-sm">
-          <Label>{t("settings.downloads.libraryPath")}</Label>
+          <Label>{t("settings.downloads.libraryStorage")}</Label>
           <p className="rounded-md border border-border bg-background px-3 py-2 font-mono text-xs">
-            {info?.library_path ?? "…"}
+            {info?.library_storage
+              ? info.library_storage.kind === "local"
+                ? `local:${info.library_storage.path}`
+                : `smb://${info.library_storage.host}/${info.library_storage.share}/${info.library_storage.path}`.replace(/\/$/, "")
+              : t("settings.storage.notConfigured")}
           </p>
         </div>
+        <StorageSettingsSection />
         <DownloadsSettingsSection />
       </section>
     </div>

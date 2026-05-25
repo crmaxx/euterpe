@@ -27,7 +27,7 @@ docker build \
 ### Stage 2 — rust
 
 ```dockerfile
-FROM rust:1-bookworm AS rust
+FROM rust:1.95-bookworm AS rust
 WORKDIR /app
 COPY . .
 RUN cargo build --release -p euterpe-server
@@ -42,7 +42,7 @@ RUN useradd -r -s /bin false euterpe
 COPY --from=rust /app/target/release/euterpe-server /usr/local/bin/
 COPY --from=frontend /app/frontend/dist /usr/share/euterpe/static
 USER euterpe
-VOLUME ["/data", "/music"]
+VOLUME ["/data"]
 ENV EUTERPE_DATABASE_URL=sqlite:/data/library.db
 EXPOSE 8080
 HEALTHCHECK CMD curl -f http://127.0.0.1:8080/health || exit 1
@@ -56,7 +56,7 @@ Phase 1: только `euterpe-qobuz` CLI binary optional.
 | Mount | Путь в контейнере | Содержимое |
 |-------|------------------|------------|
 | `euterpe-data` | `/data` | `library.db`, config, qobuz cache |
-| `euterpe-music` | `/music` | FLAC/MP3 |
+| Library storage | Settings | Локальный путь или SMB-ресурс для FLAC/MP3 |
 | `euterpe-torrent` (опционально) | `/data/torrent-incoming` | staging и загрузки BitTorrent (librqbit) |
 
 ## Environment
@@ -65,7 +65,6 @@ Phase 1: только `euterpe-qobuz` CLI binary optional.
 |----------|---------|----------|
 | `EUTERPE_BIND` | `127.0.0.1:8080` | Listen address |
 | `EUTERPE_DATABASE_URL` | `sqlite:/data/library.db` | sqlx URL |
-| `EUTERPE_LIBRARY_PATH` | `/music` | Scan/download root |
 | `EUTERPE_TORRENT_INCOMING_DIR` | — | Каталог для inspect/download торрентов; без него API торрентов отключён |
 | `EUTERPE_TORRENT_MAX_ACTIVE` | `2` | Параллельных torrent-задач |
 | `EUTERPE_TORRENT_DISABLE_UPLOAD` | `true` | librqbit: не отдавать пирам (только загрузка) |

@@ -147,6 +147,14 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     };
     let pool = db::connect(&config.database_url).await.unwrap();
     db::migrate(&pool).await.unwrap();
+    euterpe_server::services::app_settings::save_storage(
+        &pool,
+        &euterpe_server::services::app_settings::StorageSettings::local(
+            config.library_path.display().to_string(),
+        ),
+    )
+    .await
+    .unwrap();
 
     let (job_tx, job_rx) = mpsc::channel(32);
     let (convert_job_tx, _) = mpsc::channel(32);
@@ -165,11 +173,20 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         http: Client::new(),
         qobuz: Arc::clone(&qobuz),
         job_tx,
-        convert_job_tx,
+        convert_job_tx: convert_job_tx.clone(),
         events: events.clone(),
-        scan_events,
+        scan_events: scan_events.clone(),
         convert_events,
-        runtime,
+        runtime: runtime.clone(),
+        storage_watch: euterpe_server::services::storage_watch::StorageWatchHandle::new(
+            euterpe_server::services::storage_watch::StorageWatchDeps {
+                pool: pool.clone(),
+                config: Arc::clone(&config),
+                runtime,
+                scan_events,
+                convert_job_tx,
+            },
+        ),
         hawk: None,
         torrent: None,
         torrent_staging: Arc::new(euterpe_server::services::torrent_staging::TorrentStaging::new()),

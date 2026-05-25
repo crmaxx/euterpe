@@ -13,6 +13,7 @@ pub const KEY_UI_PREFERENCES: &str = "ui.preferences";
 pub const KEY_CONVERTER_SETTINGS: &str = "converter.settings";
 pub const KEY_LIBRARY_SCAN_SETTINGS: &str = "library.scan.settings";
 pub const KEY_DOWNLOADS_SETTINGS: &str = "downloads.settings";
+pub const KEY_STORAGE_SETTINGS: &str = "storage.settings";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -222,6 +223,7 @@ pub struct RuntimeSettings {
     pub converter: ConverterSettings,
     pub library_scan: LibraryScanSettings,
     pub downloads: DownloadsSettings,
+    pub storage: StorageSettings,
 }
 
 impl RuntimeSettings {
@@ -291,12 +293,56 @@ pub fn downloads_defaults(config: &AppConfig) -> DownloadsSettings {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StorageSettings {
+    pub library: Option<StorageLocation>,
+}
+
+impl StorageSettings {
+    pub fn local(path: impl Into<String>) -> Self {
+        Self {
+            library: Some(StorageLocation::Local { path: path.into() }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StorageLocation {
+    Local {
+        path: String,
+    },
+    Smb {
+        host: String,
+        #[serde(default = "default_smb_port")]
+        port: u16,
+        share: String,
+        #[serde(default)]
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        username: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        password_encrypted: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workgroup: Option<String>,
+    },
+}
+
+fn default_smb_port() -> u16 {
+    445
+}
+
+pub fn storage_defaults(_config: &AppConfig) -> StorageSettings {
+    StorageSettings::default()
+}
+
 pub async fn load_runtime_settings(pool: &SqlitePool, config: &AppConfig) -> RuntimeSettings {
     RuntimeSettings {
         ui: load_ui(pool, config).await,
         converter: load_converter(pool).await,
         library_scan: load_library_scan(pool, config).await,
         downloads: load_downloads(pool, config).await,
+        storage: load_storage(pool, config).await,
     }
 }
 
@@ -319,6 +365,10 @@ pub async fn load_library_scan(pool: &SqlitePool, config: &AppConfig) -> Library
 
 pub async fn load_downloads(pool: &SqlitePool, config: &AppConfig) -> DownloadsSettings {
     load_json(pool, KEY_DOWNLOADS_SETTINGS, downloads_defaults(config)).await
+}
+
+pub async fn load_storage(pool: &SqlitePool, config: &AppConfig) -> StorageSettings {
+    load_json(pool, KEY_STORAGE_SETTINGS, storage_defaults(config)).await
 }
 
 async fn load_json<T>(pool: &SqlitePool, key: &str, default: T) -> T
@@ -353,6 +403,11 @@ pub async fn save_library_scan(
 pub async fn save_downloads(pool: &SqlitePool, value: &DownloadsSettings) -> Result<(), ApiError> {
     validate_downloads(value)?;
     save_json(pool, KEY_DOWNLOADS_SETTINGS, value).await
+}
+
+pub async fn save_storage(pool: &SqlitePool, value: &StorageSettings) -> Result<(), ApiError> {
+    validate_storage(value)?;
+    save_json(pool, KEY_STORAGE_SETTINGS, value).await
 }
 
 async fn save_json<T>(pool: &SqlitePool, key: &str, value: &T) -> Result<(), ApiError>
@@ -390,7 +445,47 @@ pub fn validate_downloads(v: &DownloadsSettings) -> Result<(), ApiError> {
     Ok(())
 }
 
+pub fn validate_storage(v: &StorageSettings) -> Result<(), ApiError> {
+    match &v.library {
+        None => {}
+        Some(StorageLocation::Local { path }) if path.trim().is_empty() => {
+                return Err(ApiError::bad_request(
+                    "local library path must not be empty",
+                ));
+            }
+            Some(StorageLocation::Local { .. }) => {}
+        Some(StorageLocation::Smb {
+            host, port, share, ..
+        }) => {
+            if host.trim().is_empty() {
+                return Err(ApiError::bad_request("smb host must not be empty"));
+            }
+            if share.trim().is_empty() {
+                return Err(ApiError::bad_request("smb share must not be empty"));
+            }
+            if *port == 0 {
+                return Err(ApiError::bad_request("smb port must be > 0"));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub type RuntimeSettingsHandle = Arc<RwLock<RuntimeSettings>>;
+
+pub async fn require_local_library_path(
+    handle: &RuntimeSettingsHandle,
+) -> Result<std::path::PathBuf, ApiError> {
+    match &handle.read().await.storage.library {
+        Some(StorageLocation::Local { path }) => Ok(std::path::PathBuf::from(path)),
+        Some(StorageLocation::Smb { .. }) => Err(ApiError::Message(
+            "SMB_LIBRARY_UNSUPPORTED: this library operation still requires local storage".into(),
+        )),
+        None => Err(ApiError::Message(
+            "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+        )),
+    }
+}
 
 pub async fn refresh_runtime(
     handle: &RuntimeSettingsHandle,

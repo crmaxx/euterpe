@@ -12,7 +12,7 @@ Base path: `/api/v1`
 
 ### GET /api/v1/server/info
 
-Public snapshot (no secrets): `version`, `library_path`, `credentials_configured`, `admin_auth_required`.
+Public snapshot (no secrets): `version`, `library_storage`, `credentials_configured`, `admin_auth_required`.
 
 ### GET /api/v1/qobuz/sync/latest
 

@@ -47,7 +47,11 @@ pub use settings::{
     ConverterSettings, ConverterSettingsPatch, ConverterSettingsResponse, DownloadsSettings,
     DownloadsSettingsPatch, DownloadsSettingsResponse, FilePolicyDto, FlacEncodeSettingsDto,
     FlacPresetDto, LibraryScanSettings, LibraryScanSettingsPatch, LibraryScanSettingsResponse,
-    UiLocale, UiPreferences, UiPreferencesPatch, UiPreferencesResponse, UiTheme,
+    SmbSharesRequest, SmbSharesResponse, StorageBrowseEntry, StorageBrowseResponse,
+    StorageLocation, StorageLocationPatch, StorageLocationView, StorageSettings,
+    StorageSettingsPatch, StorageSettingsResponse, StorageSettingsView, StorageTestRequest,
+    StorageTestResponse, UiLocale, UiPreferences, UiPreferencesPatch, UiPreferencesResponse,
+    UiTheme,
 };
 pub use torrent::{
     TorrentConfirmRequest, TorrentCueCandidate, TorrentInspectFile, TorrentInspectMagnetRequest,

@@ -8,6 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_util::io::ReaderStream;
 
 use crate::error::ApiError;
+use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 use crate::library::tags::audio_content_type;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +96,53 @@ pub async fn audio_file_response(
         .await
         .map_err(|_| ApiError::Message("audio file not found".into()))?;
     let stream = ReaderStream::new(file);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_LENGTH, file_size)
+        .body(Body::from_stream(stream))
+        .map_err(|e| ApiError::Message(e.to_string()))
+}
+
+pub async fn audio_storage_response(
+    storage: &dyn LibraryStorage,
+    path: &StoragePath,
+    range_header: Option<&str>,
+) -> Result<Response, ApiError> {
+    let meta = storage.metadata(path).await?;
+    if meta.kind != StorageEntryKind::File {
+        return Err(ApiError::Message("audio file not found".into()));
+    }
+    let file_size = meta.size;
+    let content_type = audio_content_type(std::path::Path::new(path.as_str()));
+
+    if let Some(range) = range_header {
+        match parse_bytes_range(range, file_size) {
+            Ok(r) => {
+                let length = r.end - r.start + 1;
+                let stream = storage.read_stream(path, r.start, Some(length)).await?;
+                let content_range = format!("bytes {}-{}/{}", r.start, r.end, file_size);
+                return Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::CONTENT_TYPE, content_type)
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .header(header::CONTENT_LENGTH, length)
+                    .header(header::CONTENT_RANGE, content_range)
+                    .body(Body::from_stream(stream))
+                    .map_err(|e| ApiError::Message(e.to_string()));
+            }
+            Err(()) => {
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{file_size}"))
+                    .body(Body::empty())
+                    .map_err(|e| ApiError::Message(e.to_string()));
+            }
+        }
+    }
+
+    let stream = storage.read_stream(path, 0, None).await?;
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)

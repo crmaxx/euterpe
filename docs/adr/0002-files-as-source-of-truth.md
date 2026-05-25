@@ -10,7 +10,7 @@ Music library longevity depends on portable files, not a proprietary DB blob sto
 
 ## Decision
 
-- Audio files and embedded/sidecar covers on disk under `/music` are authoritative.
+- Audio files and embedded/sidecar covers in configured library storage are authoritative.
 - SQLite stores index, Qobuz IDs, job state, settings.
 - Full library can be rebuilt via filesystem rescan (Phase 5).
 - Do not store cover BLOBs in DB by default; store `cover_path` optional.

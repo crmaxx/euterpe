@@ -6,11 +6,25 @@ use crate::api::{
 };
 use crate::db::cue_jobs::CueJobRow;
 use crate::error::ApiError;
+use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 
 pub fn album_has_cue_files(library_root: &Path, album_path_rel: Option<&str>) -> bool {
     album_path_rel
         .and_then(|rel| discover_cue_files(library_root, rel).ok())
         .is_some_and(|files| !files.is_empty())
+}
+
+pub async fn album_has_cue_files_storage(
+    storage: &dyn LibraryStorage,
+    album_path_rel: Option<&str>,
+) -> Result<bool, ApiError> {
+    let Some(rel) = album_path_rel.filter(|rel| !rel.trim().is_empty()) else {
+        return Ok(false);
+    };
+    Ok(discover_cue_files_storage(storage, rel)
+        .await
+        .map(|files| !files.is_empty())
+        .unwrap_or(false))
 }
 
 pub fn discover_cue_files(
@@ -59,6 +73,41 @@ pub fn load_album_cue(
     let cue_text = std::fs::read_to_string(&cue_abs)
         .map_err(|e| ApiError::Message(format!("read {}: {e}", cue_abs.display())))?;
     let parsed = euterpe_cue::parse_cue(&cue_text, Path::new(selected))
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+    let document = cue_document_to_api(parsed);
+    let validation =
+        cue_validation_to_api(euterpe_cue::validate_document(&document_to_core(&document)));
+    Ok(CueAlbumResponse {
+        cue_files: cue_files
+            .into_iter()
+            .map(|path| CueFileChoice {
+                selected: path == selected_owned,
+                path,
+            })
+            .collect(),
+        document,
+        validation,
+    })
+}
+
+pub async fn load_album_cue_storage(
+    storage: &dyn LibraryStorage,
+    album_path_rel: &str,
+    cue_path_query: Option<&str>,
+) -> Result<CueAlbumResponse, ApiError> {
+    let cue_files = discover_cue_files_storage(storage, album_path_rel).await?;
+    if cue_files.is_empty() {
+        return Err(ApiError::Message("album has no CUE files".into()));
+    }
+    let selected = cue_path_query
+        .filter(|q| cue_files.iter().any(|c| c == q))
+        .unwrap_or(&cue_files[0]);
+    let selected_owned = selected.to_string();
+    let cue_path = StoragePath::parse(selected)?;
+    let cue_bytes = storage.read(&cue_path).await?;
+    let cue_text = std::str::from_utf8(&cue_bytes)
+        .map_err(|e| ApiError::Message(format!("read {}: {e}", cue_path.as_str())))?;
+    let parsed = euterpe_cue::parse_cue(cue_text, Path::new(selected))
         .map_err(|e| ApiError::bad_request(e.to_string()))?;
     let document = cue_document_to_api(parsed);
     let validation =
@@ -212,10 +261,97 @@ fn audio_format(path: &str) -> String {
     .into()
 }
 
+async fn discover_cue_files_storage(
+    storage: &dyn LibraryStorage,
+    album_path_rel: &str,
+) -> Result<Vec<String>, ApiError> {
+    let album = StoragePath::parse(album_path_rel)?;
+    let entries = storage.list_dir(&album).await?;
+    let mut out: Vec<String> = entries
+        .into_iter()
+        .filter(|entry| entry.kind == StorageEntryKind::File)
+        .filter(|entry| {
+            Path::new(entry.path.as_str())
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("cue"))
+        })
+        .map(|entry| entry.path.as_str().to_string())
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
 fn safe_join(root: &Path, rel: &str) -> Result<PathBuf, ApiError> {
     let joined = root.join(rel);
     if rel.contains("..") || joined.is_absolute() && !joined.starts_with(root) {
         return Err(ApiError::bad_request("path outside library"));
     }
     Ok(joined)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::storage::LocalStorage;
+
+    const VALID_CUE: &str = r#"PERFORMER "Artist"
+TITLE "Album"
+FILE "album.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "First"
+    PERFORMER "Artist"
+    INDEX 01 00:00:00
+"#;
+
+    #[tokio::test]
+    async fn album_has_cue_files_storage_finds_case_insensitive_cue_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let album_dir = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album_dir).unwrap();
+        std::fs::write(album_dir.join("Album.CUE"), VALID_CUE).unwrap();
+        std::fs::write(album_dir.join("notes.txt"), "ignore").unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        assert!(
+            album_has_cue_files_storage(&storage, Some("Artist/Album"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !album_has_cue_files_storage(&storage, Some("Artist/Missing"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn load_album_cue_storage_reads_selected_cue_from_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let album_dir = dir.path().join("Artist").join("Album");
+        std::fs::create_dir_all(&album_dir).unwrap();
+        std::fs::write(
+            album_dir.join("a.cue"),
+            VALID_CUE.replace("Album", "First Album"),
+        )
+        .unwrap();
+        std::fs::write(
+            album_dir.join("b.cue"),
+            VALID_CUE.replace("Album", "Second Album"),
+        )
+        .unwrap();
+        let storage = LocalStorage::new(dir.path());
+
+        let response = load_album_cue_storage(&storage, "Artist/Album", Some("Artist/Album/b.cue"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.document.cue_path, "Artist/Album/b.cue");
+        assert_eq!(response.document.album_title, "Second Album");
+        assert_eq!(response.cue_files.len(), 2);
+        assert_eq!(response.cue_files[0].path, "Artist/Album/a.cue");
+        assert!(!response.cue_files[0].selected);
+        assert_eq!(response.cue_files[1].path, "Artist/Album/b.cue");
+        assert!(response.cue_files[1].selected);
+    }
 }

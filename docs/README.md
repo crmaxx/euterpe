@@ -26,7 +26,7 @@ All implementation work follows **strict TDD** (Test-Driven Development). See [A
 
 - **Backend:** Rust, Axum, reqwest (rustls), SQLite (WAL), sqlx
 - **Frontend:** Vite, React, Tailwind, TanStack Query/Table, shadcn/ui
-- **Distribution:** Docker with `/data` and `/music` volumes
+- **Distribution:** Docker with `/data`; library storage is configured in Settings
 - **First code:** `crates/euterpe-qobuz` (Qobuz API client)
 
 ## Qobuz authentication (2026)

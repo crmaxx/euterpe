@@ -167,8 +167,7 @@ impl AppConfig {
             .and_then(|s| s.parse().ok())
             .unwrap_or(600);
 
-        let library_path =
-            PathBuf::from(env::var("EUTERPE_LIBRARY_PATH").unwrap_or_else(|_| "/music".into()));
+        let library_path = PathBuf::from(env::var("EUTERPE_LIBRARY_PATH").unwrap_or_default());
 
         let torrent_incoming_dir = env::var("EUTERPE_TORRENT_INCOMING_DIR")
             .ok()
@@ -243,15 +242,6 @@ impl AppConfig {
         self.qobuz_play_base
             .as_deref()
             .unwrap_or(euterpe_qobuz::oauth::default_play_base())
-    }
-
-    pub fn ensure_library_root(&self) -> Result<(), ApiError> {
-        std::fs::create_dir_all(&self.library_path).map_err(|e| {
-            ApiError::Config(format!(
-                "cannot create EUTERPE_LIBRARY_PATH {}: {e}",
-                self.library_path.display()
-            ))
-        })
     }
 
     pub fn ensure_torrent_incoming_dir(&self) -> Result<(), ApiError> {
