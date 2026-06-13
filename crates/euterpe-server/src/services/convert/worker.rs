@@ -2,9 +2,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::library::file_hash::content_hash_xxh64;
 use bytes::Bytes;
 use euterpe_converter::{ConvertOptions, ConvertProgress, FilePolicy, FlacEncodeSettings};
-use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use tokio::sync::{Semaphore, broadcast, mpsc};
 use tokio::task::JoinSet;
@@ -500,9 +500,7 @@ fn storage_rel_path_to_string(path: &std::path::Path) -> String {
 }
 
 fn hash_bytes(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex::encode(hasher.finalize())
+    content_hash_xxh64(bytes)
 }
 
 async fn mark_job_failed(
@@ -709,7 +707,10 @@ mod tests {
 
         let runtime = RuntimeSettings {
             storage: StorageSettings::local(storage_dir.path().display().to_string()),
-            converter: ConverterSettings { parallelism: 1, ..Default::default() },
+            converter: ConverterSettings {
+                parallelism: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let runtime = Arc::new(RwLock::new(runtime));

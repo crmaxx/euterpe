@@ -156,6 +156,33 @@ pub async fn list_by_album(pool: &SqlitePool, album_id: i64) -> Result<Vec<Track
     Ok(rows)
 }
 
+pub async fn list_by_album_or_path_prefix(
+    pool: &SqlitePool,
+    album_id: i64,
+    album_path: Option<&str>,
+) -> Result<Vec<TrackRow>, ApiError> {
+    let Some(album_path) = album_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return list_by_album(pool, album_id).await;
+    };
+    let (lower, upper) = path_prefix_bounds(album_path);
+    let mut rows: Vec<TrackRow> = sqlx::query_as(
+        r#"
+        SELECT id, album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
+               duration_sec, file_mtime, file_hash, file_size
+        FROM tracks
+        WHERE album_id = ? OR path = ? OR (path >= ? AND path < ?)
+        "#,
+    )
+    .bind(album_id)
+    .bind(album_path)
+    .bind(lower)
+    .bind(upper)
+    .fetch_all(pool)
+    .await?;
+    rows.sort_by_key(|a| filename_sort_key(&a.path));
+    Ok(rows)
+}
+
 pub async fn update_metadata(
     pool: &SqlitePool,
     id: i64,
@@ -196,6 +223,123 @@ pub async fn update_path(pool: &SqlitePool, id: i64, path: &str) -> Result<(), A
     .execute(pool)
     .await?
     .rows_affected();
+    if n == 0 {
+        return Err(ApiError::Message("track not found".into()));
+    }
+    Ok(())
+}
+
+pub async fn delete_by_path(pool: &SqlitePool, path: &str) -> Result<u64, ApiError> {
+    let affected = sqlx::query("DELETE FROM tracks WHERE path = ?")
+        .bind(path)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(affected)
+}
+
+pub async fn delete_by_path_or_prefix(pool: &SqlitePool, path: &str) -> Result<u64, ApiError> {
+    let (lower, upper) = path_prefix_bounds(path);
+    let affected = sqlx::query("DELETE FROM tracks WHERE path = ? OR (path >= ? AND path < ?)")
+        .bind(path)
+        .bind(lower)
+        .bind(upper)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(affected)
+}
+
+pub async fn delete_absent_in_scope(
+    pool: &SqlitePool,
+    scope_path: Option<&str>,
+    keep_paths: &[String],
+) -> Result<u64, ApiError> {
+    let mut sql = String::from("DELETE FROM tracks WHERE ");
+    let scope = normalized_scope(scope_path);
+    if scope.is_empty() {
+        sql.push_str("1=1");
+    } else {
+        sql.push_str("(path = ? OR (path >= ? AND path < ?))");
+    }
+    if !keep_paths.is_empty() {
+        sql.push_str(" AND path NOT IN (");
+        sql.push_str(
+            &std::iter::repeat_n("?", keep_paths.len())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        sql.push(')');
+    }
+
+    let mut query = sqlx::query(&sql);
+    if !scope.is_empty() {
+        let (lower, upper) = path_prefix_bounds(&scope);
+        query = query.bind(scope).bind(lower).bind(upper);
+    }
+    for path in keep_paths {
+        query = query.bind(path);
+    }
+    let affected = query.execute(pool).await?.rows_affected();
+    Ok(affected)
+}
+
+fn normalized_scope(scope_path: Option<&str>) -> String {
+    scope_path
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('/')
+        .to_string()
+}
+
+pub(crate) fn path_prefix_bounds(path: &str) -> (String, String) {
+    let lower = format!("{}/", path.trim_end_matches('/'));
+    let mut upper = lower.clone().into_bytes();
+    if let Some(last) = upper.last_mut() {
+        *last = last.saturating_add(1);
+    }
+    (
+        lower,
+        String::from_utf8(upper).expect("path prefix upper bound remains valid UTF-8"),
+    )
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TrackHashBackfillRow {
+    pub id: i64,
+    pub path: String,
+    pub file_size: Option<i64>,
+}
+
+pub async fn list_needing_file_hash_batch(
+    pool: &SqlitePool,
+    after_id: i64,
+    limit: i64,
+) -> Result<Vec<TrackHashBackfillRow>, ApiError> {
+    let rows = sqlx::query_as::<_, TrackHashBackfillRow>(
+        r#"
+        SELECT id, path, file_size
+        FROM tracks
+        WHERE id > ? AND (file_hash IS NULL OR TRIM(file_hash) = '')
+        ORDER BY id
+        LIMIT ?
+        "#,
+    )
+    .bind(after_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn set_file_hash(pool: &SqlitePool, id: i64, file_hash: &str) -> Result<(), ApiError> {
+    let n =
+        sqlx::query("UPDATE tracks SET file_hash = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(file_hash)
+            .bind(id)
+            .execute(pool)
+            .await?
+            .rows_affected();
     if n == 0 {
         return Err(ApiError::Message("track not found".into()));
     }
@@ -368,6 +512,258 @@ mod tests {
                 "A/Al/02 - Two.flac",
                 "A/Al/10 - Ten.flac",
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_by_path_or_prefix_keeps_unrelated_tracks() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "A", None).await.unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Al",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Al"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for path in ["A/Al/01.flac", "A/Al/Disc 2/02.flac", "A/Other/01.flac"] {
+            upsert(
+                &pool,
+                TrackUpsert {
+                    album_id,
+                    title: path,
+                    track_number: None,
+                    year: None,
+                    disc_number: None,
+                    genre: None,
+                    qobuz_track_id: None,
+                    path,
+                    duration_sec: None,
+                    file_mtime: None,
+                    file_hash: None,
+                    file_size: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let deleted = delete_by_path_or_prefix(&pool, "A/Al").await.unwrap();
+        assert_eq!(deleted, 2);
+        let rows = list_by_album(&pool, album_id).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, "A/Other/01.flac");
+    }
+
+    #[tokio::test]
+    async fn delete_by_path_or_prefix_keeps_sibling_with_same_prefix_text() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "Artist", None)
+            .await
+            .unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("Artist/Album"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for path in [
+            "Artist/Album/01.flac",
+            "Artist/Album/02.flac",
+            "Artist/AlbumX/01.flac",
+        ] {
+            upsert(
+                &pool,
+                TrackUpsert {
+                    album_id,
+                    title: path,
+                    track_number: None,
+                    year: None,
+                    disc_number: None,
+                    genre: None,
+                    qobuz_track_id: None,
+                    path,
+                    duration_sec: None,
+                    file_mtime: None,
+                    file_hash: None,
+                    file_size: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let deleted = delete_by_path_or_prefix(&pool, "Artist/Album")
+            .await
+            .unwrap();
+        assert_eq!(deleted, 2);
+        let rows = list_by_album(&pool, album_id).await.unwrap();
+        let paths: Vec<_> = rows.iter().map(|row| row.path.as_str()).collect();
+        assert_eq!(paths, ["Artist/AlbumX/01.flac"]);
+    }
+
+    #[test]
+    fn path_prefix_helpers_do_not_reintroduce_substr_predicates() {
+        let source = include_str!("tracks.rs");
+        let needle = ["substr", "(path"].join("");
+        assert!(
+            !source.contains(&needle),
+            "path prefix helpers should use exact-or-range predicates so idx_tracks_path remains usable"
+        );
+    }
+
+    #[tokio::test]
+    async fn path_prefix_delete_plan_uses_tracks_path_index() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let (lower, upper) = path_prefix_bounds("Artist/Album");
+        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+            "EXPLAIN QUERY PLAN DELETE FROM tracks WHERE path = ? OR (path >= ? AND path < ?)",
+        )
+        .bind("Artist/Album")
+        .bind(lower)
+        .bind(upper)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let details = plan
+            .into_iter()
+            .map(|(_, _, _, detail)| detail)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            details.contains("idx_tracks_path"),
+            "expected idx_tracks_path in query plan, got:\n{details}"
+        );
+        assert!(
+            !details.contains("SCAN tracks"),
+            "path prefix prune should not scan tracks, got:\n{details}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_needing_file_hash_batch_pages_by_id() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "A", None).await.unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Album"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        for n in 1..=3 {
+            upsert(
+                &pool,
+                TrackUpsert {
+                    album_id,
+                    title: &format!("Track {n}"),
+                    track_number: Some(n),
+                    year: None,
+                    disc_number: None,
+                    genre: None,
+                    qobuz_track_id: None,
+                    path: &format!("A/Album/{n:02}.flac"),
+                    duration_sec: None,
+                    file_mtime: None,
+                    file_hash: None,
+                    file_size: Some(10),
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let first = list_needing_file_hash_batch(&pool, 0, 2).await.unwrap();
+        assert_eq!(first.len(), 2);
+        let second = list_needing_file_hash_batch(&pool, first[1].id, 2)
+            .await
+            .unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(second[0].id > first[1].id);
+    }
+
+    #[tokio::test]
+    async fn delete_absent_in_scope_prunes_only_missing_paths_inside_scope() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "A", None).await.unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Al",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Al"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for path in [
+            "A/Al/01.flac",
+            "A/Al/stale.flac",
+            "A/AlbumX/stale.flac",
+            "B/Al/stale.flac",
+        ] {
+            upsert(
+                &pool,
+                TrackUpsert {
+                    album_id,
+                    title: path,
+                    track_number: None,
+                    year: None,
+                    disc_number: None,
+                    genre: None,
+                    qobuz_track_id: None,
+                    path,
+                    duration_sec: None,
+                    file_mtime: None,
+                    file_hash: None,
+                    file_size: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let keep = vec!["A/Al/01.flac".to_string()];
+        let deleted = delete_absent_in_scope(&pool, Some("A/Al"), &keep)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        let rows = list_by_album(&pool, album_id).await.unwrap();
+        let paths: Vec<_> = rows.into_iter().map(|row| row.path).collect();
+        assert_eq!(
+            paths,
+            vec!["A/Al/01.flac", "A/AlbumX/stale.flac", "B/Al/stale.flac"]
         );
     }
 }

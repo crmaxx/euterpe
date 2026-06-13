@@ -43,29 +43,29 @@ pub struct AlbumUpsert<'a> {
 
 pub async fn upsert(pool: &SqlitePool, album: AlbumUpsert<'_>) -> Result<i64, ApiError> {
     if let Some(path) = album.path {
-        let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM albums WHERE path = ?")
-            .bind(path)
-            .fetch_optional(pool)
-            .await?;
-        if let Some((id,)) = existing {
-            sqlx::query(
-                r#"
-                UPDATE albums
-                SET artist_id = ?, title = ?, year = ?, qobuz_album_id = COALESCE(?, qobuz_album_id),
-                    cover_path = COALESCE(?, cover_path), updated_at = datetime('now')
-                WHERE id = ?
-                "#,
-            )
-            .bind(album.artist_id)
-            .bind(album.title)
-            .bind(album.year)
-            .bind(album.qobuz_album_id)
-            .bind(album.cover_path)
-            .bind(id)
-            .execute(pool)
-            .await?;
-            return Ok(id);
-        }
+        let row: (i64,) = sqlx::query_as(
+            r#"
+            INSERT INTO albums (artist_id, title, year, qobuz_album_id, path, cover_path)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+                artist_id = excluded.artist_id,
+                title = excluded.title,
+                year = excluded.year,
+                qobuz_album_id = COALESCE(excluded.qobuz_album_id, albums.qobuz_album_id),
+                cover_path = COALESCE(excluded.cover_path, albums.cover_path),
+                updated_at = datetime('now')
+            RETURNING id
+            "#,
+        )
+        .bind(album.artist_id)
+        .bind(album.title)
+        .bind(album.year)
+        .bind(album.qobuz_album_id)
+        .bind(path)
+        .bind(album.cover_path)
+        .fetch_one(pool)
+        .await?;
+        return Ok(row.0);
     }
 
     if let Some(qid) = album.qobuz_album_id {
@@ -291,6 +291,59 @@ pub async fn set_cover_path(pool: &SqlitePool, id: i64, cover_path: &str) -> Res
     Ok(())
 }
 
+pub async fn id_by_path(pool: &SqlitePool, path: &str) -> Result<Option<i64>, ApiError> {
+    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM albums WHERE path = ?")
+        .bind(path)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(id,)| id))
+}
+
+pub async fn delete_empty_storage_albums_in_scope(
+    pool: &SqlitePool,
+    scope_path: Option<&str>,
+) -> Result<u64, ApiError> {
+    let scope = normalized_scope(scope_path);
+    let mut sql = String::from(
+        r#"
+        DELETE FROM albums
+        WHERE path IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM tracks t WHERE t.album_id = albums.id)
+        "#,
+    );
+    if !scope.is_empty() {
+        sql.push_str(" AND (path = ? OR (path >= ? AND path < ?))");
+    }
+
+    let mut query = sqlx::query(&sql);
+    if !scope.is_empty() {
+        let (lower, upper) = path_prefix_bounds(&scope);
+        query = query.bind(scope).bind(lower).bind(upper);
+    }
+    let affected = query.execute(pool).await?.rows_affected();
+    Ok(affected)
+}
+
+fn normalized_scope(scope_path: Option<&str>) -> String {
+    scope_path
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('/')
+        .to_string()
+}
+
+pub(crate) fn path_prefix_bounds(path: &str) -> (String, String) {
+    let lower = format!("{}/", path.trim_end_matches('/'));
+    let mut upper = lower.clone().into_bytes();
+    if let Some(last) = upper.last_mut() {
+        *last = last.saturating_add(1);
+    }
+    (
+        lower,
+        String::from_utf8(upper).expect("path prefix upper bound remains valid UTF-8"),
+    )
+}
+
 pub async fn find_id_by_qobuz_album_id(
     pool: &SqlitePool,
     qobuz_id: i64,
@@ -341,5 +394,97 @@ mod tests {
         assert_eq!(id1, id2);
         let row = get_by_id(&pool, id1).await.unwrap().unwrap();
         assert_eq!(row.title, "Album Updated");
+    }
+
+    #[tokio::test]
+    async fn delete_empty_storage_albums_in_scope_keeps_non_empty_and_metadata_only() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "A", None).await.unwrap();
+        let empty_in_scope = upsert(
+            &pool,
+            AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Empty",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Empty"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        let non_empty = upsert(
+            &pool,
+            AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Full",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Full"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        let empty_outside_scope = upsert(
+            &pool,
+            AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Outside",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("B/Outside"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        let metadata_only = upsert(
+            &pool,
+            AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Metadata",
+                year: None,
+                qobuz_album_id: Some(42),
+                path: None,
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        crate::db::tracks::upsert(
+            &pool,
+            crate::db::tracks::TrackUpsert {
+                album_id: non_empty,
+                title: "Track",
+                track_number: None,
+                year: None,
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path: "A/Full/01.flac",
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let deleted = delete_empty_storage_albums_in_scope(&pool, Some("A"))
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+        assert!(get_by_id(&pool, empty_in_scope).await.unwrap().is_none());
+        assert!(get_by_id(&pool, non_empty).await.unwrap().is_some());
+        assert!(
+            get_by_id(&pool, empty_outside_scope)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(get_by_id(&pool, metadata_only).await.unwrap().is_some());
     }
 }

@@ -1,0 +1,8 @@
+[files]
+extend-exclude = ["third_party"]
+
+[default.extend-words]
+Pn = "Pn"
+caf = "caf"
+indx = "indx"
+autorisation = "autorisation"

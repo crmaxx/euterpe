@@ -115,6 +115,8 @@ export type StorageBrowseResponse =
   components["schemas"]["StorageBrowseResponse"];
 export type StorageBrowseEntry =
   components["schemas"]["StorageBrowseEntry"];
+export type StorageBrowseRequest =
+  components["schemas"]["StorageBrowseRequest"];
 export type StorageTestRequest =
   components["schemas"]["StorageTestRequest"];
 export type StorageTestResponse =
@@ -342,15 +344,21 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  browseStorage: (params: { target: "library"; path?: string }) => {
-    const search = new URLSearchParams({ target: params.target });
-    if (params.path) {
-      search.set("path", params.path);
+  browseStorage: (path?: string) => {
+    const params = new URLSearchParams({ target: "library" });
+    if (path) {
+      params.set("path", path);
     }
     return fetchJson<StorageBrowseResponse>(
-      `/settings/storage/browse?${search.toString()}`,
+      `/settings/storage/browse?${params.toString()}`,
     );
   },
+
+  browseDraftStorage: (body: StorageBrowseRequest) =>
+    fetchJson<StorageBrowseResponse>("/settings/storage/browse", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   listSmbShares: (body: SmbSharesRequest) =>
     fetchJson<SmbSharesResponse>("/settings/storage/smb-shares", {

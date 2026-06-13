@@ -22,7 +22,7 @@ euterpe-converter = { path = "../euterpe-converter", features = ["wavpack"] }
 euterpe-cue = { path = "../euterpe-cue" }
 euterpe-hawk = { path = "../euterpe-hawk", features = ["axum", "tracing-layer"] }
 euterpe-qobuz = { path = "../euterpe-qobuz" }
-euterpe-smb = { path = "../euterpe-smb" }
+euterpe-smb = { path = "../euterpe-smb", features = ["test-hooks"] }
 euterpe-torrent = { path = "../euterpe-torrent" }
 uuid = { version = "1", features = ["v4"] }
 futures-util = "0.3"
@@ -44,9 +44,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 lofty = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
 walkdir = "2"
-sha2 = "0.10"
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+url = "2"
 
 [dev-dependencies]
+euterpe-smb = { path = "../euterpe-smb", features = ["test-hooks"] }
 axum = { version = "0.8", features = ["macros"] }
 http-body-util = "0.1"
 mockito = "1"

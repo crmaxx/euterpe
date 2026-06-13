@@ -1,3 +1,4 @@
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
 pub use crate::services::app_settings::{
@@ -85,11 +86,23 @@ pub struct DownloadsSettingsPatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageSettingsResponse {
     pub settings: StorageSettingsView,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_migration_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommend_full_scan: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageSettingsView {
     pub library: Option<StorageLocationView>,
+    pub presets: Vec<StoragePresetView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoragePresetView {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +122,7 @@ pub enum StorageLocationView {
         username: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         workgroup: Option<String>,
+        password_configured: bool,
     },
 }
 
@@ -154,36 +168,62 @@ impl StorageSettingsView {
         watch_status: StorageWatchStatus,
     ) -> Self {
         let watch_status = StorageWatchStatusView::from(watch_status);
-        let library = value.library.as_ref().map(|library| match library {
-            StorageLocation::Local { path } => StorageLocationView::Local {
-                path: path.clone(),
-                watch_status: StorageWatchStatusView::from(StorageWatchStatus::disabled()),
-            },
-            StorageLocation::Smb {
-                host,
-                port,
-                share,
-                path,
-                username,
-                workgroup,
-                ..
-            } => StorageLocationView::Smb {
-                host: host.clone(),
-                port: *port,
-                share: share.clone(),
-                path: path.clone(),
-                watch_status,
-                username: username.clone(),
-                workgroup: workgroup.clone(),
-            },
-        });
-        Self { library }
+        let library = value
+            .library
+            .as_ref()
+            .map(|library| storage_location_view(library, watch_status));
+        let presets = value
+            .presets
+            .iter()
+            .map(|preset| StoragePresetView {
+                id: preset.id.clone(),
+                label: preset.label.clone(),
+                kind: match &preset.location {
+                    StorageLocation::Local { .. } => "local".to_string(),
+                    StorageLocation::Smb { .. } => "smb".to_string(),
+                },
+            })
+            .collect();
+        Self { library, presets }
+    }
+}
+
+fn storage_location_view(
+    library: &StorageLocation,
+    watch_status: StorageWatchStatusView,
+) -> StorageLocationView {
+    match library {
+        StorageLocation::Local { path } => StorageLocationView::Local {
+            path: path.clone(),
+            watch_status: StorageWatchStatusView::from(StorageWatchStatus::disabled()),
+        },
+        StorageLocation::Smb {
+            host,
+            port,
+            share,
+            path,
+            username,
+            workgroup,
+            password_encrypted,
+        } => StorageLocationView::Smb {
+            host: host.clone(),
+            port: *port,
+            share: share.clone(),
+            path: path.clone(),
+            watch_status,
+            username: username.clone(),
+            workgroup: workgroup.clone(),
+            password_configured: password_encrypted.is_some(),
+        },
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct StorageSettingsPatch {
-    pub library: StorageLocationPatch,
+    #[serde(default)]
+    pub activate_preset_id: Option<String>,
+    #[serde(default)]
+    pub library: Option<StorageLocationPatch>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -200,12 +240,32 @@ pub enum StorageLocationPatch {
         #[serde(default)]
         path: String,
         #[serde(default)]
-        username: Option<String>,
+        username: StringPatchField,
         #[serde(default)]
-        password: Option<String>,
+        password: StringPatchField,
         #[serde(default)]
-        workgroup: Option<String>,
+        workgroup: StringPatchField,
     },
+}
+
+#[derive(Debug, Clone, Default)]
+pub enum StringPatchField {
+    #[default]
+    Missing,
+    Clear,
+    Value(String),
+}
+
+impl<'de> Deserialize<'de> for StringPatchField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(match Option::<String>::deserialize(deserializer)? {
+            Some(value) => Self::Value(value),
+            None => Self::Clear,
+        })
+    }
 }
 
 fn default_smb_port() -> u16 {
@@ -225,6 +285,13 @@ pub struct StorageTestResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct StorageBrowseResponse {
     pub entries: Vec<StorageBrowseEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StorageBrowseRequest {
+    pub location: StorageLocationPatch,
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

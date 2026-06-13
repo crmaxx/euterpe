@@ -14,3 +14,6 @@ members = [
 edition = "2024"
 rust-version = "1.95"
 license = "Apache-2.0"
+
+[patch.crates-io]
+smb = { path = "third_party/smb-0.11.2" }

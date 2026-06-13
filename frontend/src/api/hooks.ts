@@ -16,6 +16,7 @@ import {
   type LibraryScanLatestResponse,
   type QobuzFavoriteItem,
   type SortOrder,
+  type StorageLocationPatch,
 } from "./client";
 import { ApiClientError } from "./errors";
 import { applyConvertProgressEvent } from "@/features/library/convertProgressStore";
@@ -787,10 +788,11 @@ export function useTestStorageSettings() {
   });
 }
 
-export function useBrowseStorage(path?: string) {
+export function useBrowseStorage(location: StorageLocationPatch | null, path?: string) {
   return useQuery({
-    queryKey: queryKeys.storageBrowse(path),
-    queryFn: () => api.browseStorage({ target: "library", path }),
+    queryKey: [...queryKeys.storageBrowse(path), location],
+    queryFn: () => api.browseDraftStorage({ location: location!, path }),
+    enabled: location != null,
   });
 }
 

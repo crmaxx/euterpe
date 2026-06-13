@@ -21,7 +21,7 @@ use tracing::Level;
 use crate::api::{
     HealthResponse, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest,
     QobuzSyncLatestResponse, QobuzSyncResponse, QobuzTestLoginRequest, QobuzTestLoginResponse,
-    ServerInfoResponse,
+    ServerInfoResponse, StorageLocationView, StorageSettingsView,
 };
 use crate::config::AppConfig;
 use crate::credentials;
@@ -38,30 +38,8 @@ use crate::services::download::{WorkerDeps, spawn_worker};
 use crate::services::qobuz_sync;
 use crate::state::{AppChannels, AppState};
 
-/// HTTP access-log style line for `TraceLayer::on_response`.
-///
-/// - **5xx** → `ERROR` (server fault; Hawk layer may report these)
-/// - **4xx** → `WARN` (client/validation; not a process crash)
-/// - **2xx/3xx** → `DEBUG`
-fn log_http_response(status: u16, latency_ms: u64) {
-    match status {
-        500..=599 => tracing::event!(
-            Level::ERROR,
-            status,
-            latency_ms,
-            "http response: server error (details in JSON body)"
-        ),
-        400..=499 => tracing::event!(
-            Level::WARN,
-            status,
-            latency_ms,
-            "http response: client error (details in JSON body)"
-        ),
-        _ => tracing::event!(Level::DEBUG, status, latency_ms, "http response"),
-    }
-}
-
 pub fn app(state: AppState) -> Router {
+    let http_debug = state.config.debug;
     let hawk = state.hawk.clone();
     let protected = Router::new()
         .route("/api/v1/qobuz/oauth/start", get(qobuz_routes::oauth_start))
@@ -155,7 +133,7 @@ pub fn app(state: AppState) -> Router {
         )
         .route(
             "/api/v1/settings/storage/browse",
-            get(settings_ext::browse_storage),
+            get(settings_ext::browse_storage).post(settings_ext::browse_storage_draft),
         )
         .route(
             "/api/v1/settings/storage/smb-shares",
@@ -261,29 +239,44 @@ pub fn app(state: AppState) -> Router {
         router = euterpe_hawk::axum::apply_layers(router, hawk);
     }
 
-    router.layer(
-        TraceLayer::new_for_http()
-            .make_span_with(|req: &Request<Body>| {
-                tracing::info_span!(
-                    "http",
-                    method = %req.method(),
-                    uri = %req.uri(),
+    router
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let debug = http_debug;
+            async move { middleware::log_http_error_response(debug, req, next).await }
+        }))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &Request<Body>| {
+                    tracing::info_span!(
+                        "http",
+                        method = %req.method(),
+                        uri = %middleware::request_log_uri(req.uri()),
+                    )
+                })
+                .on_request(|req: &Request<Body>, _span: &tracing::Span| {
+                    tracing::event!(
+                        Level::DEBUG,
+                        method = %req.method(),
+                        uri = %middleware::request_log_uri(req.uri()),
+                        "request started"
+                    );
+                })
+                .on_response(
+                    |res: &Response<Body>, latency: Duration, _span: &tracing::Span| {
+                        let status = res.status().as_u16();
+                        if status < 400 {
+                            middleware::log_http_success(status, latency.as_millis() as u64);
+                        }
+                    },
                 )
-            })
-            .on_request(|req: &Request<Body>, _span: &tracing::Span| {
-                tracing::event!(
-                    Level::DEBUG,
-                    method = %req.method(),
-                    uri = %req.uri(),
-                    "request started"
-                );
-            })
-            .on_response(
-                |res: &Response<Body>, latency: Duration, _span: &tracing::Span| {
-                    log_http_response(res.status().as_u16(), latency.as_millis() as u64);
-                },
-            ),
-    )
+                .on_failure(
+                    |_failure: tower_http::classify::ServerErrorsFailureClass,
+                     _latency: Duration,
+                     _span: &tracing::Span| {
+                        // Error body + code are logged in middleware when EUTERPE_DEBUG is set.
+                    },
+                ),
+        )
 }
 
 pub async fn serve(
@@ -335,6 +328,7 @@ pub async fn serve(
             .map(|_| Arc::new(tokio::sync::Semaphore::new(state.config.torrent_max_active))),
         scan_events: state.scan_events.clone(),
         job_tx: job_tx.clone(),
+        convert_job_tx: convert_job_tx.clone(),
     };
     spawn_worker(job_rx, worker_deps);
 
@@ -376,16 +370,17 @@ async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoRes
     let credentials_configured = credentials::load_active(&state.config, &state.db)
         .await?
         .is_some();
-    let ui = state.runtime.read().await.ui.clone();
-    let storage = state.runtime.read().await.storage.clone();
+    let runtime = state.runtime.read().await;
+    let ui = runtime.ui.clone();
+    let storage = runtime.storage.clone();
+    drop(runtime);
     let watch_status = state.storage_watch.status().await;
+    let library_storage = StorageSettingsView::from_with_watch_status(&storage, watch_status)
+        .library
+        .map(public_server_storage_view);
     Ok(Json(ServerInfoResponse {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        library_storage: crate::api::StorageSettingsView::from_with_watch_status(
-            &storage,
-            watch_status,
-        )
-        .library,
+        library_storage,
         torrent_incoming_dir: state
             .config
             .torrent_incoming_dir
@@ -395,6 +390,29 @@ async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoRes
         admin_auth_required: state.config.admin_password.is_some(),
         ui,
     }))
+}
+
+fn public_server_storage_view(location: StorageLocationView) -> StorageLocationView {
+    match location {
+        StorageLocationView::Smb {
+            host,
+            port,
+            share,
+            path,
+            watch_status,
+            ..
+        } => StorageLocationView::Smb {
+            host,
+            port,
+            share,
+            path,
+            watch_status,
+            username: None,
+            workgroup: None,
+            password_configured: false,
+        },
+        other => other,
+    }
 }
 
 async fn qobuz_sync_latest(
@@ -583,7 +601,7 @@ pub mod test_support {
             pool.clone(),
             AppChannels {
                 job_tx,
-                convert_job_tx,
+                convert_job_tx: convert_job_tx.clone(),
                 events: events.clone(),
                 scan_events,
                 convert_events,
@@ -608,6 +626,7 @@ pub mod test_support {
                     torrent_semaphore: None,
                     scan_events: state.scan_events.clone(),
                     job_tx: job_tx_wake.clone(),
+                    convert_job_tx,
                 },
             );
             let _ = job_tx_wake.send(0).await;

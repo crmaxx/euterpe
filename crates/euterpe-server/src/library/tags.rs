@@ -142,6 +142,40 @@ pub fn read_tags_from_bytes_with_rel(
     }
 }
 
+const LIMITED_TAG_FLAC_TAIL: usize = 256 * 1024;
+
+/// Read tags from a bounded prefix; for FLAC, optional suffix when prefix parse fails.
+pub fn try_read_tags_lofty_bytes(bytes: &[u8], path_rel: &str) -> Result<TrackTags, ApiError> {
+    read_tags_lofty_reader(Cursor::new(bytes.to_vec()), path_rel)
+}
+
+pub fn read_tags_limited_bytes(head: Vec<u8>, tail: Option<Vec<u8>>, path_rel: &str) -> TrackTags {
+    let path = Path::new(path_rel);
+    if let Ok(tags) = read_tags_lofty_reader(Cursor::new(head), path_rel) {
+        return tags;
+    }
+    if let Some(tail_bytes) = tail
+        && let Ok(tags) = read_tags_lofty_reader(Cursor::new(tail_bytes), path_rel)
+    {
+        return tags;
+    }
+    tracing::warn!(
+        path = path_rel,
+        "lofty tag read failed on limited bytes; indexing from path/filename hints"
+    );
+    tags_from_path(path, Some(path_rel))
+}
+
+pub fn limited_tag_flac_tail_len(file_size: u64) -> usize {
+    (file_size as usize).clamp(1, LIMITED_TAG_FLAC_TAIL)
+}
+
+pub fn is_flac_path(path_rel: &str) -> bool {
+    path_rel
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("flac"))
+}
+
 pub async fn read_tags_storage(
     storage: &dyn LibraryStorage,
     path: &StoragePath,
@@ -427,14 +461,18 @@ pub fn write_tags_to_bytes(
         .read()
         .map_err(|e| ApiError::Message(format!("read {display_path}: {e}")))?;
 
-    let tag_type = tagged.primary_tag_type();
-    let mut tag = tagged
-        .primary_tag()
-        .cloned()
-        .unwrap_or_else(|| Tag::new(tag_type));
-
-    apply_tags_to_lofty_tag(&mut tag, tags);
-    tagged.insert_tag(tag);
+    let tag_types: Vec<_> = tagged.tags().iter().map(|tag| tag.tag_type()).collect();
+    if tag_types.is_empty() {
+        let mut tag = Tag::new(tagged.primary_tag_type());
+        apply_tags_to_lofty_tag(&mut tag, tags);
+        tagged.insert_tag(tag);
+    } else {
+        for tag_type in tag_types {
+            if let Some(tag) = tagged.tag_mut(tag_type) {
+                apply_tags_to_lofty_tag(tag, tags);
+            }
+        }
+    }
 
     let mut cursor = Cursor::new(bytes);
     tagged
@@ -620,6 +658,14 @@ mod tests {
         let flac_read = read_tags(&flac_path).unwrap();
         assert_eq!(flac_read.qobuz_track_id, Some(999));
         assert_eq!(flac_read.qobuz_album_id, Some(4242));
+
+        let flac_bytes = std::fs::read(&flac_path).unwrap();
+        assert!(try_read_tags_lofty_bytes(&flac_bytes, "tagged.flac").is_ok());
+        let tail_len = limited_tag_flac_tail_len(flac_bytes.len() as u64);
+        let tail = flac_bytes[flac_bytes.len().saturating_sub(tail_len)..].to_vec();
+        assert!(try_read_tags_lofty_bytes(&tail, "tagged.flac").is_ok());
+        let from_tail_only = read_tags_limited_bytes(vec![0; 32], Some(tail), "tagged.flac");
+        assert_eq!(from_tail_only.title, original.title);
     }
 
     #[test]
@@ -707,6 +753,8 @@ mod tests {
             &current,
             &TrackTagsPatch {
                 title: Some("Storage Patched".into()),
+                artist: Some("Storage Artist Patched".into()),
+                album: Some("Storage Album Patched".into()),
                 genre: Some("Ambient".into()),
                 ..Default::default()
             },
@@ -718,8 +766,11 @@ mod tests {
         let read = read_tags_storage(&storage, &storage_path).await.unwrap();
 
         assert_eq!(read.title, "Storage Patched");
-        assert_eq!(read.artist, "Storage Artist");
+        assert_eq!(read.artist, "Storage Artist Patched");
+        assert_eq!(read.album, "Storage Album Patched");
         assert_eq!(read.genre.as_deref(), Some("Ambient"));
+        let read_from_path = read_tags(&path).unwrap();
+        assert_eq!(read_from_path.artist, "Storage Artist Patched");
     }
 
     #[test]
