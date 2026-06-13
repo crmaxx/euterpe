@@ -1,12 +1,17 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use bytes::Bytes;
 
 use crate::api::{
     CueAlbumResponse, CueDocument, CueExtraField, CueFileChoice, CueIssue, CueJobSummary,
-    CueValidationResponse,
+    CueSplitRequest, CueValidationResponse,
 };
-use crate::db::cue_jobs::CueJobRow;
+use crate::db::cue_jobs::{self, CueJobRow};
 use crate::error::ApiError;
 use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
+
+pub type CueSplitCancellation = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub fn album_has_cue_files(library_root: &Path, album_path_rel: Option<&str>) -> bool {
     album_path_rel
@@ -181,6 +186,187 @@ pub fn cue_job_to_api(row: CueJobRow) -> CueJobSummary {
         error_message: row.error_message,
         created_at: row.created_at,
         updated_at: row.updated_at,
+    }
+}
+
+pub async fn run_storage_cue_split_job(
+    pool: &sqlx::SqlitePool,
+    storage: Arc<dyn LibraryStorage>,
+    job_id: i64,
+    body: CueSplitRequest,
+    cancellation: Option<CueSplitCancellation>,
+) -> Result<(), ApiError> {
+    cue_jobs::mark_running(pool, job_id).await?;
+    if cancellation
+        .as_ref()
+        .is_some_and(|is_cancelled| is_cancelled())
+    {
+        let message = "CUE split cancelled before output writes";
+        cue_jobs::finish_failed(pool, job_id, message).await?;
+        return Err(ApiError::Message(message.into()));
+    }
+
+    let document = document_to_core(&body.document);
+    let selected_total = document.tracks.iter().filter(|t| t.selected).count() as i64;
+    let source_file_policy = if body.source_file_policy == "delete_after_success" {
+        euterpe_cue::SourceFilePolicy::DeleteAfterSuccess
+    } else {
+        euterpe_cue::SourceFilePolicy::Keep
+    };
+    let progress_pool = pool.clone();
+    let progress_handle = tokio::runtime::Handle::current();
+    let on_progress = std::sync::Arc::new(move |p: euterpe_cue::SplitProgress| {
+        let pool = progress_pool.clone();
+        let tracks_done = p.tracks_done as i64;
+        let tracks_total = p.tracks_total as i64;
+        let _ = progress_handle.block_on(cue_jobs::update_progress(
+            &pool,
+            job_id,
+            tracks_done,
+            tracks_total,
+        ));
+    });
+    let options = euterpe_cue::SplitOptions {
+        source_file_policy,
+        file_mask: body.file_mask.clone(),
+        on_progress: Some(on_progress),
+    };
+    let cue_rel = StoragePath::parse(&body.document.cue_path)?;
+    let cue_dir_rel = cue_rel.parent().unwrap_or_else(StoragePath::root);
+    let output_dir_rel = std::path::PathBuf::from(cue_dir_rel.as_str());
+    let handle = tokio::runtime::Handle::current();
+    let mut split_io = StorageCueSplitIo {
+        storage: storage.clone(),
+        handle,
+        base_dir: cue_dir_rel.clone(),
+        cancellation,
+    };
+    let split = tokio::task::spawn_blocking(move || {
+        euterpe_cue::split_flac_image_io(&document, &mut split_io, &output_dir_rel, &options)
+    })
+    .await
+    .map_err(|e| ApiError::Message(e.to_string()))?;
+
+    match split {
+        Ok(result) => {
+            cue_jobs::finish_success(
+                pool,
+                job_id,
+                selected_total.min(result.output_paths.len() as i64),
+            )
+            .await?;
+            if body.source_file_policy == "delete_after_success" {
+                let _ = storage.delete(&cue_rel).await;
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let message = e.to_string();
+            cue_jobs::finish_failed(pool, job_id, &message).await?;
+            Err(ApiError::Message(message))
+        }
+    }
+}
+
+struct StorageCueSplitIo {
+    storage: Arc<dyn LibraryStorage>,
+    handle: tokio::runtime::Handle,
+    base_dir: StoragePath,
+    cancellation: Option<CueSplitCancellation>,
+}
+
+impl StorageCueSplitIo {
+    fn cue_path_error(message: impl Into<String>) -> euterpe_cue::CueError {
+        euterpe_cue::CueError::Invalid(message.into())
+    }
+
+    fn api_error(error: ApiError) -> euterpe_cue::CueError {
+        euterpe_cue::CueError::Io(std::io::Error::other(error.to_string()))
+    }
+
+    fn rel_from_path(path: &std::path::Path) -> euterpe_cue::Result<String> {
+        if path.is_absolute() {
+            return Err(Self::cue_path_error("CUE path must be library-relative"));
+        }
+        let mut parts = Vec::new();
+        for component in path.components() {
+            match component {
+                std::path::Component::Normal(part) => {
+                    let part = part.to_str().ok_or_else(|| {
+                        Self::cue_path_error("CUE path contains non-UTF-8 component")
+                    })?;
+                    parts.push(part);
+                }
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir
+                | std::path::Component::Prefix(_)
+                | std::path::Component::RootDir => {
+                    return Err(Self::cue_path_error(
+                        "CUE path must not escape library storage",
+                    ));
+                }
+            }
+        }
+        Ok(parts.join("/"))
+    }
+
+    fn check_cancelled(&self) -> euterpe_cue::Result<()> {
+        if self
+            .cancellation
+            .as_ref()
+            .is_some_and(|is_cancelled| is_cancelled())
+        {
+            Err(Self::cue_path_error("CUE split cancelled"))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl euterpe_cue::SplitIo for StorageCueSplitIo {
+    fn read_source(&mut self, audio_path: &std::path::Path) -> euterpe_cue::Result<Vec<u8>> {
+        self.check_cancelled()?;
+        let rel = Self::rel_from_path(audio_path)?;
+        let path = self
+            .base_dir
+            .join(&rel)
+            .map_err(|e| Self::cue_path_error(e.to_string()))?;
+        let bytes = self
+            .handle
+            .block_on(self.storage.read(&path))
+            .map_err(Self::api_error)?;
+        Ok(bytes.to_vec())
+    }
+
+    fn write_output(
+        &mut self,
+        rel_path: &std::path::Path,
+        bytes: Vec<u8>,
+    ) -> euterpe_cue::Result<()> {
+        self.check_cancelled()?;
+        let rel = Self::rel_from_path(rel_path)?;
+        let path = StoragePath::parse(&rel).map_err(|e| Self::cue_path_error(e.to_string()))?;
+        if let Some(parent) = path.parent() {
+            self.handle
+                .block_on(self.storage.create_dir_all(&parent))
+                .map_err(Self::api_error)?;
+        }
+        self.check_cancelled()?;
+        self.handle
+            .block_on(self.storage.atomic_write(&path, Bytes::from(bytes)))
+            .map_err(Self::api_error)
+    }
+
+    fn delete_source(&mut self, rel_path: &std::path::Path) -> euterpe_cue::Result<()> {
+        self.check_cancelled()?;
+        let rel = Self::rel_from_path(rel_path)?;
+        let path = self
+            .base_dir
+            .join(&rel)
+            .map_err(|e| Self::cue_path_error(e.to_string()))?;
+        self.handle
+            .block_on(self.storage.delete(&path))
+            .map_err(Self::api_error)
     }
 }
 

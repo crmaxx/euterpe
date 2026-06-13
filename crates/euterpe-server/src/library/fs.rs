@@ -1,6 +1,6 @@
 use std::path::Path;
 
-fn format_mtime(t: std::time::SystemTime) -> String {
+pub fn format_mtime(t: std::time::SystemTime) -> String {
     let dt: chrono::DateTime<chrono::Utc> = t.into();
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
 }

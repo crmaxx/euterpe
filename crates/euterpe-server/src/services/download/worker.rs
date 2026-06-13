@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 
 use euterpe_qobuz::{AlbumDetail, DEFAULT_USER_AGENT, QobuzApi, QobuzError, Quality, TrackSummary};
 use euterpe_torrent::TorrentEngine;
-use futures_util::StreamExt;
-#[cfg(test)]
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use reqwest::Client;
 use sqlx::SqlitePool;
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
@@ -53,6 +51,7 @@ pub struct WorkerDeps {
     pub torrent_semaphore: Option<Arc<Semaphore>>,
     pub scan_events: broadcast::Sender<ScanProgressEvent>,
     pub job_tx: mpsc::Sender<i64>,
+    pub convert_job_tx: mpsc::Sender<i64>,
 }
 
 fn wake_scheduler(job_tx: &mpsc::Sender<i64>) {
@@ -583,6 +582,14 @@ async fn http_content_length(
     if !response.status().is_success() {
         return Ok(None);
     }
+    if let Some(value) = response
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        return Ok(Some(value));
+    }
     Ok(response.content_length())
 }
 
@@ -654,7 +661,7 @@ async fn download_track(
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err: Option<ApiError> = None;
     let started = Instant::now();
-    let mut downloaded: Option<bytes::Bytes> = None;
+    let mut downloaded_size: Option<u64> = None;
 
     for attempt in 1..=MAX_ATTEMPTS {
         if download_jobs::is_stopped(&deps.pool, job_id).await? {
@@ -679,9 +686,9 @@ async fn download_track(
             "fetching stream and writing file"
         );
 
-        match download_url_to_bytes(&deps.http, &url, &cdn_headers).await {
-            Ok(bytes) => {
-                downloaded = Some(bytes);
+        match download_url_to_storage(&deps.http, &url, &cdn_headers, &storage, &dest_path).await {
+            Ok(size) => {
+                downloaded_size = Some(size);
                 last_err = None;
                 break;
             }
@@ -705,9 +712,8 @@ async fn download_track(
         return Err(e);
     }
 
-    let bytes = downloaded.ok_or_else(|| ApiError::Message("download produced no data".into()))?;
-    let size = bytes.len() as u64;
-    storage.atomic_write(&dest_path, bytes).await?;
+    let size =
+        downloaded_size.ok_or_else(|| ApiError::Message("download produced no data".into()))?;
     let elapsed = started.elapsed().as_secs_f64().max(0.001);
     let speed_bps = (size as f64 / elapsed) as u64;
 
@@ -737,11 +743,13 @@ async fn download_track(
     Ok(speed_bps)
 }
 
-async fn download_url_to_bytes(
+async fn download_url_to_storage(
     http: &Client,
     url: &str,
     headers: &QobuzCdnHeaders,
-) -> Result<bytes::Bytes, ApiError> {
+    storage: &Arc<dyn storage::LibraryStorage>,
+    dest_path: &StoragePath,
+) -> Result<u64, ApiError> {
     let response = apply_qobuz_cdn_headers(http.get(url), headers)
         .send()
         .await
@@ -759,17 +767,50 @@ async fn download_url_to_bytes(
             "CDN HTTP {status} for {safe}: {preview}"
         )));
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| ApiError::Message(format!("CDN read {}: {e}", redacted_url(url))))?;
-    if bytes.is_empty() {
+
+    let safe = redacted_url(url);
+    let mut body = response
+        .bytes_stream()
+        .map_err(move |e| std::io::Error::other(format!("CDN read {safe}: {e}")));
+
+    let first = loop {
+        match body.next().await {
+            Some(Ok(chunk)) if !chunk.is_empty() => break chunk,
+            Some(Ok(_)) => continue,
+            Some(Err(e)) => return Err(ApiError::Message(format!("storage write: {e}"))),
+            None => {
+                return Err(ApiError::Message(format!(
+                    "CDN returned empty body for {}",
+                    redacted_url(url)
+                )));
+            }
+        }
+    };
+
+    let written = Arc::new(std::sync::atomic::AtomicU64::new(first.len() as u64));
+    let written_for_stream = Arc::clone(&written);
+    let stream = futures_util::stream::once(async move { Ok(first) }).chain(body.map(
+        move |chunk| match chunk {
+            Ok(chunk) => {
+                written_for_stream
+                    .fetch_add(chunk.len() as u64, std::sync::atomic::Ordering::SeqCst);
+                Ok(chunk)
+            }
+            Err(e) => Err(e),
+        },
+    ));
+    storage
+        .atomic_write_stream(dest_path, Box::pin(stream))
+        .await?;
+
+    let size = written.load(std::sync::atomic::Ordering::SeqCst);
+    if size == 0 {
         return Err(ApiError::Message(format!(
             "CDN returned empty body for {}",
             redacted_url(url)
         )));
     }
-    Ok(bytes)
+    Ok(size)
 }
 
 #[cfg(test)]
@@ -840,10 +881,13 @@ mod tests {
         response::Response,
         routing::get,
     };
+    use bytes::Bytes;
     use euterpe_qobuz::{
         AlbumDetail, AlbumSummary, ArtistRef, GenreRef, LabelRef, Page, PageRequest, QobuzApi,
         QobuzError, Quality, StreamUrl, TrackSummary,
     };
+    use futures_util::stream;
+    use std::convert::Infallible;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
     use tokio::sync::{Mutex, broadcast};
@@ -907,6 +951,91 @@ mod tests {
                         tokio::time::sleep(Duration::from_millis(200)).await;
                         active.fetch_sub(1, Ordering::SeqCst);
                         body
+                    }
+                }
+            })
+            .head(move || async move {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, content_len.to_string())
+                    .body(Body::empty())
+                    .unwrap()
+            }),
+        )
+    }
+
+    fn streaming_gate_router(
+        first_chunk: &'static [u8],
+        second_chunk: &'static [u8],
+        release: Arc<tokio::sync::Notify>,
+    ) -> Router {
+        let content_len = first_chunk.len() + second_chunk.len();
+        Router::new().route(
+            "/stream",
+            get(move || {
+                let release = Arc::clone(&release);
+                async move {
+                    Body::from_stream(stream::unfold(0, move |state| {
+                        let release = Arc::clone(&release);
+                        async move {
+                            match state {
+                                0 => {
+                                    Some((Ok::<_, Infallible>(Bytes::from_static(first_chunk)), 1))
+                                }
+                                1 => {
+                                    release.notified().await;
+                                    Some((Ok(Bytes::from_static(second_chunk)), 2))
+                                }
+                                _ => None,
+                            }
+                        }
+                    }))
+                }
+            })
+            .head(move || async move {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, content_len.to_string())
+                    .body(Body::empty())
+                    .unwrap()
+            }),
+        )
+    }
+
+    fn empty_stream_mock_router() -> Router {
+        Router::new().route(
+            "/stream",
+            get(|| async { Body::empty() }).head(|| async {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_LENGTH, "0")
+                    .body(Body::empty())
+                    .unwrap()
+            }),
+        )
+    }
+
+    fn retrying_stream_mock_router(
+        first_attempt: &'static [u8],
+        retry_body: &'static [u8],
+        attempts: Arc<AtomicUsize>,
+    ) -> Router {
+        let content_len = retry_body.len();
+        Router::new().route(
+            "/stream",
+            get(move || {
+                let attempts = Arc::clone(&attempts);
+                async move {
+                    let attempt = attempts.fetch_add(1, Ordering::SeqCst) + 1;
+                    if attempt == 1 {
+                        Body::from_stream(stream::iter([
+                            Ok::<_, std::io::Error>(Bytes::from_static(first_attempt)),
+                            Err(std::io::Error::other("simulated stream failure")),
+                        ]))
+                    } else {
+                        Body::from_stream(stream::iter([Ok::<_, std::io::Error>(
+                            Bytes::from_static(retry_body),
+                        )]))
                     }
                 }
             })
@@ -1014,6 +1143,279 @@ mod tests {
         }
     }
 
+    fn single_track_album() -> AlbumDetail {
+        AlbumDetail {
+            summary: AlbumSummary {
+                id: 99,
+                qobuz_id: None,
+                title: "Album".into(),
+                artist: Some(ArtistRef {
+                    id: 1,
+                    name: "Band".into(),
+                }),
+                artists: None,
+                image: None,
+                release_date_original: None,
+                hires: None,
+                album_ref: None,
+                slug: None,
+                list_id: None,
+                product_id: None,
+                genre: None,
+                label: None,
+            },
+            tracks: Some(euterpe_qobuz::AlbumTracks {
+                items: vec![TrackSummary {
+                    id: 1,
+                    title: "One".into(),
+                    track_number: Some(1),
+                    duration: None,
+                    performer: None,
+                    hires_streamable: None,
+                    media_number: None,
+                    genre: None,
+                    isrc: None,
+                    composer: None,
+                }],
+            }),
+            description: None,
+        }
+    }
+
+    fn test_config(library_path: &std::path::Path) -> Arc<AppConfig> {
+        Arc::new(AppConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            database_url: "sqlite::memory:".into(),
+            admin_password: None,
+            master_key: None,
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: None,
+            library_path: library_path.to_path_buf(),
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
+            download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
+            debug: false,
+            static_dir: std::path::PathBuf::new(),
+        })
+    }
+
+    async fn test_deps(
+        dir: &tempfile::TempDir,
+        album: AlbumDetail,
+        stream_url: String,
+    ) -> (WorkerDeps, i64) {
+        let pool = db::connect("sqlite::memory:").await.unwrap();
+        db::migrate(&pool).await.unwrap();
+        let job_id = download_jobs::insert_queued(
+            &pool,
+            DownloadJobType::Album,
+            99,
+            6,
+            Some(&crate::services::download::DownloadJobPayload {
+                album_api_id: Some("99".into()),
+                display_title: None,
+                torrent: None,
+            }),
+        )
+        .await
+        .unwrap();
+        download_jobs::claim_running(&pool, job_id).await.unwrap();
+
+        let (events, _) = broadcast::channel(8);
+        let (scan_events, _) = broadcast::channel(8);
+        let (job_tx, _job_rx) = mpsc::channel(8);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
+        let config = test_config(dir.path());
+        (
+            WorkerDeps {
+                pool,
+                qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
+                    album,
+                    stream_url,
+                }))),
+                config: config.clone(),
+                runtime: test_runtime(&config),
+                events,
+                http: Client::new(),
+                torrent: None,
+                torrent_semaphore: None,
+                scan_events,
+                job_tx,
+                convert_job_tx,
+            },
+            job_id,
+        )
+    }
+
+    fn single_track_dest(dir: &tempfile::TempDir, album: &AlbumDetail) -> std::path::PathBuf {
+        track_path(
+            dir.path(),
+            album,
+            &album.tracks.as_ref().unwrap().items[0],
+            6,
+        )
+    }
+
+    fn single_track_part(dir: &tempfile::TempDir, album: &AlbumDetail) -> std::path::PathBuf {
+        let dest = single_track_dest(dir, album);
+        dest.with_file_name(format!(
+            ".{}.euterpe-part",
+            dest.file_name().and_then(|n| n.to_str()).unwrap()
+        ))
+    }
+
+    #[tokio::test]
+    async fn qobuz_track_download_streams_chunks_into_storage_and_records_size() {
+        let dir = tempdir().unwrap();
+        let album = single_track_album();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let app = streaming_gate_router(b"first-", b"second", Arc::clone(&release));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (deps, job_id) = test_deps(&dir, album.clone(), format!("http://{addr}/stream")).await;
+        let track = album.tracks.as_ref().unwrap().items[0].clone();
+        let part = single_track_part(&dir, &album);
+        let dest = single_track_dest(&dir, &album);
+        let album_for_download = album.clone();
+
+        let download = tokio::spawn(async move {
+            download_track(
+                job_id,
+                99,
+                &album_for_download,
+                &track,
+                Quality::FlacCd,
+                &deps,
+            )
+            .await
+        });
+
+        let streamed_before_response_finished =
+            tokio::time::timeout(Duration::from_secs(2), async {
+                loop {
+                    if let Ok(meta) = tokio::fs::metadata(&part).await
+                        && meta.len() >= b"first-".len() as u64
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .is_ok();
+
+        release.notify_waiters();
+        let speed = download.await.unwrap().unwrap();
+
+        assert!(
+            streamed_before_response_finished,
+            "download should write chunks to storage before buffering the complete response"
+        );
+        assert!(speed > 0);
+        assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"first-second");
+        assert_eq!(tokio::fs::metadata(&dest).await.unwrap().len(), 12);
+    }
+
+    #[tokio::test]
+    async fn qobuz_track_download_empty_body_fails_without_final_file() {
+        let dir = tempdir().unwrap();
+        let album = single_track_album();
+        let app = empty_stream_mock_router();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (deps, job_id) = test_deps(&dir, album.clone(), format!("http://{addr}/stream")).await;
+        let track = album.tracks.as_ref().unwrap().items[0].clone();
+        let dest = single_track_dest(&dir, &album);
+
+        let err = download_track(job_id, 99, &album, &track, Quality::FlacCd, &deps)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("empty body"), "{err}");
+        assert!(!dest.exists(), "empty response must not publish final file");
+    }
+
+    #[tokio::test]
+    async fn qobuz_track_download_mid_stream_failure_retries_without_corrupt_final_file() {
+        let dir = tempdir().unwrap();
+        let album = single_track_album();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let app = retrying_stream_mock_router(b"partial", b"complete-body", Arc::clone(&attempts));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let (deps, job_id) = test_deps(&dir, album.clone(), format!("http://{addr}/stream")).await;
+        let track = album.tracks.as_ref().unwrap().items[0].clone();
+        let dest = single_track_dest(&dir, &album);
+        let part = single_track_part(&dir, &album);
+
+        download_track(job_id, 99, &album, &track, Quality::FlacCd, &deps)
+            .await
+            .unwrap();
+
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(tokio::fs::read(&dest).await.unwrap(), b"complete-body");
+        assert!(!part.exists(), "failed attempt must clean temporary file");
+    }
+
+    #[tokio::test]
+    async fn qobuz_track_download_skips_existing_file_with_matching_size() {
+        let dir = tempdir().unwrap();
+        let album = single_track_album();
+        let body = b"existing";
+        let gets = Arc::new(AtomicUsize::new(0));
+        let app = {
+            let gets = Arc::clone(&gets);
+            Router::new().route(
+                "/stream",
+                get(move || {
+                    let gets = Arc::clone(&gets);
+                    async move {
+                        gets.fetch_add(1, Ordering::SeqCst);
+                        body.to_vec()
+                    }
+                })
+                .head(move || async move {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_LENGTH, body.len().to_string())
+                        .body(Body::empty())
+                        .unwrap()
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let dest = single_track_dest(&dir, &album);
+        tokio::fs::create_dir_all(dest.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&dest, body).await.unwrap();
+
+        let (deps, job_id) = test_deps(&dir, album.clone(), format!("http://{addr}/stream")).await;
+        let track = album.tracks.as_ref().unwrap().items[0].clone();
+
+        let speed = download_track(job_id, 99, &album, &track, Quality::FlacCd, &deps)
+            .await
+            .unwrap();
+
+        assert_eq!(speed, 0);
+        assert_eq!(gets.load(Ordering::SeqCst), 0);
+        assert_eq!(tokio::fs::read(&dest).await.unwrap(), body);
+    }
+
     #[tokio::test]
     async fn album_download_uses_runtime_concurrency_for_tracks() {
         let dir = tempdir().unwrap();
@@ -1117,6 +1519,7 @@ mod tests {
 
         let (scan_events, _) = broadcast::channel(8);
         let (job_tx, _job_rx) = mpsc::channel(8);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1131,6 +1534,7 @@ mod tests {
             torrent_semaphore: None,
             scan_events,
             job_tx,
+            convert_job_tx,
         };
 
         run_album_job(job_id, 99, Quality::FlacCd, &deps)
@@ -1251,6 +1655,7 @@ mod tests {
 
         let (scan_events, _) = broadcast::channel(8);
         let (job_tx, _job_rx) = mpsc::channel(8);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let album_for_assert = album.clone();
         let deps = WorkerDeps {
             pool: pool.clone(),
@@ -1266,6 +1671,7 @@ mod tests {
             torrent_semaphore: None,
             scan_events,
             job_tx,
+            convert_job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -1396,6 +1802,7 @@ mod tests {
         });
 
         let (job_tx, _job_rx) = mpsc::channel(8);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1413,6 +1820,7 @@ mod tests {
                 scan_events
             },
             job_tx,
+            convert_job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -1539,6 +1947,7 @@ mod tests {
         });
 
         let (job_tx, _job_rx) = mpsc::channel(8);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1556,6 +1965,7 @@ mod tests {
                 scan_events
             },
             job_tx,
+            convert_job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -1677,6 +2087,7 @@ mod tests {
         });
 
         let (job_tx, _job_rx) = mpsc::channel(8);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1694,6 +2105,7 @@ mod tests {
                 scan_events
             },
             job_tx,
+            convert_job_tx,
         };
 
         run_job(job_id, &deps).await.unwrap();
@@ -1787,6 +2199,7 @@ mod tests {
 
         let (scan_events, _) = broadcast::channel(8);
         let (job_tx, _job_rx) = mpsc::channel(8);
+        let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
             pool: pool.clone(),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1801,6 +2214,7 @@ mod tests {
             torrent_semaphore: None,
             scan_events,
             job_tx,
+            convert_job_tx,
         };
 
         run_album_job(job_id, 99, Quality::FlacCd, &deps)

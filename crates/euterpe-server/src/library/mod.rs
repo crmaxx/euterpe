@@ -1,5 +1,6 @@
 pub mod covers;
 pub mod cue;
+pub mod file_hash;
 pub mod fs;
 pub mod paths;
 pub mod qobuz_tags;

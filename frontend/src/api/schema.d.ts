@@ -441,7 +441,8 @@ export interface paths {
         /** Browse configured library storage */
         get: operations["browseStorage"];
         put?: never;
-        post?: never;
+        /** Browse a draft library storage location without saving it */
+        post: operations["browseDraftStorage"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1023,6 +1024,7 @@ export interface components {
         };
         ServerInfoResponse: {
             version: string;
+            /** @description Public bootstrap storage summary. SMB credentials are never returned here. */
             library_storage: components["schemas"]["StorageLocationView"] | null;
             credentials_configured: boolean;
             admin_auth_required: boolean;
@@ -1056,6 +1058,8 @@ export interface components {
             watch_status: components["schemas"]["StorageWatchStatusView"];
             username?: string | null;
             workgroup?: string | null;
+            /** @description True when an SMB password is stored server-side (never returned in plaintext). */
+            password_configured: boolean;
         };
         StorageWatchStatusView: {
             state: components["schemas"]["StorageWatchState"];
@@ -1065,12 +1069,25 @@ export interface components {
         StorageWatchState: "disabled" | "connected" | "degraded" | "reconnecting";
         StorageSettingsResponse: {
             settings: components["schemas"]["StorageSettingsView"];
+            /** @description Present on PATCH when library storage kind changes (local ↔ SMB). Advises the client to run a full library scan. */
+            storage_migration_hint?: string;
+            /** @description True on PATCH when library storage kind changes; client should prompt for a full library scan. */
+            recommend_full_scan?: boolean;
         };
         StorageSettingsView: {
             library: components["schemas"]["StorageLocationView"] | null;
+            presets: components["schemas"]["StoragePresetView"][];
+        };
+        StoragePresetView: {
+            id: string;
+            label: string;
+            /** @enum {string} */
+            kind: "local" | "smb";
         };
         StorageSettingsPatch: {
-            library: components["schemas"]["StorageLocationPatch"];
+            /** @description Switch active library storage to a saved preset. */
+            activate_preset_id?: string;
+            library?: components["schemas"]["StorageLocationPatch"];
         };
         StorageLocationPatch: components["schemas"]["LocalStorageLocationPatch"] | components["schemas"]["SmbStorageLocationPatch"];
         LocalStorageLocationPatch: {
@@ -1093,9 +1110,11 @@ export interface components {
             share: string;
             /** @default  */
             path: string;
+            /** @description Omitted preserves the current username for the same SMB identity; null or empty clears it. */
             username?: string | null;
-            /** @description Plaintext only in write requests; encrypted at rest. */
+            /** @description Plaintext only in write requests; encrypted at rest. Omitted preserves the current stored password for the same SMB identity; null or empty clears it. */
             password?: string | null;
+            /** @description Omitted preserves the current workgroup; null or empty clears it. */
             workgroup?: string | null;
         };
         StorageTestRequest: {
@@ -1106,6 +1125,11 @@ export interface components {
         };
         StorageBrowseResponse: {
             entries: components["schemas"]["StorageBrowseEntry"][];
+        };
+        StorageBrowseRequest: {
+            location: components["schemas"]["StorageLocationPatch"];
+            /** @default  */
+            path: string;
         };
         StorageBrowseEntry: {
             name: string;
@@ -1119,6 +1143,7 @@ export interface components {
             /** @default 445 */
             port: number;
             username?: string | null;
+            /** @description Plaintext for this request only. When omitted or empty, the server uses the password saved for the active library SMB location if host and port match. */
             password?: string | null;
             workgroup?: string | null;
         };
@@ -2574,7 +2599,51 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
-            502: components["responses"]["BadGateway"];
+            /** @description Admin authentication failed or SMB authentication was denied. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB permission denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB host/share/path was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB disconnected, unavailable, or connection failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     browseStorage: {
@@ -2599,6 +2668,121 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description Admin authentication failed or SMB authentication was denied. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB permission denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB host/share/path was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB disconnected, unavailable, or connection failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    browseDraftStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageBrowseRequest"];
+            };
+        };
+        responses: {
+            /** @description Directory listing */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageBrowseResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Admin authentication failed or SMB authentication was denied. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB permission denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB host/share/path was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB disconnected, unavailable, or connection failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     listSmbShares: {
@@ -2624,6 +2808,60 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            /** @description Admin authentication failed or SMB authentication was denied. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB permission denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB host was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB share discovery is unsupported by the server. */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB disconnected, unavailable, or connection failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description SMB operation timed out. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     purgeFinishedDownloads: {

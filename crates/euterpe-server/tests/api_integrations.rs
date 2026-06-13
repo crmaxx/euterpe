@@ -106,9 +106,15 @@ async fn create_list_delete_musicbrainz_integration() {
 #[tokio::test]
 async fn metadata_apply_requires_configured_library_storage_before_provider_call() {
     let state = app::test_support::test_state().await;
-    app_settings::save_storage(&state.db, &StorageSettings { library: None })
-        .await
-        .unwrap();
+    app_settings::save_storage(
+        &state.db,
+        &StorageSettings {
+            library: None,
+            presets: Vec::new(),
+        },
+    )
+    .await
+    .unwrap();
     app_settings::refresh_runtime(&state.runtime, &state.db, &state.config).await;
     let integration_id = insert_integration(
         &state.db,

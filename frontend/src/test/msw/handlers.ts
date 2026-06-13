@@ -125,7 +125,12 @@ export const handlers = [
 
   http.get("/api/v1/settings/storage", () =>
     HttpResponse.json({
-      settings: { library: { kind: "local", path: "/music", watch_status: watchDisabled } },
+      settings: {
+        library: { kind: "local", path: "/music", watch_status: watchDisabled },
+        presets: [
+          { id: "local:/music", label: "Local: /music", kind: "local" },
+        ],
+      },
     }),
   ),
 
@@ -133,7 +138,12 @@ export const handlers = [
     const body = (await request.json()) as Record<string, unknown>;
     const library = (body.library ?? { kind: "local", path: "/music" }) as Record<string, unknown>;
     return HttpResponse.json({
-      settings: { library: { ...library, watch_status: watchDisabled } },
+      settings: {
+        library: { ...library, watch_status: watchDisabled },
+        presets: [
+          { id: "local:/music", label: "Local: /music", kind: "local" },
+        ],
+      },
     });
   }),
 
@@ -142,6 +152,15 @@ export const handlers = [
   ),
 
   http.get("/api/v1/settings/storage/browse", () =>
+    HttpResponse.json({
+      entries: [
+        { name: "Musik", path: "Musik", is_dir: true },
+        { name: "track.flac", path: "track.flac", is_dir: false, size: 1024 },
+      ],
+    }),
+  ),
+
+  http.post("/api/v1/settings/storage/browse", () =>
     HttpResponse.json({
       entries: [
         { name: "Musik", path: "Musik", is_dir: true },

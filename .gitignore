@@ -6,8 +6,12 @@ node_modules/
 compose.yml
 .DS_Store
 
+# compound engineering (machine-local)
+.compound-engineering/*.local.yaml
+
 # project
 docs/references/
+docs/dumps/
 data/
 .superpowers/
 .playwright-mcp/

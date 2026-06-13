@@ -4,7 +4,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response;
 use serde::Deserialize;
-use std::sync::Arc;
 
 use crate::api::{
     AlbumCoverUploadResponse, ConvertAlbumResponse, ConvertJobResponse, CueAlbumResponse,
@@ -17,7 +16,7 @@ use crate::db::{albums, artists, convert_jobs, cue_jobs, library_scan_runs, trac
 use crate::error::ApiError;
 use crate::library::covers;
 use crate::library::cue;
-use crate::library::storage::{LibraryStorage, StoragePath};
+use crate::library::storage::StoragePath;
 use crate::library::stream;
 use crate::library::tags::{
     self, AlbumTagsPatch, TrackTagsPatch, apply_album_patch, apply_patch, is_audio_file,
@@ -42,52 +41,40 @@ pub async fn start_library_scan(
         .read()
         .await
         .library_scan_config(state.config.debug)?;
-    let location = state
-        .runtime
-        .read()
-        .await
-        .storage
-        .library
-        .clone()
-        .ok_or_else(|| {
-            ApiError::Message(
-                "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
-            )
-        })?;
-    let scan_id = match location {
-        StorageLocation::Local { .. } => {
-            let library_path = state.require_local_library_path().await?;
-            let scan_root =
-                library_scan::resolve_scan_root_query(&library_path, q.root.as_deref())?;
-            library_scan::start_scan(
-                &state.db,
-                library_path,
-                state.scan_events.clone(),
-                scan_cfg,
-                scan_root,
-                Some(state.convert_job_tx.clone()),
-                Some(state.runtime.clone()),
-            )
-            .await?
-        }
-        StorageLocation::Smb { .. } => {
-            let storage = state.library_storage().await?;
-            let scan_root = match q.root.as_deref() {
-                Some(root) => Some(StoragePath::parse(root)?),
-                None => None,
-            };
-            library_scan::start_scan_storage(
-                &state.db,
-                storage,
-                state.scan_events.clone(),
-                scan_cfg,
-                scan_root,
-                Some(state.convert_job_tx.clone()),
-                Some(state.runtime.clone()),
-            )
-            .await?
+    if state.runtime.read().await.storage.library.is_none() {
+        return Err(ApiError::Message(
+            "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
+        ));
+    }
+    let storage = state.library_storage().await?;
+    let scan_root = match q.root.as_deref() {
+        Some(root) => Some(StoragePath::parse(root)?),
+        None => None,
+    };
+    state.storage_watch.pause_for_scan().await;
+    let scan_id = match library_scan::start_scan_storage(
+        &state.db,
+        storage,
+        state.scan_events.clone(),
+        scan_cfg,
+        scan_root,
+        Some(state.convert_job_tx.clone()),
+        Some(state.runtime.clone()),
+    )
+    .await
+    {
+        Ok(scan_id) => scan_id,
+        Err(error) => {
+            state.storage_watch.restart().await;
+            return Err(error);
         }
     };
+    let pool = state.db.clone();
+    let watch = state.storage_watch.clone();
+    tokio::spawn(async move {
+        library_scan::wait_scan_finished(&pool, scan_id).await;
+        watch.restart().await;
+    });
     Ok((
         StatusCode::ACCEPTED,
         Json(LibraryScanStartResponse { scan_id }),
@@ -273,7 +260,8 @@ pub async fn patch_library_album_tags(
     let album = albums::get_by_id(&state.db, id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
-    let track_rows = tracks::list_by_album(&state.db, id).await?;
+    let track_rows =
+        tracks::list_by_album_or_path_prefix(&state.db, id, album.path.as_deref()).await?;
     if track_rows.is_empty() {
         return Err(ApiError::bad_request("album has no tracks"));
     }
@@ -695,169 +683,46 @@ async fn run_cue_split_job(
     body: CueSplitRequest,
     album_path: Option<String>,
 ) -> Result<(), ApiError> {
-    cue_jobs::mark_running(&state.db, job_id).await?;
-    let document = cue::document_to_core(&body.document);
-    let selected_total = document.tracks.iter().filter(|t| t.selected).count() as i64;
-    let source_file_policy = if body.source_file_policy == "delete_after_success" {
-        euterpe_cue::SourceFilePolicy::DeleteAfterSuccess
-    } else {
-        euterpe_cue::SourceFilePolicy::Keep
-    };
-    let progress_pool = state.db.clone();
-    let progress_handle = tokio::runtime::Handle::current();
-    let on_progress = std::sync::Arc::new(move |p: euterpe_cue::SplitProgress| {
-        let pool = progress_pool.clone();
-        let tracks_done = p.tracks_done as i64;
-        let tracks_total = p.tracks_total as i64;
-        let _ = progress_handle.block_on(cue_jobs::update_progress(
-            &pool,
-            job_id,
-            tracks_done,
-            tracks_total,
-        ));
-    });
-    let options = euterpe_cue::SplitOptions {
-        source_file_policy,
-        file_mask: body.file_mask.clone(),
-        on_progress: Some(on_progress),
-    };
     let storage = state.library_storage().await?;
-    let cue_rel = StoragePath::parse(&body.document.cue_path)?;
-    let cue_dir_rel = cue_rel.parent().unwrap_or_else(StoragePath::root);
-    let output_dir_rel = std::path::PathBuf::from(cue_dir_rel.as_str());
-    let handle = tokio::runtime::Handle::current();
-    let mut split_io = StorageCueSplitIo {
-        storage: storage.clone(),
-        handle,
-        base_dir: cue_dir_rel.clone(),
-    };
-    let split = tokio::task::spawn_blocking(move || {
-        euterpe_cue::split_flac_image_io(&document, &mut split_io, &output_dir_rel, &options)
-    })
-    .await
-    .map_err(|e| ApiError::Message(e.to_string()))?;
-
-    match split {
-        Ok(result) => {
-            cue_jobs::finish_success(
-                &state.db,
-                job_id,
-                selected_total.min(result.output_paths.len() as i64),
-            )
-            .await?;
-            if body.source_file_policy == "delete_after_success" {
-                let _ = storage.delete(&cue_rel).await;
+    cue::run_storage_cue_split_job(&state.db, storage.clone(), job_id, body, None).await?;
+    if let Some(album_path) = album_path
+        && let Ok(scan_root) = StoragePath::parse(album_path)
+    {
+        let scan_cfg = state
+            .runtime
+            .read()
+            .await
+            .library_scan_config(state.config.debug)?;
+        state.storage_watch.pause_for_scan().await;
+        match library_scan::start_scan_storage(
+            &state.db,
+            storage,
+            state.scan_events.clone(),
+            scan_cfg,
+            Some(scan_root),
+            Some(state.convert_job_tx.clone()),
+            Some(state.runtime.clone()),
+        )
+        .await
+        {
+            Ok(scan_id) => {
+                let pool = state.db.clone();
+                let watch = state.storage_watch.clone();
+                tokio::spawn(async move {
+                    library_scan::wait_scan_finished(&pool, scan_id).await;
+                    watch.restart().await;
+                });
             }
-            if let Some(album_path) = album_path
-                && let Ok(scan_root) = StoragePath::parse(album_path)
-            {
-                let scan_cfg = state
-                    .runtime
-                    .read()
-                    .await
-                    .library_scan_config(state.config.debug)?;
-                let _ = library_scan::start_scan_storage(
-                    &state.db,
-                    storage,
-                    state.scan_events.clone(),
-                    scan_cfg,
-                    Some(scan_root),
-                    Some(state.convert_job_tx.clone()),
-                    Some(state.runtime.clone()),
-                )
-                .await;
+            Err(error) => {
+                state.storage_watch.restart().await;
+                tracing::warn!(
+                    error = %error,
+                    "CUE split follow-up scan failed to start; restarted storage watch"
+                );
             }
-        }
-        Err(e) => {
-            cue_jobs::finish_failed(&state.db, job_id, &e.to_string()).await?;
         }
     }
     Ok(())
-}
-
-struct StorageCueSplitIo {
-    storage: Arc<dyn LibraryStorage>,
-    handle: tokio::runtime::Handle,
-    base_dir: StoragePath,
-}
-
-impl StorageCueSplitIo {
-    fn cue_path_error(message: impl Into<String>) -> euterpe_cue::CueError {
-        euterpe_cue::CueError::Invalid(message.into())
-    }
-
-    fn api_error(error: ApiError) -> euterpe_cue::CueError {
-        euterpe_cue::CueError::Io(std::io::Error::other(error.to_string()))
-    }
-
-    fn rel_from_path(path: &std::path::Path) -> euterpe_cue::Result<String> {
-        if path.is_absolute() {
-            return Err(Self::cue_path_error("CUE path must be library-relative"));
-        }
-        let mut parts = Vec::new();
-        for component in path.components() {
-            match component {
-                std::path::Component::Normal(part) => {
-                    let part = part.to_str().ok_or_else(|| {
-                        Self::cue_path_error("CUE path contains non-UTF-8 component")
-                    })?;
-                    parts.push(part);
-                }
-                std::path::Component::CurDir => {}
-                std::path::Component::ParentDir
-                | std::path::Component::Prefix(_)
-                | std::path::Component::RootDir => {
-                    return Err(Self::cue_path_error(
-                        "CUE path must not escape library storage",
-                    ));
-                }
-            }
-        }
-        Ok(parts.join("/"))
-    }
-}
-
-impl euterpe_cue::SplitIo for StorageCueSplitIo {
-    fn read_source(&mut self, audio_path: &std::path::Path) -> euterpe_cue::Result<Vec<u8>> {
-        let rel = Self::rel_from_path(audio_path)?;
-        let path = self
-            .base_dir
-            .join(&rel)
-            .map_err(|e| Self::cue_path_error(e.to_string()))?;
-        let bytes = self
-            .handle
-            .block_on(self.storage.read(&path))
-            .map_err(Self::api_error)?;
-        Ok(bytes.to_vec())
-    }
-
-    fn write_output(
-        &mut self,
-        rel_path: &std::path::Path,
-        bytes: Vec<u8>,
-    ) -> euterpe_cue::Result<()> {
-        let rel = Self::rel_from_path(rel_path)?;
-        let path = StoragePath::parse(&rel).map_err(|e| Self::cue_path_error(e.to_string()))?;
-        if let Some(parent) = path.parent() {
-            self.handle
-                .block_on(self.storage.create_dir_all(&parent))
-                .map_err(Self::api_error)?;
-        }
-        self.handle
-            .block_on(self.storage.atomic_write(&path, Bytes::from(bytes)))
-            .map_err(Self::api_error)
-    }
-
-    fn delete_source(&mut self, rel_path: &std::path::Path) -> euterpe_cue::Result<()> {
-        let rel = Self::rel_from_path(rel_path)?;
-        let path = self
-            .base_dir
-            .join(&rel)
-            .map_err(|e| Self::cue_path_error(e.to_string()))?;
-        self.handle
-            .block_on(self.storage.delete(&path))
-            .map_err(Self::api_error)
-    }
 }
 
 pub async fn get_library_album_cue_latest(
@@ -903,26 +768,16 @@ async fn album_cover_path_for_state(
     cover_path: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
     match location {
-        Some(StorageLocation::Local { .. }) => {
-            let library_path = state.require_local_library_path().await?;
-            covers::ensure_album_cover_path(
+        Some(_) => {
+            let storage = state.library_storage().await?;
+            covers::ensure_album_cover_path_storage(
                 &state.db,
-                &library_path,
+                storage.as_ref(),
                 album_id,
                 album_path,
                 cover_path,
             )
             .await
-        }
-        Some(StorageLocation::Smb { .. }) => {
-            if let Some(path) = cover_path.filter(|p| !p.trim().is_empty()) {
-                return Ok(Some(path.to_string()));
-            }
-            let Some(album_path) = album_path.filter(|p| !p.trim().is_empty()) else {
-                return Ok(None);
-            };
-            let storage = state.library_storage().await?;
-            covers::discover_album_cover_rel_storage(storage.as_ref(), album_path).await
         }
         None => Err(ApiError::Message(
             "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
@@ -952,16 +807,10 @@ async fn read_track_tags_for_state(
     rel: &str,
 ) -> Result<tags::TrackTags, ApiError> {
     match location {
-        Some(StorageLocation::Local { .. }) => {
-            let library_path = state.require_local_library_path().await?;
-            let file_path = library_path.join(rel);
-            tags::read_tags(&file_path)
-        }
-        Some(StorageLocation::Smb { .. }) => {
+        Some(_) => {
             let storage = state.library_storage().await?;
             let path = StoragePath::parse(rel)?;
-            let bytes = storage.read(&path).await?;
-            tags::read_tags_from_bytes_with_rel(bytes.to_vec(), Some(rel))
+            tags::read_tags_storage(storage.as_ref(), &path).await
         }
         None => Err(ApiError::Message(
             "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),

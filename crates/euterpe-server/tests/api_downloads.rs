@@ -148,6 +148,7 @@ async fn download_job_completes_via_worker() {
         stream_url: format!("http://{addr}/cdn"),
     };
     let state = state_with_download_mock(mock).await;
+    let pool = state.db.clone();
     let app = app::app(state);
 
     let create = app
@@ -190,7 +191,8 @@ async fn download_job_completes_via_worker() {
             }
         }
     }
-    panic!("job did not complete in time");
+    let final_job = download_jobs::get(&pool, job_id).await.unwrap();
+    panic!("job did not complete in time: {final_job:?}");
 }
 
 #[tokio::test]

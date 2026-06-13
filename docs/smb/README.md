@@ -12,6 +12,10 @@
 6. [x] [Converter worker через storage](converter-worker.md)
 7. [x] [SMB ChangeNotify watcher](change-notify-watcher.md)
 
+## UX
+
+- [Storage switch UX](storage-switch.md) — API hints and full-scan prompt when toggling local ↔ SMB.
+
 ## Общие правила
 
 - Не использовать disk temp bridge в `/data` для library operations.

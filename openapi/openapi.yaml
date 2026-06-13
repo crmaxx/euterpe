@@ -749,8 +749,36 @@ paths:
                 $ref: "#/components/schemas/StorageTestResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Admin authentication failed or SMB authentication was denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: SMB permission denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SMB host/share/path was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "502":
-          $ref: "#/components/responses/BadGateway"
+          description: SMB disconnected, unavailable, or connection failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: SMB operation timed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/settings/storage/browse:
     get:
@@ -781,6 +809,88 @@ paths:
                 $ref: "#/components/schemas/StorageBrowseResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Admin authentication failed or SMB authentication was denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: SMB permission denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SMB host/share/path was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: SMB disconnected, unavailable, or connection failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: SMB operation timed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: browseDraftStorage
+      tags: [Settings, Storage]
+      summary: Browse a draft library storage location without saving it
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StorageBrowseRequest"
+      responses:
+        "200":
+          description: Directory listing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageBrowseResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Admin authentication failed or SMB authentication was denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: SMB permission denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SMB host/share/path was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: SMB disconnected, unavailable, or connection failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: SMB operation timed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/settings/storage/smb-shares:
     post:
@@ -805,6 +915,42 @@ paths:
                 $ref: "#/components/schemas/SmbSharesResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          description: Admin authentication failed or SMB authentication was denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: SMB permission denied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: SMB host was not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          description: SMB share discovery is unsupported by the server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          description: SMB disconnected, unavailable, or connection failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: SMB operation timed out.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /api/v1/downloads/purge:
     post:
@@ -2008,6 +2154,8 @@ components:
         version:
           type: string
         library_storage:
+          description: |
+            Public bootstrap storage summary. SMB credentials are never returned here.
           oneOf:
             - $ref: "#/components/schemas/StorageLocationView"
             - type: "null"
@@ -2048,7 +2196,7 @@ components:
 
     SmbStorageLocationView:
       type: object
-      required: [kind, host, port, share, path, watch_status]
+      required: [kind, host, port, share, path, watch_status, password_configured]
       additionalProperties: false
       properties:
         kind:
@@ -2070,6 +2218,9 @@ components:
           type: ["string", "null"]
         workgroup:
           type: ["string", "null"]
+        password_configured:
+          type: boolean
+          description: True when an SMB password is stored server-side (never returned in plaintext).
 
     StorageWatchStatusView:
       type: object
@@ -2092,22 +2243,51 @@ components:
       properties:
         settings:
           $ref: "#/components/schemas/StorageSettingsView"
+        storage_migration_hint:
+          type: string
+          description: >
+            Present on PATCH when library storage kind changes (local ↔ SMB).
+            Advises the client to run a full library scan.
+        recommend_full_scan:
+          type: boolean
+          description: >
+            True on PATCH when library storage kind changes; client should prompt
+            for a full library scan.
 
     StorageSettingsView:
       type: object
-      required: [library]
+      required: [library, presets]
       additionalProperties: false
       properties:
         library:
           oneOf:
             - $ref: "#/components/schemas/StorageLocationView"
             - type: "null"
+        presets:
+          type: array
+          items:
+            $ref: "#/components/schemas/StoragePresetView"
+
+    StoragePresetView:
+      type: object
+      required: [id, label, kind]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        kind:
+          type: string
+          enum: [local, smb]
 
     StorageSettingsPatch:
       type: object
-      required: [library]
       additionalProperties: false
       properties:
+        activate_preset_id:
+          type: string
+          description: Switch active library storage to a saved preset.
         library:
           $ref: "#/components/schemas/StorageLocationPatch"
 
@@ -2154,11 +2334,13 @@ components:
           default: ""
         username:
           type: ["string", "null"]
+          description: Omitted preserves the current username for the same SMB identity; null or empty clears it.
         password:
           type: ["string", "null"]
-          description: Plaintext only in write requests; encrypted at rest.
+          description: Plaintext only in write requests; encrypted at rest. Omitted preserves the current stored password for the same SMB identity; null or empty clears it.
         workgroup:
           type: ["string", "null"]
+          description: Omitted preserves the current workgroup; null or empty clears it.
 
     StorageTestRequest:
       type: object
@@ -2185,6 +2367,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StorageBrowseEntry"
+
+    StorageBrowseRequest:
+      type: object
+      required: [location]
+      additionalProperties: false
+      properties:
+        location:
+          $ref: "#/components/schemas/StorageLocationPatch"
+        path:
+          type: string
+          default: ""
 
     StorageBrowseEntry:
       type: object
@@ -2217,6 +2410,9 @@ components:
           type: ["string", "null"]
         password:
           type: ["string", "null"]
+          description: >
+            Plaintext for this request only. When omitted or empty, the server uses the
+            password saved for the active library SMB location if host and port match.
         workgroup:
           type: ["string", "null"]
 

@@ -11,8 +11,11 @@ use crate::config::AppConfig;
 use crate::credentials::{self, QobuzCredentials};
 use crate::crypto::MasterKey;
 use crate::error::ApiError;
-use crate::services::app_settings::{self, RuntimeSettingsHandle};
+use crate::library::storage::LibraryStorage;
+use crate::services::app_settings::{self, RuntimeSettingsHandle, StorageLocation};
 use crate::services::torrent_staging::TorrentStaging;
+
+type LibraryStorageCache = Option<(StorageLocation, Arc<dyn LibraryStorage>)>;
 
 /// Channels created at startup and passed into [`AppState::new`].
 #[derive(Clone)]
@@ -40,6 +43,9 @@ pub struct AppState {
     pub hawk: Option<Arc<euterpe_hawk::Hawk>>,
     pub torrent: Option<Arc<dyn TorrentEngine>>,
     pub torrent_staging: Arc<TorrentStaging>,
+    /// Cached [`library_storage`] handle; cleared when storage settings change.
+    #[doc(hidden)]
+    pub library_storage_cache: Arc<tokio::sync::Mutex<LibraryStorageCache>>,
 }
 
 impl AppState {
@@ -108,7 +114,12 @@ impl AppState {
             hawk,
             torrent,
             torrent_staging: Arc::new(TorrentStaging::new()),
+            library_storage_cache: Arc::new(tokio::sync::Mutex::new(None)),
         })
+    }
+
+    pub async fn invalidate_library_storage_cache(&self) {
+        *self.library_storage_cache.lock().await = None;
     }
 
     pub async fn require_credentials(&self) -> Result<QobuzCredentials, ApiError> {
@@ -149,7 +160,18 @@ impl AppState {
                 "LIBRARY_STORAGE_NOT_CONFIGURED: configure library storage in Settings".into(),
             )
         })?;
-        crate::library::storage::storage_from_location(&location, self.config.master_key.as_ref())
+        let mut cache = self.library_storage_cache.lock().await;
+        if let Some((cached_location, cached_storage)) = cache.as_ref()
+            && cached_location == &location
+        {
+            return Ok(cached_storage.clone());
+        }
+        let built = crate::library::storage::storage_from_location(
+            &location,
+            self.config.master_key.as_ref(),
+        )?;
+        *cache = Some((location, built.clone()));
+        Ok(built)
     }
 }
 

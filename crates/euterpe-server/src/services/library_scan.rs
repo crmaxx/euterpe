@@ -1,25 +1,39 @@
 use std::cmp::Ordering as CmpOrdering;
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashSet, VecDeque};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use flume::Sender;
-use sha2::{Digest, Sha256};
+use futures_util::StreamExt;
 use sqlx::SqlitePool;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{Semaphore, broadcast, mpsc};
 
 use crate::api::ScanProgressEvent;
 use crate::config::LibraryScanConfig;
 use crate::db::{albums, artists, library_scan_runs, tracks};
 use crate::error::ApiError;
-use crate::library::covers::{discover_album_cover_rel, discover_album_cover_rel_storage};
+use crate::library::covers::{discover_album_cover_rel, ensure_album_cover_path_storage};
+use crate::library::file_hash::ContentXxh64;
 use crate::library::fs::file_stat_sync;
 use crate::library::paths::resolve_scan_subdirectory;
 use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 use crate::library::tags::{self, TrackTags, is_audio_file};
 
 const PROGRESS_EVERY: usize = 5;
+/// Per-directory SMB listing; scan fails clearly instead of hanging forever.
+const STORAGE_LIST_DIR_TIMEOUT: Duration = Duration::from_secs(120);
+/// Per-file SMB open/read during indexing.
+const STORAGE_FILE_OP_TIMEOUT: Duration = Duration::from_secs(120);
+/// Per-chunk SMB read while hashing/tagging.
+const STORAGE_READ_CHUNK_TIMEOUT: Duration = Duration::from_secs(90);
+/// Wall-clock cap per audio file so a stuck NAS read cannot block the whole scan.
+const STORAGE_FILE_INDEX_TIMEOUT: Duration = Duration::from_secs(180);
+const STORAGE_TAG_HEAD: usize = 2 * 1024 * 1024;
+const STORAGE_MAX_READ_BYTES: u64 = 512 * 1024 * 1024;
+const STORAGE_HASH_BACKFILL_BATCH: i64 = 256;
 
 macro_rules! scan_debug {
     ($debug:expr, $($arg:tt)*) => {
@@ -699,10 +713,20 @@ async fn collect_index_job(
 }
 
 fn file_hash_sync(path: &Path) -> Result<Option<String>, ApiError> {
-    let mut hasher = Sha256::new();
-    let bytes = std::fs::read(path).map_err(|e| ApiError::Message(e.to_string()))?;
-    hasher.update(bytes);
-    Ok(Some(hex::encode(hasher.finalize())))
+    let file = std::fs::File::open(path).map_err(|e| ApiError::Message(e.to_string()))?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = ContentXxh64::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|e| ApiError::Message(e.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(Some(hasher.finish()))
 }
 
 async fn run_db_writer(
@@ -836,7 +860,163 @@ pub struct StorageScanDeps {
         Option<std::sync::Arc<tokio::sync::RwLock<crate::services::app_settings::RuntimeSettings>>>,
 }
 
+/// Audio file queued during discovery with size/mtime from directory listing.
+struct AudioScanEntry {
+    path: StoragePath,
+    size: u64,
+    mtime: Option<String>,
+}
+
+#[derive(Clone)]
+struct StorageAudioEntryCtx {
+    scan_id: i64,
+    pool: SqlitePool,
+    storage: Arc<dyn LibraryStorage>,
+    audio_total: usize,
+    scan_deps: ScanDeps,
+    counters: ScanProgressCounters,
+    events: broadcast::Sender<ScanProgressEvent>,
+    files_total: Arc<Mutex<Option<i64>>>,
+    debug: bool,
+}
+
+async fn storage_list_dir_timed(
+    storage: &Arc<dyn LibraryStorage>,
+    path: &StoragePath,
+) -> Result<Vec<crate::library::storage::StorageEntry>, ApiError> {
+    let label = path.as_str();
+    match tokio::time::timeout(STORAGE_LIST_DIR_TIMEOUT, storage.list_dir(path)).await {
+        Ok(result) => result,
+        Err(_) => Err(ApiError::Message(format!(
+            "STORAGE_LIST_TIMEOUT: listing '{label}' exceeded {}s",
+            STORAGE_LIST_DIR_TIMEOUT.as_secs()
+        ))),
+    }
+}
+
+async fn storage_read_bytes_capped(
+    storage: &Arc<dyn LibraryStorage>,
+    path: &StoragePath,
+    max_bytes: usize,
+) -> Result<Vec<u8>, ApiError> {
+    if max_bytes == 0 {
+        return Ok(Vec::new());
+    }
+    let label = path.as_str();
+    let stream_future = storage.read_stream(path, 0, Some(max_bytes as u64));
+    let mut stream = match tokio::time::timeout(STORAGE_FILE_OP_TIMEOUT, stream_future).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            return Err(ApiError::Message(format!(
+                "STORAGE_READ_TIMEOUT: opening '{label}' exceeded {}s",
+                STORAGE_FILE_OP_TIMEOUT.as_secs()
+            )));
+        }
+    };
+    let mut out = Vec::with_capacity(max_bytes.min(64 * 1024));
+    while out.len() < max_bytes {
+        let item = match tokio::time::timeout(STORAGE_READ_CHUNK_TIMEOUT, stream.next()).await {
+            Ok(Some(item)) => item,
+            Ok(None) => break,
+            Err(_) => {
+                return Err(ApiError::Message(format!(
+                    "STORAGE_READ_TIMEOUT: '{label}' chunk exceeded {}s",
+                    STORAGE_READ_CHUNK_TIMEOUT.as_secs()
+                )));
+            }
+        };
+        let chunk = item.map_err(|e| ApiError::Message(format!("storage read stream: {e}")))?;
+        if chunk.is_empty() {
+            continue;
+        }
+        let take = (max_bytes - out.len()).min(chunk.len());
+        out.extend_from_slice(&chunk[..take]);
+    }
+    Ok(out)
+}
+
+/// Read tags from at most ~head (+ FLAC tail) bytes over SMB; never the full file.
+async fn storage_read_tags_limited(
+    storage: &Arc<dyn LibraryStorage>,
+    path: &StoragePath,
+    file_size: u64,
+) -> Result<TrackTags, ApiError> {
+    if file_size == 0 {
+        return Err(ApiError::Message(format!(
+            "storage scan empty file: {}",
+            path.as_str()
+        )));
+    }
+    let path_rel = path.as_str();
+    let head_len = (file_size as usize).min(STORAGE_TAG_HEAD);
+    let head = storage_read_bytes_capped(storage, path, head_len).await?;
+    if tags::is_flac_path(path_rel) {
+        if let Ok(tags) = tags::try_read_tags_lofty_bytes(&head, path_rel) {
+            return Ok(tags);
+        }
+        let tail_len = tags::limited_tag_flac_tail_len(file_size);
+        let tail_offset = file_size.saturating_sub(tail_len as u64);
+        let tail_bytes = match tokio::time::timeout(
+            STORAGE_FILE_OP_TIMEOUT,
+            storage.read_at(path, tail_offset, tail_len),
+        )
+        .await
+        {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(ApiError::Message(format!(
+                    "STORAGE_READ_TIMEOUT: FLAC tail '{path_rel}' exceeded {}s",
+                    STORAGE_FILE_OP_TIMEOUT.as_secs()
+                )));
+            }
+        };
+        return Ok(tags::read_tags_limited_bytes(
+            head,
+            Some(tail_bytes.to_vec()),
+            path_rel,
+        ));
+    }
+    Ok(tags::read_tags_limited_bytes(head, None, path_rel))
+}
+
+async fn flush_storage_scan_discovery(
+    scan_id: i64,
+    pool: &SqlitePool,
+    entries_walked: i64,
+    audio_seen: i64,
+    counters: &ScanProgressCounters,
+) -> Result<(), ApiError> {
+    let estimate = entries_walked.max(audio_seen).max(1);
+    *counters
+        .files_total_final
+        .lock()
+        .expect("scan files_total lock poisoned") = Some(estimate);
+    flush_scan_progress(
+        scan_id,
+        pool,
+        entries_walked,
+        counters.files_processed.load(Ordering::Relaxed),
+        counters.files_indexed.load(Ordering::Relaxed),
+        counters.files_total_final.as_ref(),
+        &counters.events,
+    )
+    .await
+}
+
 async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), ApiError> {
+    let scan_root_display = deps
+        .scan_root
+        .as_ref()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+    tracing::info!(
+        scan_id,
+        scan_root = %scan_root_display,
+        "storage library scan started"
+    );
+
     let counters = ScanProgressCounters {
         files_seen: Arc::new(AtomicI64::new(0)),
         files_processed: Arc::new(AtomicI64::new(0)),
@@ -844,74 +1024,101 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
         files_total_final: Arc::new(Mutex::new(None)),
         events: deps.events.clone(),
     };
-    let mut dirs = vec![deps.scan_root.clone().unwrap_or_else(StoragePath::root)];
-    let mut jobs = Vec::new();
-    while let Some(dir) = dirs.pop() {
+    let entries_walked = Arc::new(AtomicI64::new(0));
+    flush_storage_scan_discovery(scan_id, &deps.pool, 0, 0, &counters).await?;
+
+    let mut dirs: VecDeque<StoragePath> = VecDeque::new();
+    dirs.push_back(deps.scan_root.clone().unwrap_or_else(StoragePath::root));
+    let mut visited = HashSet::new();
+    let mut audio_entries: Vec<AudioScanEntry> = Vec::new();
+    while let Some(dir) = dirs.pop_front() {
         if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
             return Ok(());
         }
-        for entry in deps.storage.list_dir(&dir).await? {
+        let dir_key = dir.as_str().to_string();
+        if !visited.insert(dir_key.clone()) {
+            tracing::debug!(scan_id, dir = %dir_key, "storage scan skipping duplicate directory");
+            continue;
+        }
+        tracing::info!(
+            scan_id,
+            dir = %dir.as_str(),
+            pending_dirs = dirs.len(),
+            "storage scan listing directory"
+        );
+        let entries = storage_list_dir_timed(&deps.storage, &dir).await?;
+        let n_entries = entries.len();
+        let walked =
+            entries_walked.fetch_add(n_entries as i64, Ordering::Relaxed) + n_entries as i64;
+        let audio_seen = counters.files_seen.load(Ordering::Relaxed);
+        tracing::info!(
+            scan_id,
+            dir = %dir.as_str(),
+            entries = n_entries,
+            entries_walked = walked,
+            audio_seen,
+            "storage scan listed directory"
+        );
+        flush_storage_scan_discovery(scan_id, &deps.pool, walked, audio_seen, &counters).await?;
+
+        let mut subdirs = 0usize;
+        let mut audio_here = 0usize;
+        for entry in entries {
             if entry.kind == StorageEntryKind::Directory {
-                dirs.push(entry.path);
+                dirs.push_back(entry.path);
+                subdirs += 1;
                 continue;
             }
             if !is_audio_file(std::path::Path::new(entry.path.as_str())) {
                 continue;
             }
-            let seen = counters.files_seen.fetch_add(1, Ordering::Relaxed) + 1;
-            let path_rel = entry.path.as_str().to_string();
-            if let Some((db_mtime, db_size)) =
-                tracks::get_fingerprint_by_path(&deps.pool, &path_rel).await?
-            {
-                let size_i64 = entry.size.and_then(|s| i64::try_from(s).ok());
-                if db_mtime.is_none() && db_size.is_some() && db_size == size_i64 {
-                    counters.files_processed.fetch_add(1, Ordering::Relaxed);
-                    counters.files_indexed.fetch_add(1, Ordering::Relaxed);
-                    continue;
-                }
-            }
-            let bytes = deps.storage.read(&entry.path).await?;
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            let tags = tags::read_tags_from_bytes_with_rel(bytes.to_vec(), Some(&path_rel))?;
-            let album_path_rel = entry
-                .path
-                .parent()
-                .map(|p| p.as_str().to_string())
-                .unwrap_or_default();
-            let cover_path =
-                discover_album_cover_rel_storage(deps.storage.as_ref(), &album_path_rel)
-                    .await
-                    .ok()
-                    .flatten();
-            jobs.push(ScanIndexJob {
-                path_rel,
-                album_path_rel,
-                tags,
-                file_mtime: None,
-                file_hash: Some(hex::encode(hasher.finalize())),
-                file_size: entry.size.and_then(|s| i64::try_from(s).ok()),
-                cover_path,
-            });
-            if (seen as usize).is_multiple_of(PROGRESS_EVERY) {
-                flush_scan_progress(
+            let Some(size) = entry.size else {
+                tracing::warn!(
                     scan_id,
-                    &deps.pool,
-                    seen,
-                    counters.files_processed.load(Ordering::Relaxed),
-                    counters.files_indexed.load(Ordering::Relaxed),
-                    counters.files_total_final.as_ref(),
-                    &deps.events,
-                )
-                .await?;
-            }
+                    path = %entry.path.as_str(),
+                    "storage scan audio entry missing size from listing, skipping"
+                );
+                continue;
+            };
+            audio_entries.push(AudioScanEntry {
+                path: entry.path,
+                size,
+                mtime: entry.mtime,
+            });
+            audio_here += 1;
         }
+        tracing::info!(
+            scan_id,
+            dir = %dir.as_str(),
+            subdirs,
+            audio_here,
+            pending_dirs = dirs.len(),
+            audio_queued = audio_entries.len(),
+            "storage scan queued entries from directory"
+        );
     }
-    let total = counters.files_seen.load(Ordering::Relaxed);
+
+    let audio_total = i64::try_from(audio_entries.len()).unwrap_or(i64::MAX);
+    tracing::info!(
+        scan_id,
+        audio_files = audio_entries.len(),
+        "storage scan discovery finished, processing audio"
+    );
     *counters
         .files_total_final
         .lock()
-        .expect("scan files_total lock poisoned") = Some(total);
+        .expect("scan files_total lock poisoned") = Some(audio_total.max(1));
+    counters.files_seen.store(0, Ordering::Relaxed);
+    flush_scan_progress(
+        scan_id,
+        &deps.pool,
+        0,
+        0,
+        0,
+        counters.files_total_final.as_ref(),
+        &deps.events,
+    )
+    .await?;
 
     let scan_deps = ScanDeps {
         pool: deps.pool.clone(),
@@ -922,18 +1129,115 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
         convert_job_tx: deps.convert_job_tx.clone(),
         runtime: deps.runtime.clone(),
     };
-    for job in jobs {
-        let path_rel = job.path_rel.clone();
-        persist_index(&deps.pool, job, &scan_deps).await?;
-        counters.files_processed.fetch_add(1, Ordering::Relaxed);
-        counters.files_indexed.fetch_add(1, Ordering::Relaxed);
-        scan_debug!(
-            deps.scan.debug,
+
+    let audio_count = audio_entries.len();
+    let mut album_paths = HashSet::new();
+    let discovered_paths: Vec<String> = audio_entries
+        .iter()
+        .map(|entry| entry.path.as_str().to_string())
+        .collect();
+    for entry in &audio_entries {
+        if let Some(parent) = entry.path.parent() {
+            let rel = parent.as_str();
+            if !rel.is_empty() {
+                album_paths.insert(rel.to_string());
+            }
+        }
+    }
+
+    // SMB client serializes I/O per session; >2 parallel readers mostly queue on op_serial.
+    let smb_io_workers = deps.scan.process_workers.clamp(1, 2);
+    let processing_workers = deps.scan.process_workers.clamp(1, 8);
+    let smb_io = Arc::new(Semaphore::new(smb_io_workers));
+    tracing::info!(
+        scan_id,
+        audio_total = audio_count,
+        smb_io_workers,
+        processing_workers,
+        "storage scan processing audio (parallel)"
+    );
+
+    let entry_ctx = StorageAudioEntryCtx {
+        scan_id,
+        pool: deps.pool.clone(),
+        storage: deps.storage.clone(),
+        audio_total: audio_count,
+        scan_deps,
+        counters: counters.clone(),
+        events: deps.events.clone(),
+        files_total: counters.files_total_final.clone(),
+        debug: deps.scan.debug,
+    };
+    let mut entries = audio_entries.into_iter();
+    let mut tasks = tokio::task::JoinSet::new();
+    let mut in_flight = 0usize;
+    loop {
+        while in_flight < processing_workers {
+            if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
+                return Ok(());
+            }
+            let Some(entry) = entries.next() else {
+                break;
+            };
+            let ctx = entry_ctx.clone();
+            let smb_io = smb_io.clone();
+            tasks.spawn(async move {
+                let Ok(_permit) = smb_io.acquire_owned().await else {
+                    tracing::error!(scan_id = ctx.scan_id, "storage scan SMB semaphore closed");
+                    return;
+                };
+                if let Err(e) = process_storage_audio_entry(&ctx, entry).await {
+                    tracing::error!(
+                        scan_id = ctx.scan_id,
+                        error = %e,
+                        "storage scan file worker failed"
+                    );
+                }
+            });
+            in_flight += 1;
+        }
+        if in_flight == 0 {
+            break;
+        }
+        tokio::select! {
+            result = tasks.join_next() => {
+                in_flight = in_flight.saturating_sub(1);
+                if let Some(result) = result
+                    && let Err(e) = result
+                {
+                    tracing::error!(scan_id, error = %e, "storage scan indexing task join failed");
+                }
+            }
+            cancelled = library_scan_runs::is_cancelled(&deps.pool, scan_id) => {
+                if cancelled? {
+                    tasks.abort_all();
+                    while tasks.join_next().await.is_some() {}
+                    return Ok(());
+                }
+            }
+        }
+    }
+    let processed = counters.files_processed.load(Ordering::Relaxed);
+    if processed < audio_count as i64 {
+        tracing::warn!(
             scan_id,
-            path = %path_rel,
-            "persisted storage track"
+            processed,
+            audio_total = audio_count,
+            "storage scan finished indexing with fewer files than discovered"
         );
     }
+    if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+        return Ok(());
+    }
+    storage_scan_album_cover_pass(&deps.pool, &deps.storage, &album_paths).await?;
+    if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+        return Ok(());
+    }
+    storage_scan_prune_stale(&deps.pool, deps.scan_root.as_ref(), &discovered_paths).await?;
+
+    let total = counters.files_seen.load(Ordering::Relaxed);
     flush_scan_progress(
         scan_id,
         &deps.pool,
@@ -947,7 +1251,357 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
     if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
         return Ok(());
     }
-    library_scan_runs::finish_success(&deps.pool, scan_id).await
+    library_scan_runs::finish_success(&deps.pool, scan_id).await?;
+    if deps.runtime.is_some() {
+        spawn_storage_hash_backfill(deps.pool.clone(), deps.storage.clone(), smb_io);
+    }
+    Ok(())
+}
+
+async fn storage_scan_prune_stale(
+    pool: &SqlitePool,
+    scan_root: Option<&StoragePath>,
+    discovered_paths: &[String],
+) -> Result<(), ApiError> {
+    let scope = scan_root.and_then(|path| {
+        let rel = path.as_str();
+        if rel.is_empty() { None } else { Some(rel) }
+    });
+    let removed_tracks = tracks::delete_absent_in_scope(pool, scope, discovered_paths).await?;
+    let removed_albums = albums::delete_empty_storage_albums_in_scope(pool, scope).await?;
+    if removed_tracks > 0 || removed_albums > 0 {
+        tracing::info!(
+            scope = %scope.unwrap_or(""),
+            removed_tracks,
+            removed_albums,
+            "storage scan pruned stale library rows"
+        );
+    }
+    Ok(())
+}
+
+pub fn spawn_storage_hash_backfill(
+    pool: SqlitePool,
+    storage: Arc<dyn LibraryStorage>,
+    smb_io: Arc<Semaphore>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = run_storage_hash_backfill(&pool, storage, smb_io).await {
+            tracing::warn!(error = %e, "storage file_hash backfill failed");
+        }
+    });
+}
+
+async fn storage_content_hash_xxh64(
+    storage: &Arc<dyn LibraryStorage>,
+    path: &StoragePath,
+    file_size: u64,
+) -> Result<String, ApiError> {
+    if file_size == 0 {
+        return Err(ApiError::Message(format!(
+            "hash backfill empty file: {}",
+            path.as_str()
+        )));
+    }
+    let label = path.as_str();
+    let stream_future = storage.read_stream(path, 0, Some(file_size));
+    let mut stream = match tokio::time::timeout(STORAGE_FILE_OP_TIMEOUT, stream_future).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            return Err(ApiError::Message(format!(
+                "STORAGE_READ_TIMEOUT: hash '{label}' exceeded {}s",
+                STORAGE_FILE_OP_TIMEOUT.as_secs()
+            )));
+        }
+    };
+    let mut hasher = ContentXxh64::new();
+    loop {
+        let item = match tokio::time::timeout(STORAGE_READ_CHUNK_TIMEOUT, stream.next()).await {
+            Ok(Some(item)) => item,
+            Ok(None) => break,
+            Err(_) => {
+                return Err(ApiError::Message(format!(
+                    "STORAGE_READ_TIMEOUT: hash chunk '{label}' exceeded {}s",
+                    STORAGE_READ_CHUNK_TIMEOUT.as_secs()
+                )));
+            }
+        };
+        let chunk = item.map_err(|e| ApiError::Message(format!("hash read stream: {e}")))?;
+        hasher.update(&chunk);
+    }
+    Ok(hasher.finish())
+}
+
+pub async fn run_storage_hash_backfill(
+    pool: &SqlitePool,
+    storage: Arc<dyn LibraryStorage>,
+    smb_io: Arc<Semaphore>,
+) -> Result<(), ApiError> {
+    let mut after_id = 0;
+    let mut total_seen = 0usize;
+    loop {
+        let rows =
+            tracks::list_needing_file_hash_batch(pool, after_id, STORAGE_HASH_BACKFILL_BATCH)
+                .await?;
+        if rows.is_empty() {
+            break;
+        }
+        total_seen += rows.len();
+        tracing::info!(
+            tracks = rows.len(),
+            after_id,
+            "storage file_hash backfill batch started"
+        );
+        let mut tasks = tokio::task::JoinSet::new();
+        for row in rows {
+            after_id = after_id.max(row.id);
+            let pool = pool.clone();
+            let storage = storage.clone();
+            let sem = smb_io.clone();
+            tasks.spawn(async move {
+                let permit = sem
+                    .acquire_owned()
+                    .await
+                    .map_err(|_| ApiError::Message("hash backfill semaphore closed".into()))?;
+                let _permit = permit;
+                process_storage_hash_backfill_row(&pool, storage, row).await
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::warn!(error = %e, "hash backfill row failed"),
+                Err(e) => tracing::warn!(error = %e, "hash backfill task join failed"),
+            }
+        }
+    }
+    tracing::info!(tracks = total_seen, "storage file_hash backfill finished");
+    Ok(())
+}
+
+async fn process_storage_hash_backfill_row(
+    pool: &SqlitePool,
+    storage: Arc<dyn LibraryStorage>,
+    row: tracks::TrackHashBackfillRow,
+) -> Result<(), ApiError> {
+    let path = match StoragePath::parse(&row.path) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(track_id = row.id, path = %row.path, error = %e, "hash backfill skip");
+            return Ok(());
+        }
+    };
+    let Some(file_size) = row.file_size.filter(|s| *s > 0).map(|s| s as u64) else {
+        tracing::warn!(track_id = row.id, path = %row.path, "hash backfill skip: missing size");
+        return Ok(());
+    };
+    if file_size > STORAGE_MAX_READ_BYTES {
+        tracing::warn!(
+            track_id = row.id,
+            path = %row.path,
+            size = file_size,
+            "hash backfill skip: oversized"
+        );
+        return Ok(());
+    }
+    match storage_content_hash_xxh64(&storage, &path, file_size).await {
+        Ok(hash) => tracks::set_file_hash(pool, row.id, &hash).await,
+        Err(e) => {
+            tracing::warn!(
+                track_id = row.id,
+                path = %row.path,
+                error = %e,
+                "hash backfill read failed"
+            );
+            Ok(())
+        }
+    }
+}
+
+async fn flush_storage_audio_file_done(
+    scan_id: i64,
+    pool: &SqlitePool,
+    counters: &ScanProgressCounters,
+    events: &broadcast::Sender<ScanProgressEvent>,
+    files_total: &Arc<Mutex<Option<i64>>>,
+    audio_total: usize,
+) -> Result<(), ApiError> {
+    let processed = counters.files_processed.fetch_add(1, Ordering::Relaxed) + 1;
+    counters.files_seen.store(processed, Ordering::Relaxed);
+    counters.files_indexed.store(processed, Ordering::Relaxed);
+    if (processed as usize).is_multiple_of(PROGRESS_EVERY) || processed as usize == audio_total {
+        flush_scan_progress(
+            scan_id,
+            pool,
+            processed,
+            processed,
+            processed,
+            files_total,
+            events,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn process_storage_audio_entry(
+    ctx: &StorageAudioEntryCtx,
+    entry: AudioScanEntry,
+) -> Result<(), ApiError> {
+    let path_rel = entry.path.as_str().to_string();
+    let file_size = entry.size;
+    tracing::info!(
+        scan_id = ctx.scan_id,
+        path = %path_rel,
+        size = file_size,
+        audio_total = ctx.audio_total,
+        "storage scan processing audio"
+    );
+    let work = process_storage_audio_entry_inner(
+        ctx.scan_id,
+        &ctx.pool,
+        &ctx.storage,
+        entry,
+        &ctx.scan_deps,
+        ctx.debug,
+    );
+    match tokio::time::timeout(STORAGE_FILE_INDEX_TIMEOUT, work).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            tracing::warn!(
+                scan_id = ctx.scan_id,
+                path = %path_rel,
+                error = %e,
+                "storage scan skipping file after error"
+            );
+        }
+        Err(_) => {
+            tracing::warn!(
+                scan_id = ctx.scan_id,
+                path = %path_rel,
+                timeout_secs = STORAGE_FILE_INDEX_TIMEOUT.as_secs(),
+                size = file_size,
+                "storage scan file timed out"
+            );
+        }
+    }
+    flush_storage_audio_file_done(
+        ctx.scan_id,
+        &ctx.pool,
+        &ctx.counters,
+        &ctx.events,
+        &ctx.files_total,
+        ctx.audio_total,
+    )
+    .await
+}
+
+async fn process_storage_audio_entry_inner(
+    scan_id: i64,
+    pool: &SqlitePool,
+    storage: &Arc<dyn LibraryStorage>,
+    entry: AudioScanEntry,
+    scan_deps: &ScanDeps,
+    debug: bool,
+) -> Result<(), ApiError> {
+    let path = entry.path;
+    let path_rel = path.as_str().to_string();
+    let file_size = entry.size;
+    let file_mtime = entry.mtime;
+    if file_size > STORAGE_MAX_READ_BYTES {
+        tracing::warn!(
+            scan_id,
+            path = %path_rel,
+            size = file_size,
+            "storage scan skipping oversized file"
+        );
+        return Ok(());
+    }
+    let size_i64 = i64::try_from(file_size).ok();
+    let album_path_rel = path
+        .parent()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_default();
+
+    if library_scan_runs::is_cancelled(pool, scan_id).await? {
+        return Ok(());
+    }
+
+    if let Some((db_mtime, db_size)) = tracks::get_fingerprint_by_path(pool, &path_rel).await?
+        && db_mtime.as_deref() == file_mtime.as_deref()
+        && db_size.is_some()
+        && db_size == size_i64
+    {
+        tracing::debug!(scan_id, path = %path_rel, "storage scan unchanged, skip");
+        return Ok(());
+    }
+
+    tracing::info!(
+        scan_id,
+        path = %path_rel,
+        size = file_size,
+        "storage scan reading file"
+    );
+    if library_scan_runs::is_cancelled(pool, scan_id).await? {
+        return Ok(());
+    }
+    let tags = storage_read_tags_limited(storage, &path, file_size).await?;
+    if library_scan_runs::is_cancelled(pool, scan_id).await? {
+        return Ok(());
+    }
+    let job = ScanIndexJob {
+        path_rel: path_rel.clone(),
+        album_path_rel,
+        tags,
+        file_mtime,
+        file_hash: None,
+        file_size: size_i64,
+        cover_path: None,
+    };
+    persist_index(pool, job, scan_deps).await?;
+    scan_debug!(debug, scan_id, path = %path_rel, "persisted storage track");
+    Ok(())
+}
+
+async fn storage_scan_album_cover_pass(
+    pool: &SqlitePool,
+    storage: &Arc<dyn LibraryStorage>,
+    album_paths: &HashSet<String>,
+) -> Result<(), ApiError> {
+    for album_path_rel in album_paths {
+        let Some(album_id) = albums::id_by_path(pool, album_path_rel).await? else {
+            continue;
+        };
+        let current = albums::get_by_id(pool, album_id)
+            .await?
+            .and_then(|a| a.cover_path);
+        let work = ensure_album_cover_path_storage(
+            pool,
+            storage.as_ref(),
+            album_id,
+            Some(album_path_rel),
+            current.as_deref(),
+        );
+        match tokio::time::timeout(STORAGE_LIST_DIR_TIMEOUT, work).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    album = %album_path_rel,
+                    error = %e,
+                    "storage scan album cover pass failed"
+                );
+            }
+            Err(_) => {
+                tracing::warn!(
+                    album = %album_path_rel,
+                    timeout_secs = STORAGE_LIST_DIR_TIMEOUT.as_secs(),
+                    "storage scan album cover pass timed out"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn start_scan(
@@ -980,6 +1634,18 @@ pub async fn start_scan(
     Ok(scan_id)
 }
 
+/// Poll until the scan run is no longer `running` (success, failed, or cancelled).
+pub async fn wait_scan_finished(pool: &SqlitePool, scan_id: i64) {
+    loop {
+        match library_scan_runs::get_by_id(pool, scan_id).await {
+            Ok(Some(run)) if run.status == "running" => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            _ => break,
+        }
+    }
+}
+
 pub async fn start_scan_storage(
     pool: &SqlitePool,
     storage: Arc<dyn LibraryStorage>,
@@ -1005,9 +1671,13 @@ pub async fn start_scan_storage(
         runtime,
     };
     tokio::spawn(async move {
-        if let Err(e) = run_storage_scan(scan_id, deps.clone()).await {
-            tracing::error!(scan_id, error = %e, "storage library scan failed");
-            let _ = library_scan_runs::finish_failed(&deps.pool, scan_id, &e.to_string()).await;
+        let pool = deps.pool.clone();
+        match run_storage_scan(scan_id, deps).await {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::error!(scan_id, error = %e, "storage library scan failed");
+                let _ = library_scan_runs::finish_failed(&pool, scan_id, &e.to_string()).await;
+            }
         }
     });
     Ok(scan_id)
@@ -1027,7 +1697,8 @@ pub fn resolve_scan_root_query(
 mod tests {
     use super::*;
     use crate::config::LibraryScanConfig;
-    use crate::db::{connect, convert_jobs, migrate};
+    use crate::db::{artists, connect, convert_jobs, migrate};
+    use crate::library::file_hash::content_hash_xxh64;
     use crate::library::storage::LocalStorage;
     use crate::services::app_settings::{RuntimeSettings, StorageSettings};
     use tempfile::TempDir;
@@ -1055,6 +1726,17 @@ mod tests {
         track_path
     }
 
+    #[test]
+    fn file_hash_sync_matches_buffer_hash() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("track.bin");
+        let bytes = b"hash me in streaming chunks";
+        std::fs::write(&path, bytes).unwrap();
+
+        let hash = file_hash_sync(&path).unwrap().unwrap();
+        assert_eq!(hash, content_hash_xxh64(bytes));
+    }
+
     fn scan_cfg_1_1() -> LibraryScanConfig {
         LibraryScanConfig {
             worker_total: 2,
@@ -1064,6 +1746,45 @@ mod tests {
             index_queue_capacity: 64,
             ..LibraryScanConfig::default()
         }
+    }
+
+    async fn seed_storage_track(pool: &SqlitePool, album_path: &str, track_path: &str) -> i64 {
+        let artist_id = artists::upsert_by_name(pool, "Seed Artist", None)
+            .await
+            .unwrap();
+        let album_id = albums::upsert(
+            pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: album_path,
+                year: None,
+                qobuz_album_id: None,
+                path: Some(album_path),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        tracks::upsert(
+            pool,
+            tracks::TrackUpsert {
+                album_id,
+                title: track_path,
+                track_number: None,
+                year: None,
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path: track_path,
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: None,
+            },
+        )
+        .await
+        .unwrap();
+        album_id
     }
 
     #[tokio::test]
@@ -1390,6 +2111,862 @@ mod tests {
 
         let scan_id2 = library_scan_runs::start(&pool).await.unwrap();
         run_scan(scan_id2, deps).await;
+        let second = library_scan_runs::get_by_id(&pool, scan_id2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.status, "success");
+        assert_eq!(second.files_indexed, 1);
+        assert_eq!(second.files_processed, 1);
+    }
+
+    struct MetadataCountingStorage {
+        inner: std::sync::Arc<LocalStorage>,
+        metadata_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::library::storage::LibraryStorage for MetadataCountingStorage {
+        async fn metadata(
+            &self,
+            path: &StoragePath,
+        ) -> Result<crate::library::storage::StorageMetadata, ApiError> {
+            self.metadata_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.metadata(path).await
+        }
+
+        async fn list_dir(
+            &self,
+            path: &StoragePath,
+        ) -> Result<Vec<crate::library::storage::StorageEntry>, ApiError> {
+            self.inner.list_dir(path).await
+        }
+
+        async fn read(&self, path: &StoragePath) -> Result<bytes::Bytes, ApiError> {
+            self.inner.read(path).await
+        }
+
+        async fn read_at(
+            &self,
+            path: &StoragePath,
+            offset: u64,
+            len: usize,
+        ) -> Result<bytes::Bytes, ApiError> {
+            self.inner.read_at(path, offset, len).await
+        }
+
+        async fn read_stream(
+            &self,
+            path: &StoragePath,
+            offset: u64,
+            len: Option<u64>,
+        ) -> Result<crate::library::storage::StorageByteStream, ApiError> {
+            self.inner.read_stream(path, offset, len).await
+        }
+
+        async fn atomic_write(
+            &self,
+            path: &StoragePath,
+            bytes: bytes::Bytes,
+        ) -> Result<(), ApiError> {
+            self.inner.atomic_write(path, bytes).await
+        }
+
+        async fn create_dir_all(&self, path: &StoragePath) -> Result<(), ApiError> {
+            self.inner.create_dir_all(path).await
+        }
+
+        async fn rename(&self, from: &StoragePath, to: &StoragePath) -> Result<(), ApiError> {
+            self.inner.rename(from, to).await
+        }
+
+        async fn delete(&self, path: &StoragePath) -> Result<(), ApiError> {
+            self.inner.delete(path).await
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_scan_uses_listing_mtime_without_per_file_metadata() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let (events, _) = broadcast::channel(8);
+        let inner = std::sync::Arc::new(LocalStorage::new(dir.path()));
+        let counting = std::sync::Arc::new(MetadataCountingStorage {
+            inner: inner.clone(),
+            metadata_calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let storage: std::sync::Arc<dyn crate::library::storage::LibraryStorage> = counting.clone();
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage,
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            counting
+                .metadata_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "storage scan should use list_dir mtime/size, not per-file metadata()"
+        );
+        let run = library_scan_runs::get_by_id(&pool, scan_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.files_indexed, 1);
+    }
+
+    #[tokio::test]
+    async fn storage_scan_prunes_stale_tracks_after_successful_full_scan() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let stale_album_id = seed_storage_track(
+            &pool,
+            "Old Artist/Old Album",
+            "Old Artist/Old Album/01.flac",
+        )
+        .await;
+        let (events, _) = broadcast::channel(8);
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let stale_tracks = tracks::list_by_album(&pool, stale_album_id).await.unwrap();
+        assert!(stale_tracks.is_empty());
+        assert!(
+            albums::get_by_id(&pool, stale_album_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn storage_scan_prunes_only_inside_scoped_scan_root() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let scoped_album_id =
+            seed_storage_track(&pool, "Artist A/Album One", "Artist A/Album One/stale.flac").await;
+        let outside_album_id =
+            seed_storage_track(&pool, "Other Artist/Album", "Other Artist/Album/stale.flac").await;
+        let (events, _) = broadcast::channel(8);
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: Some(StoragePath::parse("Artist A/Album One").unwrap()),
+                convert_job_tx: None,
+                runtime: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let scoped_tracks = tracks::list_by_album(&pool, scoped_album_id).await.unwrap();
+        assert_eq!(scoped_tracks.len(), 1);
+        assert_eq!(scoped_tracks[0].path, "Artist A/Album One/01.wav");
+        let outside_tracks = tracks::list_by_album(&pool, outside_album_id)
+            .await
+            .unwrap();
+        assert_eq!(outside_tracks.len(), 1);
+        assert_eq!(outside_tracks[0].path, "Other Artist/Album/stale.flac");
+    }
+
+    #[tokio::test]
+    async fn failed_storage_scan_does_not_prune_existing_tracks() {
+        struct FailingListStorage;
+
+        #[async_trait::async_trait]
+        impl crate::library::storage::LibraryStorage for FailingListStorage {
+            async fn metadata(
+                &self,
+                _path: &StoragePath,
+            ) -> Result<crate::library::storage::StorageMetadata, ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn list_dir(
+                &self,
+                _path: &StoragePath,
+            ) -> Result<Vec<crate::library::storage::StorageEntry>, ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn read(&self, _path: &StoragePath) -> Result<bytes::Bytes, ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn read_at(
+                &self,
+                _path: &StoragePath,
+                _offset: u64,
+                _len: usize,
+            ) -> Result<bytes::Bytes, ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn read_stream(
+                &self,
+                _path: &StoragePath,
+                _offset: u64,
+                _len: Option<u64>,
+            ) -> Result<crate::library::storage::StorageByteStream, ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn atomic_write(
+                &self,
+                _path: &StoragePath,
+                _bytes: bytes::Bytes,
+            ) -> Result<(), ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn create_dir_all(&self, _path: &StoragePath) -> Result<(), ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn rename(&self, _from: &StoragePath, _to: &StoragePath) -> Result<(), ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+
+            async fn delete(&self, _path: &StoragePath) -> Result<(), ApiError> {
+                Err(ApiError::Message("boom".into()))
+            }
+        }
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let album_id =
+            seed_storage_track(&pool, "Artist A/Album One", "Artist A/Album One/stale.flac").await;
+        let (events, _) = broadcast::channel(8);
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        let err = run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage: std::sync::Arc::new(FailingListStorage),
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("boom"));
+        let rows = tracks::list_by_album(&pool, album_id).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(albums::get_by_id(&pool, album_id).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn storage_hash_backfill_writes_xxh64_digest() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        let track_path = write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "Artist A", None)
+            .await
+            .unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album One",
+                year: Some(2020),
+                qobuz_album_id: None,
+                path: Some("Artist A/Album One"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        let file_size = std::fs::metadata(&track_path).unwrap().len() as i64;
+        tracks::upsert(
+            &pool,
+            tracks::TrackUpsert {
+                album_id,
+                title: "Song",
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path: "Artist A/Album One/01.wav",
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: Some(file_size),
+            },
+        )
+        .await
+        .unwrap();
+
+        let storage: std::sync::Arc<dyn crate::library::storage::LibraryStorage> =
+            std::sync::Arc::new(LocalStorage::new(dir.path()));
+        run_storage_hash_backfill(&pool, storage, Arc::new(Semaphore::new(2)))
+            .await
+            .unwrap();
+
+        let track = tracks::list_by_album(&pool, album_id)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        let hash = track.file_hash.expect("hash after backfill");
+        assert_eq!(hash.len(), 16);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+        let file_bytes = std::fs::read(&track_path).unwrap();
+        assert_eq!(hash, content_hash_xxh64(&file_bytes));
+    }
+
+    #[tokio::test]
+    async fn storage_hash_backfill_skips_bad_rows_and_continues_later_ids() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        let good_path = write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "Artist A", None)
+            .await
+            .unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album One",
+                year: Some(2020),
+                qobuz_album_id: None,
+                path: Some("Artist A/Album One"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+        for (path, size) in [
+            ("bad/../escape.flac", Some(10)),
+            ("Artist A/Album One/missing-size.flac", None),
+            ("Artist A/Album One/zero.flac", Some(0)),
+            (
+                "Artist A/Album One/oversized.flac",
+                Some((STORAGE_MAX_READ_BYTES + 1) as i64),
+            ),
+            (
+                "Artist A/Album One/01.wav",
+                Some(std::fs::metadata(&good_path).unwrap().len() as i64),
+            ),
+        ] {
+            tracks::upsert(
+                &pool,
+                tracks::TrackUpsert {
+                    album_id,
+                    title: path,
+                    track_number: None,
+                    year: None,
+                    disc_number: None,
+                    genre: None,
+                    qobuz_track_id: None,
+                    path,
+                    duration_sec: None,
+                    file_mtime: None,
+                    file_hash: None,
+                    file_size: size,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let storage: std::sync::Arc<dyn crate::library::storage::LibraryStorage> =
+            std::sync::Arc::new(LocalStorage::new(dir.path()));
+        run_storage_hash_backfill(&pool, storage, Arc::new(Semaphore::new(2)))
+            .await
+            .unwrap();
+
+        let rows = tracks::list_by_album(&pool, album_id).await.unwrap();
+        let hashed: Vec<_> = rows
+            .iter()
+            .filter(|row| row.file_hash.is_some())
+            .map(|row| row.path.as_str())
+            .collect();
+        assert_eq!(hashed, vec!["Artist A/Album One/01.wav"]);
+    }
+
+    #[tokio::test]
+    async fn storage_scan_applies_album_cover_after_indexing() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        std::fs::create_dir_all(&album_dir).unwrap();
+        std::fs::write(album_dir.join("cover.jpg"), b"cover-bytes").unwrap();
+        write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let (events, _) = broadcast::channel(8);
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let album = albums::list_keyset(
+            &pool,
+            albums::AlbumsListParams {
+                sort: albums::AlbumsSort::Title,
+                order: crate::api::SortOrder::Asc,
+                limit: 1,
+                q: None,
+                cursor: None,
+            },
+        )
+        .await
+        .unwrap()
+        .items
+        .pop()
+        .unwrap();
+        assert_eq!(
+            album.cover_path.as_deref(),
+            Some("Artist A/Album One/cover.jpg")
+        );
+    }
+
+    #[tokio::test]
+    async fn storage_scan_counts_skipped_oversized_toward_files_total() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        std::fs::create_dir_all(&album_dir).unwrap();
+        std::fs::write(album_dir.join("huge.flac"), b"not-really-huge").unwrap();
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let (events, _) = broadcast::channel(8);
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage: std::sync::Arc::new(OversizedListingStorage::new(
+                    dir.path(),
+                    STORAGE_MAX_READ_BYTES + 1,
+                )),
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let run = library_scan_runs::get_by_id(&pool, scan_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.status, "success");
+        assert_eq!(run.files_total, 1);
+        assert_eq!(run.files_processed, 1);
+    }
+
+    /// Reports a single audio file larger than the scan cap from listing metadata.
+    struct OversizedListingStorage {
+        inner: LocalStorage,
+        reported_size: u64,
+    }
+
+    impl OversizedListingStorage {
+        fn new(root: &std::path::Path, reported_size: u64) -> Self {
+            Self {
+                inner: LocalStorage::new(root),
+                reported_size,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::library::storage::LibraryStorage for OversizedListingStorage {
+        async fn metadata(
+            &self,
+            path: &StoragePath,
+        ) -> Result<crate::library::storage::StorageMetadata, ApiError> {
+            self.inner.metadata(path).await
+        }
+
+        async fn list_dir(
+            &self,
+            path: &StoragePath,
+        ) -> Result<Vec<crate::library::storage::StorageEntry>, ApiError> {
+            let mut entries = self.inner.list_dir(path).await?;
+            for entry in &mut entries {
+                if entry.kind == crate::library::storage::StorageEntryKind::File {
+                    entry.size = Some(self.reported_size);
+                }
+            }
+            Ok(entries)
+        }
+
+        async fn read(&self, path: &StoragePath) -> Result<bytes::Bytes, ApiError> {
+            self.inner.read(path).await
+        }
+
+        async fn read_at(
+            &self,
+            path: &StoragePath,
+            offset: u64,
+            len: usize,
+        ) -> Result<bytes::Bytes, ApiError> {
+            self.inner.read_at(path, offset, len).await
+        }
+
+        async fn read_stream(
+            &self,
+            path: &StoragePath,
+            offset: u64,
+            len: Option<u64>,
+        ) -> Result<crate::library::storage::StorageByteStream, ApiError> {
+            self.inner.read_stream(path, offset, len).await
+        }
+
+        async fn atomic_write(
+            &self,
+            path: &StoragePath,
+            bytes: bytes::Bytes,
+        ) -> Result<(), ApiError> {
+            self.inner.atomic_write(path, bytes).await
+        }
+
+        async fn create_dir_all(&self, path: &StoragePath) -> Result<(), ApiError> {
+            self.inner.create_dir_all(path).await
+        }
+
+        async fn rename(&self, from: &StoragePath, to: &StoragePath) -> Result<(), ApiError> {
+            self.inner.rename(from, to).await
+        }
+
+        async fn delete(&self, path: &StoragePath) -> Result<(), ApiError> {
+            self.inner.delete(path).await
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_scan_indexes_with_null_file_hash() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let (events, _) = broadcast::channel(8);
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(
+            scan_id,
+            StorageScanDeps {
+                pool: pool.clone(),
+                storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
+                events,
+                scan: scan_cfg_1_1(),
+                scan_root: None,
+                convert_job_tx: None,
+                runtime: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let track = tracks::list_by_album(
+            &pool,
+            albums::list_keyset(
+                &pool,
+                albums::AlbumsListParams {
+                    sort: albums::AlbumsSort::Title,
+                    order: crate::api::SortOrder::Asc,
+                    limit: 1,
+                    q: None,
+                    cursor: None,
+                },
+            )
+            .await
+            .unwrap()
+            .items[0]
+                .id,
+        )
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+        assert!(track.file_hash.is_none());
+        assert!(track.file_mtime.is_some());
+        assert!(track.file_size.is_some());
+    }
+
+    #[tokio::test]
+    async fn storage_scan_skips_unchanged_when_mtime_and_size_match() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Artist A").join("Album One");
+        write_test_wav_with_tags(
+            &album_dir,
+            "01.wav",
+            tags::TrackTags {
+                title: "Song".into(),
+                artist: "Artist A".into(),
+                album: "Album One".into(),
+                track_number: Some(1),
+                year: Some(2020),
+                disc_number: None,
+                track_total: None,
+                disc_total: None,
+                genre: None,
+                duration_sec: None,
+                qobuz_track_id: None,
+                qobuz_album_id: None,
+                label: None,
+                isrc: None,
+                composer: None,
+            },
+        );
+
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let (events, _) = broadcast::channel(8);
+        let storage: std::sync::Arc<dyn crate::library::storage::LibraryStorage> =
+            std::sync::Arc::new(LocalStorage::new(dir.path()));
+        let storage_deps = || StorageScanDeps {
+            pool: pool.clone(),
+            storage: storage.clone(),
+            events: events.clone(),
+            scan: scan_cfg_1_1(),
+            scan_root: None,
+            convert_job_tx: None,
+            runtime: None,
+        };
+
+        let scan_id = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(scan_id, storage_deps()).await.unwrap();
+        let first = library_scan_runs::get_by_id(&pool, scan_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.files_indexed, 1);
+        let track = tracks::list_by_album(
+            &pool,
+            albums::list_keyset(
+                &pool,
+                albums::AlbumsListParams {
+                    sort: albums::AlbumsSort::Title,
+                    order: crate::api::SortOrder::Asc,
+                    limit: 1,
+                    q: None,
+                    cursor: None,
+                },
+            )
+            .await
+            .unwrap()
+            .items[0]
+                .id,
+        )
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+        assert!(track.file_mtime.is_some());
+        assert!(track.file_size.is_some());
+
+        let scan_id2 = library_scan_runs::start(&pool).await.unwrap();
+        run_storage_scan(scan_id2, storage_deps()).await.unwrap();
         let second = library_scan_runs::get_by_id(&pool, scan_id2)
             .await
             .unwrap()

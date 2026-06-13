@@ -1478,7 +1478,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2 0.10.9",
  "sqlx",
  "tempfile",
  "thiserror 2.0.18",
@@ -1489,19 +1488,26 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "walkdir",
+ "xxhash-rust",
 ]
 
 [[package]]
 name = "euterpe-smb"
 version = "0.1.0"
 dependencies = [
+ "binrw",
  "bytes",
  "futures-util",
  "pretty_assertions",
  "smb",
+ "smb-dtyp",
+ "smb-rpc",
  "thiserror 2.0.18",
+ "time",
+ "tokio",
  "url",
 ]
 
@@ -4771,8 +4777,6 @@ dependencies = [
 [[package]]
 name = "smb"
 version = "0.11.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c12ddf75029c02180237fa98948bd3dea72647c08bd7d1b5fa4923491764100"
 dependencies = [
  "aead 0.6.0-rc.2",
  "aes 0.9.0-rc.1",
@@ -6632,6 +6636,12 @@ dependencies = [
  "serde",
  "zeroize",
 ]
+
+[[package]]
+name = "xxhash-rust"
+version = "0.8.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yansi"

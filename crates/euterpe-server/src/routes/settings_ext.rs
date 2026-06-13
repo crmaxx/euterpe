@@ -6,9 +6,10 @@ use std::path::{Component, Path};
 use crate::api::{
     ConverterSettingsPatch, ConverterSettingsResponse, DownloadsSettingsPatch,
     DownloadsSettingsResponse, LibraryScanSettingsPatch, LibraryScanSettingsResponse,
-    SmbSharesRequest, SmbSharesResponse, StorageBrowseEntry, StorageBrowseResponse,
-    StorageLocationPatch, StorageSettingsPatch, StorageSettingsResponse, StorageSettingsView,
-    StorageTestRequest, StorageTestResponse, UiPreferencesPatch, UiPreferencesResponse,
+    SmbSharesRequest, SmbSharesResponse, StorageBrowseEntry, StorageBrowseRequest,
+    StorageBrowseResponse, StorageLocationPatch, StorageSettingsPatch, StorageSettingsResponse,
+    StorageSettingsView, StorageTestRequest, StorageTestResponse, StringPatchField,
+    UiPreferencesPatch, UiPreferencesResponse,
 };
 use crate::error::ApiError;
 use crate::library::storage::{self, StorageEntryKind, StoragePath};
@@ -141,23 +142,77 @@ pub async fn get_storage_settings(
 ) -> Result<Json<StorageSettingsResponse>, ApiError> {
     let settings = state.runtime.read().await.storage.clone();
     let watch_status = state.storage_watch.status().await;
-    Ok(Json(StorageSettingsResponse {
-        settings: StorageSettingsView::from_with_watch_status(&settings, watch_status),
-    }))
+    Ok(Json(storage_settings_response(
+        &settings,
+        watch_status,
+        None,
+    )))
 }
 
 pub async fn patch_storage_settings(
     State(state): State<AppState>,
     Json(patch): Json<StorageSettingsPatch>,
 ) -> Result<Json<StorageSettingsResponse>, ApiError> {
+    let previous = state.runtime.read().await.storage.clone();
     let settings = storage_patch_to_settings(&state, patch).await?;
+    let migration = storage_kind_migration(&previous, &settings);
     app_settings::save_storage(&state.db, &settings).await?;
     state.runtime.write().await.storage = settings.clone();
+    state.invalidate_library_storage_cache().await;
     state.storage_watch.restart().await;
     let watch_status = state.storage_watch.status().await;
-    Ok(Json(StorageSettingsResponse {
-        settings: StorageSettingsView::from_with_watch_status(&settings, watch_status),
-    }))
+    Ok(Json(storage_settings_response(
+        &settings,
+        watch_status,
+        migration,
+    )))
+}
+
+fn storage_settings_response(
+    settings: &StorageSettings,
+    watch_status: crate::services::storage_watch::StorageWatchStatus,
+    migration: Option<(String, bool)>,
+) -> StorageSettingsResponse {
+    let (storage_migration_hint, recommend_full_scan) = match migration {
+        Some((hint, recommend)) => (Some(hint), Some(recommend)),
+        None => (None, None),
+    };
+    StorageSettingsResponse {
+        settings: StorageSettingsView::from_with_watch_status(settings, watch_status),
+        storage_migration_hint,
+        recommend_full_scan,
+    }
+}
+
+fn storage_location_kind(location: &StorageLocation) -> &'static str {
+    match location {
+        StorageLocation::Local { .. } => "local",
+        StorageLocation::Smb { .. } => "smb",
+    }
+}
+
+fn storage_kind_migration(
+    previous: &StorageSettings,
+    next: &StorageSettings,
+) -> Option<(String, bool)> {
+    let (Some(old), Some(new)) = (&previous.library, &next.library) else {
+        return None;
+    };
+    let old_kind = storage_location_kind(old);
+    let new_kind = storage_location_kind(new);
+    if old_kind == new_kind {
+        return None;
+    }
+    let hint = match (old_kind, new_kind) {
+        ("local", "smb") => {
+            "Library storage switched from local disk to SMB. Run a full library scan to rebuild the index."
+        }
+        ("smb", "local") => {
+            "Library storage switched from SMB to local disk. Run a full library scan to rebuild the index."
+        }
+        _ => "Library storage backend changed. Run a full library scan to rebuild the index.",
+    };
+    Some((hint.to_string(), true))
 }
 
 pub async fn test_storage_settings(
@@ -167,7 +222,8 @@ pub async fn test_storage_settings(
     let settings = storage_patch_to_settings(
         &state,
         StorageSettingsPatch {
-            library: body.location,
+            activate_preset_id: None,
+            library: Some(body.location),
         },
     )
     .await?;
@@ -191,7 +247,7 @@ pub async fn test_storage_settings(
             euterpe_smb::SmbStorageClient::new()
                 .list_directory(&location, &credentials)
                 .await
-                .map_err(|e| ApiError::Message(format!("SMB_STORAGE_TEST_FAILED: {e}")))?;
+                .map_err(|e| ApiError::from_smb(e, "SMB storage test"))?;
         }
     }
     Ok(Json(StorageTestResponse { ok: true }))
@@ -215,8 +271,25 @@ pub async fn browse_storage(
     let library = storage
         .library
         .ok_or_else(|| ApiError::bad_request("library storage is not configured"))?;
-    let backend = storage::storage_from_location(&library, state.config.master_key.as_ref())?;
-    let rel = StoragePath::parse(normalize_browse_path(q.path.as_deref())?)?;
+    browse_storage_location(&state, &library, q.path.as_deref()).await
+}
+
+pub async fn browse_storage_draft(
+    State(state): State<AppState>,
+    Json(body): Json<StorageBrowseRequest>,
+) -> Result<Json<StorageBrowseResponse>, ApiError> {
+    let current = state.runtime.read().await.storage.clone();
+    let library = storage_location_patch_to_location(&state, &current, body.location).await?;
+    browse_storage_location(&state, &library, body.path.as_deref()).await
+}
+
+async fn browse_storage_location(
+    state: &AppState,
+    library: &StorageLocation,
+    path: Option<&str>,
+) -> Result<Json<StorageBrowseResponse>, ApiError> {
+    let backend = storage::storage_from_location(library, state.config.master_key.as_ref())?;
+    let rel = StoragePath::parse(normalize_browse_path(path)?)?;
     let entries = backend
         .list_dir(&rel)
         .await?
@@ -232,27 +305,243 @@ pub async fn browse_storage(
 }
 
 pub async fn list_smb_shares(
+    State(state): State<AppState>,
     Json(body): Json<SmbSharesRequest>,
 ) -> Result<Json<SmbSharesResponse>, ApiError> {
-    let username = body.username.unwrap_or_default();
-    let password = body.password.unwrap_or_default();
+    let credentials = smb_shares_credentials(&state, &body).await?;
     let shares = euterpe_smb::SmbStorageClient::new()
-        .list_shares(
-            &body.host,
-            body.port,
-            &euterpe_smb::SmbCredentials { username, password },
-        )
+        .list_shares(&body.host, body.port, &credentials)
         .await
-        .map_err(|e| ApiError::Message(format!("SMB_SHARES_FAILED: {e}")))?;
+        .map_err(|e| ApiError::from_smb(e, "SMB share list"))?;
     Ok(Json(SmbSharesResponse { shares }))
+}
+
+/// Merges request credentials with the saved library SMB location when password is omitted.
+async fn smb_shares_credentials(
+    state: &AppState,
+    body: &SmbSharesRequest,
+) -> Result<euterpe_smb::SmbCredentials, ApiError> {
+    let storage = state.runtime.read().await.storage.clone();
+    let stored = storage.library.as_ref().and_then(|loc| match loc {
+        StorageLocation::Smb { .. } => Some(loc),
+        _ => None,
+    });
+    let decrypt = |encrypted: &str| state.master_key()?.decrypt(encrypted);
+    merge_smb_shares_credentials(body, stored, decrypt)
+}
+
+fn merge_smb_shares_credentials(
+    body: &SmbSharesRequest,
+    stored: Option<&StorageLocation>,
+    decrypt_password: impl FnOnce(&str) -> Result<String, ApiError>,
+) -> Result<euterpe_smb::SmbCredentials, ApiError> {
+    let password = match body.password.as_deref() {
+        Some(p) if !p.is_empty() => p.to_string(),
+        _ => match stored {
+            Some(StorageLocation::Smb {
+                host,
+                port,
+                password_encrypted: Some(encrypted),
+                ..
+            }) if hosts_match(host, &body.host) && *port == body.port => {
+                decrypt_password(encrypted)?
+            }
+            _ => String::new(),
+        },
+    };
+
+    let (username, workgroup) = if body.username.as_deref().is_some_and(|u| !u.is_empty()) {
+        (body.username.clone(), body.workgroup.clone())
+    } else {
+        match stored {
+            Some(StorageLocation::Smb {
+                host,
+                port,
+                username,
+                workgroup,
+                ..
+            }) if hosts_match(host, &body.host) && *port == body.port => {
+                (username.clone(), workgroup.clone())
+            }
+            _ => (body.username.clone(), body.workgroup.clone()),
+        }
+    };
+
+    Ok(euterpe_smb::SmbCredentials {
+        username: euterpe_smb::format_smb_username(
+            workgroup.as_deref(),
+            username.as_deref().unwrap_or_default(),
+        ),
+        password,
+    })
+}
+
+fn hosts_match(stored: &str, requested: &str) -> bool {
+    stored.eq_ignore_ascii_case(requested)
+}
+
+fn smb_endpoint_matches(
+    stored_host: &str,
+    stored_port: u16,
+    stored_share: &str,
+    requested_host: &str,
+    requested_port: u16,
+    requested_share: &str,
+) -> bool {
+    hosts_match(stored_host, requested_host)
+        && stored_port == requested_port
+        && stored_share.eq_ignore_ascii_case(requested_share)
+}
+
+fn current_smb_defaults_for_patch(
+    current: &StorageSettings,
+    requested_host: &str,
+    requested_port: u16,
+    requested_share: &str,
+) -> (Option<String>, Option<String>, Option<String>) {
+    match &current.library {
+        Some(StorageLocation::Smb {
+            host,
+            port,
+            share,
+            password_encrypted,
+            username,
+            workgroup,
+            ..
+        }) => {
+            let password = if smb_endpoint_matches(
+                host,
+                *port,
+                share,
+                requested_host,
+                requested_port,
+                requested_share,
+            ) {
+                password_encrypted.clone()
+            } else {
+                None
+            };
+            (password, username.clone(), workgroup.clone())
+        }
+        _ => (None, None, None),
+    }
+}
+
+#[cfg(test)]
+mod smb_shares_credentials_tests {
+    use super::*;
+    use crate::api::SmbSharesRequest;
+
+    #[test]
+    fn uses_stored_password_when_request_omits_it() {
+        let body = SmbSharesRequest {
+            host: "192.168.0.124".into(),
+            port: 445,
+            username: Some("dietpi".into()),
+            password: None,
+            workgroup: None,
+        };
+        let stored = StorageLocation::Smb {
+            host: "192.168.0.124".into(),
+            port: 445,
+            share: "music".into(),
+            path: String::new(),
+            username: Some("dietpi".into()),
+            password_encrypted: Some("enc".into()),
+            workgroup: None,
+        };
+        let creds =
+            merge_smb_shares_credentials(&body, Some(&stored), |_| Ok("secret".into())).unwrap();
+        assert_eq!(creds.password, "secret");
+        assert!(creds.username.contains("dietpi"));
+    }
+
+    #[test]
+    fn request_password_overrides_stored() {
+        let body = SmbSharesRequest {
+            host: "192.168.0.124".into(),
+            port: 445,
+            username: None,
+            password: Some("inline".into()),
+            workgroup: None,
+        };
+        let stored = StorageLocation::Smb {
+            host: "192.168.0.124".into(),
+            port: 445,
+            share: "music".into(),
+            path: String::new(),
+            username: None,
+            password_encrypted: Some("enc".into()),
+            workgroup: None,
+        };
+        let creds =
+            merge_smb_shares_credentials(&body, Some(&stored), |_| Ok("stored".into())).unwrap();
+        assert_eq!(creds.password, "inline");
+    }
+
+    #[test]
+    fn storage_patch_reuses_password_only_for_same_endpoint() {
+        let current = StorageSettings {
+            library: Some(StorageLocation::Smb {
+                host: "NAS.local".into(),
+                port: 445,
+                share: "music".into(),
+                path: String::new(),
+                username: Some("user".into()),
+                password_encrypted: Some("enc".into()),
+                workgroup: Some("WORKGROUP".into()),
+            }),
+            presets: Vec::new(),
+        };
+
+        let same = current_smb_defaults_for_patch(&current, "nas.LOCAL", 445, "MUSIC");
+        assert_eq!(same.0, Some("enc".into()));
+        assert_eq!(same.1, Some("user".into()));
+        assert_eq!(same.2, Some("WORKGROUP".into()));
+
+        let changed_share = current_smb_defaults_for_patch(&current, "NAS.local", 445, "archive");
+        assert_eq!(changed_share.0, None);
+        assert_eq!(changed_share.1, Some("user".into()));
+        assert_eq!(changed_share.2, Some("WORKGROUP".into()));
+
+        let changed_port = current_smb_defaults_for_patch(&current, "NAS.local", 1445, "music");
+        assert_eq!(changed_port.0, None);
+    }
 }
 
 async fn storage_patch_to_settings(
     state: &AppState,
     patch: StorageSettingsPatch,
 ) -> Result<StorageSettings, ApiError> {
-    let library = match patch.library {
-        StorageLocationPatch::Local { path } => StorageLocation::Local { path },
+    let current = state.runtime.read().await.storage.clone();
+    let library = if let Some(preset_id) = patch.activate_preset_id {
+        current
+            .presets
+            .iter()
+            .find(|preset| preset.id == preset_id)
+            .map(|preset| preset.location.clone())
+            .ok_or_else(|| ApiError::bad_request("unknown storage preset"))?
+    } else if let Some(library_patch) = patch.library {
+        storage_location_patch_to_location(state, &current, library_patch).await?
+    } else {
+        return Err(ApiError::bad_request(
+            "library or activate_preset_id is required",
+        ));
+    };
+    let mut settings = current;
+    app_settings::upsert_storage_preset(&mut settings.presets, library.clone());
+    settings.library = Some(library);
+    app_settings::validate_storage(&settings)?;
+    Ok(settings)
+}
+
+async fn storage_location_patch_to_location(
+    state: &AppState,
+    current: &StorageSettings,
+    patch: StorageLocationPatch,
+) -> Result<StorageLocation, ApiError> {
+    match patch {
+        StorageLocationPatch::Local { path } => Ok(StorageLocation::Local { path }),
         StorageLocationPatch::Smb {
             host,
             port,
@@ -262,20 +551,26 @@ async fn storage_patch_to_settings(
             password,
             workgroup,
         } => {
-            let current_password = match &state.runtime.read().await.storage.library {
-                Some(StorageLocation::Smb {
-                    password_encrypted, ..
-                }) => password_encrypted.clone(),
-                _ => None,
-            };
+            let (current_password, current_username, current_workgroup) =
+                current_smb_defaults_for_patch(current, &host, port, &share);
             let password_encrypted = match password {
-                Some(password) if !password.is_empty() => {
+                StringPatchField::Value(password) if !password.is_empty() => {
                     Some(state.master_key()?.encrypt(&password)?)
                 }
-                Some(_) => None,
-                None => current_password,
+                StringPatchField::Value(_) | StringPatchField::Clear => None,
+                StringPatchField::Missing => current_password,
             };
-            StorageLocation::Smb {
+            let username = match username {
+                StringPatchField::Value(value) if !value.is_empty() => Some(value),
+                StringPatchField::Value(_) | StringPatchField::Clear => None,
+                StringPatchField::Missing => current_username,
+            };
+            let workgroup = match workgroup {
+                StringPatchField::Value(value) if !value.is_empty() => Some(value),
+                StringPatchField::Value(_) | StringPatchField::Clear => None,
+                StringPatchField::Missing => current_workgroup,
+            };
+            Ok(StorageLocation::Smb {
                 host,
                 port,
                 share,
@@ -283,14 +578,9 @@ async fn storage_patch_to_settings(
                 username,
                 password_encrypted,
                 workgroup,
-            }
+            })
         }
-    };
-    let settings = StorageSettings {
-        library: Some(library),
-    };
-    app_settings::validate_storage(&settings)?;
-    Ok(settings)
+    }
 }
 
 fn normalize_browse_path(path: Option<&str>) -> Result<String, ApiError> {
@@ -330,7 +620,7 @@ fn smb_location_and_credentials(
         path,
         username,
         password_encrypted,
-        ..
+        workgroup,
     } = storage
     else {
         return Err(ApiError::bad_request("storage location is not smb"));
@@ -339,6 +629,10 @@ fn smb_location_and_credentials(
         Some(value) => state.master_key()?.decrypt(value)?,
         None => String::new(),
     };
+    let username = euterpe_smb::format_smb_username(
+        workgroup.as_deref(),
+        username.as_deref().unwrap_or_default(),
+    );
     Ok((
         euterpe_smb::SmbShareLocation {
             host: host.clone(),
@@ -346,9 +640,6 @@ fn smb_location_and_credentials(
             share: share.clone(),
             path: path.clone(),
         },
-        euterpe_smb::SmbCredentials {
-            username: username.clone().unwrap_or_default(),
-            password,
-        },
+        euterpe_smb::SmbCredentials { username, password },
     ))
 }

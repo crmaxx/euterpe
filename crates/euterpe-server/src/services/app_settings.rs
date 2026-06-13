@@ -296,12 +296,65 @@ pub fn downloads_defaults(config: &AppConfig) -> DownloadsSettings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StorageSettings {
     pub library: Option<StorageLocation>,
+    #[serde(default)]
+    pub presets: Vec<StoragePreset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StoragePreset {
+    pub id: String,
+    pub label: String,
+    pub location: StorageLocation,
+}
+
+pub fn storage_preset_id(location: &StorageLocation) -> String {
+    match location {
+        StorageLocation::Local { path } => format!("local:{path}"),
+        StorageLocation::Smb {
+            host,
+            port,
+            share,
+            path,
+            ..
+        } => format!("smb:{host}:{port}/{share}/{path}"),
+    }
+}
+
+pub fn storage_preset_label(location: &StorageLocation) -> String {
+    match location {
+        StorageLocation::Local { path } => format!("Local: {path}"),
+        StorageLocation::Smb {
+            host, share, path, ..
+        } => {
+            if path.is_empty() {
+                format!("SMB: {host}/{share}")
+            } else {
+                format!("SMB: {host}/{share}/{path}")
+            }
+        }
+    }
+}
+
+pub fn upsert_storage_preset(presets: &mut Vec<StoragePreset>, location: StorageLocation) {
+    let id = storage_preset_id(&location);
+    let label = storage_preset_label(&location);
+    if let Some(existing) = presets.iter_mut().find(|p| p.id == id) {
+        existing.label = label;
+        existing.location = location;
+        return;
+    }
+    presets.push(StoragePreset {
+        id,
+        label,
+        location,
+    });
 }
 
 impl StorageSettings {
     pub fn local(path: impl Into<String>) -> Self {
         Self {
             library: Some(StorageLocation::Local { path: path.into() }),
+            presets: Vec::new(),
         }
     }
 }
@@ -368,7 +421,14 @@ pub async fn load_downloads(pool: &SqlitePool, config: &AppConfig) -> DownloadsS
 }
 
 pub async fn load_storage(pool: &SqlitePool, config: &AppConfig) -> StorageSettings {
-    load_json(pool, KEY_STORAGE_SETTINGS, storage_defaults(config)).await
+    let mut settings: StorageSettings =
+        load_json(pool, KEY_STORAGE_SETTINGS, storage_defaults(config)).await;
+    if settings.presets.is_empty()
+        && let Some(location) = settings.library.clone()
+    {
+        upsert_storage_preset(&mut settings.presets, location);
+    }
+    settings
 }
 
 async fn load_json<T>(pool: &SqlitePool, key: &str, default: T) -> T
@@ -449,11 +509,11 @@ pub fn validate_storage(v: &StorageSettings) -> Result<(), ApiError> {
     match &v.library {
         None => {}
         Some(StorageLocation::Local { path }) if path.trim().is_empty() => {
-                return Err(ApiError::bad_request(
-                    "local library path must not be empty",
-                ));
-            }
-            Some(StorageLocation::Local { .. }) => {}
+            return Err(ApiError::bad_request(
+                "local library path must not be empty",
+            ));
+        }
+        Some(StorageLocation::Local { .. }) => {}
         Some(StorageLocation::Smb {
             host, port, share, ..
         }) => {

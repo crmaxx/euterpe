@@ -1,9 +1,50 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use euterpe_server::app;
+use euterpe_server::library::tags::{self, TrackTags};
+use euterpe_server::services::app_settings::{self, StorageSettings};
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
+
+async fn use_settings_local_storage(
+    state: &euterpe_server::state::AppState,
+    root: &std::path::Path,
+) {
+    app_settings::save_storage(
+        &state.db,
+        &StorageSettings::local(root.display().to_string()),
+    )
+    .await
+    .unwrap();
+    app_settings::refresh_runtime(&state.runtime, &state.db, &state.config).await;
+    state.invalidate_library_storage_cache().await;
+}
+
+async fn wait_for_scan_success(app: &axum::Router, scan_id: i64, expected_files: Option<i64>) {
+    for _ in 0..80 {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/library/scan/{scan_id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let run: Value =
+            serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        if run["status"] == "success" {
+            if let Some(n) = expected_files {
+                assert_eq!(run["files_indexed"].as_i64().unwrap(), n);
+            }
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("scan {scan_id} did not succeed");
+}
 
 #[tokio::test]
 async fn library_scan_indexes_files() {
@@ -998,4 +1039,212 @@ async fn library_track_stream_range_returns_partial_content() {
     assert_eq!(cl, "1024");
     let bytes = res.into_body().collect().await.unwrap().to_bytes();
     assert_eq!(bytes.len(), 1024);
+}
+
+#[tokio::test]
+async fn library_scan_uses_settings_storage_root() {
+    let state = app::test_support::test_state().await;
+    let storage_root = tempfile::tempdir().unwrap();
+    use_settings_local_storage(&state, storage_root.path()).await;
+
+    write_minimal_wav(
+        &storage_root
+            .path()
+            .join("Settings Artist/Settings Album/01.wav"),
+    );
+
+    let app = app::app(state);
+    let start = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/library/scan")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::ACCEPTED);
+    let scan_id: i64 =
+        serde_json::from_slice::<Value>(&start.into_body().collect().await.unwrap().to_bytes())
+            .unwrap()["scan_id"]
+            .as_i64()
+            .unwrap();
+
+    wait_for_scan_success(&app, scan_id, Some(1)).await;
+
+    let albums = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?limit=20&q=Settings%20Album")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(albums.status(), StatusCode::OK);
+    let list: Value =
+        serde_json::from_slice(&albums.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["items"][0]["title"], "Settings Album");
+}
+
+#[tokio::test]
+async fn library_track_detail_reads_tags_via_settings_storage() {
+    let state = app::test_support::test_state().await;
+    let storage_root = tempfile::tempdir().unwrap();
+    use_settings_local_storage(&state, storage_root.path()).await;
+
+    let track_rel = "TagRead Artist/TagRead Album/01 Read.wav";
+    let track_path = storage_root.path().join(track_rel);
+    write_minimal_wav(&track_path);
+    tags::write_tags(
+        &track_path,
+        &TrackTags {
+            title: "Read Title".into(),
+            artist: "TagRead Artist".into(),
+            album: "TagRead Album".into(),
+            track_number: Some(3),
+            year: Some(1999),
+            disc_number: Some(2),
+            track_total: None,
+            disc_total: None,
+            genre: Some("Folk".into()),
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        },
+    )
+    .unwrap();
+
+    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "TagRead Artist", None)
+        .await
+        .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "TagRead Album",
+            year: Some(1999),
+            qobuz_album_id: None,
+            path: Some("TagRead Artist/TagRead Album"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let track_id = euterpe_server::db::tracks::upsert(
+        &state.db,
+        euterpe_server::db::tracks::TrackUpsert {
+            album_id,
+            title: "Read Title",
+            track_number: Some(3),
+            year: Some(1999),
+            disc_number: Some(2),
+            genre: Some("Folk"),
+            qobuz_track_id: None,
+            path: track_rel,
+            duration_sec: None,
+            file_mtime: None,
+            file_hash: None,
+            file_size: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/library/tracks/{track_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let detail: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(detail["title"], "Read Title");
+    assert_eq!(detail["artist_name"], "TagRead Artist");
+    assert_eq!(detail["album_title"], "TagRead Album");
+    assert_eq!(detail["track_number"], 3);
+    assert_eq!(detail["year"], 1999);
+    assert_eq!(detail["genre"], "Folk");
+}
+
+#[tokio::test]
+async fn library_album_list_discovers_cover_via_settings_storage() {
+    let state = app::test_support::test_state().await;
+    let storage_root = tempfile::tempdir().unwrap();
+    use_settings_local_storage(&state, storage_root.path()).await;
+
+    let album_rel = "CoverDisc Artist/CoverDisc Album";
+    std::fs::create_dir_all(storage_root.path().join(album_rel)).unwrap();
+    std::fs::write(
+        storage_root.path().join(format!("{album_rel}/cover.jpg")),
+        b"settings-cover",
+    )
+    .unwrap();
+
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.db, "CoverDisc Artist", None)
+            .await
+            .unwrap();
+    let album_id = euterpe_server::db::albums::upsert(
+        &state.db,
+        euterpe_server::db::albums::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "CoverDisc Album",
+            year: None,
+            qobuz_album_id: None,
+            path: Some(album_rel),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let app = app::app(state);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?limit=20&q=CoverDisc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let list: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let item = list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"].as_i64() == Some(album_id))
+        .expect("album in list");
+    assert_eq!(
+        item["cover_path"].as_str(),
+        Some("CoverDisc Artist/CoverDisc Album/cover.jpg")
+    );
+
+    let cover = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/library/albums/{album_id}/cover"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cover.status(), StatusCode::OK);
+    let body = cover.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(body.as_ref(), b"settings-cover");
 }

@@ -190,6 +190,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         hawk: None,
         torrent: None,
         torrent_staging: Arc::new(euterpe_server::services::torrent_staging::TorrentStaging::new()),
+        library_storage_cache: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
     qobuz_account::seed_active_qobuz_account(&state, 1, "test-token").await;
@@ -208,6 +209,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
             torrent_semaphore: None,
             scan_events: state.scan_events.clone(),
             job_tx: job_tx_wake.clone(),
+            convert_job_tx: state.convert_job_tx.clone(),
         },
     );
     let _ = job_tx_wake.send(0).await;

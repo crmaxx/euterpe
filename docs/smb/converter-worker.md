@@ -10,6 +10,14 @@
 
 ---
 
+## TDD Execution Policy
+
+- Before each task implementation, add or update the smallest failing unit/API test that proves the desired behavior.
+- Keep the first implementation minimal, then expand only when the test exposes a real integration gap.
+- Run the task-specific targeted test before marking the task checkbox complete.
+
+---
+
 ## Task 1: Converter crate I/O boundary
 
 **Files:**

@@ -375,7 +375,10 @@ pub async fn discover_album_cover_rel_storage(
     if album.is_root() {
         return Ok(None);
     }
-    let mut entries = storage.list_dir(&album).await?;
+    let mut entries = match storage.list_dir(&album).await {
+        Ok(entries) => entries,
+        Err(_) => return Ok(None),
+    };
     entries.sort_by(|a, b| a.name.cmp(&b.name));
     let files: Vec<_> = entries
         .into_iter()
@@ -468,6 +471,30 @@ pub async fn ensure_album_cover_path(
         return Ok(current_cover.map(str::to_string));
     };
     let Some(rel) = discover_album_cover_rel(library_root, dir) else {
+        return Ok(None);
+    };
+    albums::set_cover_path(pool, album_id, &rel).await?;
+    Ok(Some(rel))
+}
+
+/// If `cover_path` is missing or stale, discover a file via storage and persist it on the album row.
+pub async fn ensure_album_cover_path_storage(
+    pool: &sqlx::SqlitePool,
+    storage: &dyn LibraryStorage,
+    album_id: i64,
+    album_path: Option<&str>,
+    current_cover: Option<&str>,
+) -> Result<Option<String>, ApiError> {
+    if let Some(rel) = current_cover.map(str::trim).filter(|s| !s.is_empty()) {
+        let path = StoragePath::parse(rel)?;
+        if storage.metadata(&path).await.is_ok() {
+            return Ok(Some(rel.to_string()));
+        }
+    }
+    let Some(dir) = album_path.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(current_cover.map(str::to_string));
+    };
+    let Some(rel) = discover_album_cover_rel_storage(storage, dir).await? else {
         return Ok(None);
     };
     albums::set_cover_path(pool, album_id, &rel).await?;
