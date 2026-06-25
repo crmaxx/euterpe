@@ -1026,6 +1026,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
     };
     let entries_walked = Arc::new(AtomicI64::new(0));
     flush_storage_scan_discovery(scan_id, &deps.pool, 0, 0, &counters).await?;
+    tracks::reset_scan_keep_paths(&deps.pool, scan_id).await?;
 
     let mut dirs: VecDeque<StoragePath> = VecDeque::new();
     dirs.push_back(deps.scan_root.clone().unwrap_or_else(StoragePath::root));
@@ -1033,6 +1034,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
     let mut audio_entries: Vec<AudioScanEntry> = Vec::new();
     while let Some(dir) = dirs.pop_front() {
         if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+            tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
             return Ok(());
         }
         let dir_key = dir.as_str().to_string();
@@ -1080,6 +1082,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
                 );
                 continue;
             };
+            tracks::record_scan_keep_path(&deps.pool, scan_id, entry.path.as_str()).await?;
             audio_entries.push(AudioScanEntry {
                 path: entry.path,
                 size,
@@ -1132,10 +1135,6 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
 
     let audio_count = audio_entries.len();
     let mut album_paths = HashSet::new();
-    let discovered_paths: Vec<String> = audio_entries
-        .iter()
-        .map(|entry| entry.path.as_str().to_string())
-        .collect();
     for entry in &audio_entries {
         if let Some(parent) = entry.path.parent() {
             let rel = parent.as_str();
@@ -1176,6 +1175,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
             if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
                 tasks.abort_all();
                 while tasks.join_next().await.is_some() {}
+                tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
                 return Ok(());
             }
             let Some(entry) = entries.next() else {
@@ -1214,6 +1214,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
                 if cancelled? {
                     tasks.abort_all();
                     while tasks.join_next().await.is_some() {}
+                    tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
                     return Ok(());
                 }
             }
@@ -1229,13 +1230,15 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
         );
     }
     if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+        tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
         return Ok(());
     }
     storage_scan_album_cover_pass(&deps.pool, &deps.storage, &album_paths).await?;
     if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+        tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
         return Ok(());
     }
-    storage_scan_prune_stale(&deps.pool, deps.scan_root.as_ref(), &discovered_paths).await?;
+    storage_scan_prune_stale(&deps.pool, scan_id, deps.scan_root.as_ref()).await?;
 
     let total = counters.files_seen.load(Ordering::Relaxed);
     flush_scan_progress(
@@ -1260,14 +1263,15 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
 
 async fn storage_scan_prune_stale(
     pool: &SqlitePool,
+    scan_id: i64,
     scan_root: Option<&StoragePath>,
-    discovered_paths: &[String],
 ) -> Result<(), ApiError> {
     let scope = scan_root.and_then(|path| {
         let rel = path.as_str();
         if rel.is_empty() { None } else { Some(rel) }
     });
-    let removed_tracks = tracks::delete_absent_in_scope(pool, scope, discovered_paths).await?;
+    let removed_tracks = tracks::delete_absent_in_scope_for_scan(pool, scope, scan_id).await?;
+    tracks::cleanup_scan_keep_paths(pool, scan_id).await?;
     let removed_albums = albums::delete_empty_storage_albums_in_scope(pool, scope).await?;
     if removed_tracks > 0 || removed_albums > 0 {
         tracing::info!(
@@ -1676,6 +1680,7 @@ pub async fn start_scan_storage(
             Ok(()) => {}
             Err(e) => {
                 tracing::error!(scan_id, error = %e, "storage library scan failed");
+                let _ = tracks::cleanup_scan_keep_paths(&pool, scan_id).await;
                 let _ = library_scan_runs::finish_failed(&pool, scan_id, &e.to_string()).await;
             }
         }

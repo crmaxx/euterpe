@@ -255,33 +255,121 @@ pub async fn delete_absent_in_scope(
     scope_path: Option<&str>,
     keep_paths: &[String],
 ) -> Result<u64, ApiError> {
-    let mut sql = String::from("DELETE FROM tracks WHERE ");
     let scope = normalized_scope(scope_path);
+    let mut conn = pool.acquire().await?;
+    sqlx::query(
+        r#"
+        CREATE TEMP TABLE IF NOT EXISTS euterpe_scan_keep_paths (
+            path TEXT PRIMARY KEY
+        )
+        "#,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query("DELETE FROM euterpe_scan_keep_paths")
+        .execute(&mut *conn)
+        .await?;
+    for path in keep_paths {
+        sqlx::query("INSERT OR IGNORE INTO euterpe_scan_keep_paths (path) VALUES (?)")
+            .bind(path)
+            .execute(&mut *conn)
+            .await?;
+    }
+
+    let mut sql = String::from("DELETE FROM tracks WHERE ");
     if scope.is_empty() {
         sql.push_str("1=1");
     } else {
         sql.push_str("(path = ? OR (path >= ? AND path < ?))");
     }
-    if !keep_paths.is_empty() {
-        sql.push_str(" AND path NOT IN (");
-        sql.push_str(
-            &std::iter::repeat_n("?", keep_paths.len())
-                .collect::<Vec<_>>()
-                .join(","),
-        );
-        sql.push(')');
-    }
+    sql.push_str(
+        " AND NOT EXISTS (SELECT 1 FROM euterpe_scan_keep_paths keep WHERE keep.path = tracks.path)",
+    );
 
     let mut query = sqlx::query(&sql);
     if !scope.is_empty() {
         let (lower, upper) = path_prefix_bounds(&scope);
         query = query.bind(scope).bind(lower).bind(upper);
     }
-    for path in keep_paths {
-        query = query.bind(path);
-    }
-    let affected = query.execute(pool).await?.rows_affected();
+    let affected = query.execute(&mut *conn).await?.rows_affected();
+    sqlx::query("DELETE FROM euterpe_scan_keep_paths")
+        .execute(&mut *conn)
+        .await?;
     Ok(affected)
+}
+
+async fn ensure_scan_keep_paths_table(pool: &SqlitePool) -> Result<(), ApiError> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS scan_keep_paths (
+            scan_id INTEGER NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (scan_id, path)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn reset_scan_keep_paths(pool: &SqlitePool, scan_id: i64) -> Result<(), ApiError> {
+    ensure_scan_keep_paths_table(pool).await?;
+    sqlx::query("DELETE FROM scan_keep_paths WHERE scan_id = ?")
+        .bind(scan_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn record_scan_keep_path(
+    pool: &SqlitePool,
+    scan_id: i64,
+    path: &str,
+) -> Result<(), ApiError> {
+    ensure_scan_keep_paths_table(pool).await?;
+    sqlx::query("INSERT OR IGNORE INTO scan_keep_paths (scan_id, path) VALUES (?, ?)")
+        .bind(scan_id)
+        .bind(path)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_absent_in_scope_for_scan(
+    pool: &SqlitePool,
+    scope_path: Option<&str>,
+    scan_id: i64,
+) -> Result<u64, ApiError> {
+    ensure_scan_keep_paths_table(pool).await?;
+    let scope = normalized_scope(scope_path);
+    let mut sql = String::from("DELETE FROM tracks WHERE ");
+    if scope.is_empty() {
+        sql.push_str("1=1");
+    } else {
+        sql.push_str("(path = ? OR (path >= ? AND path < ?))");
+    }
+    sql.push_str(
+        " AND NOT EXISTS (SELECT 1 FROM scan_keep_paths keep \
+         WHERE keep.scan_id = ? AND keep.path = tracks.path)",
+    );
+
+    let mut query = sqlx::query(&sql);
+    if !scope.is_empty() {
+        let (lower, upper) = path_prefix_bounds(&scope);
+        query = query.bind(scope).bind(lower).bind(upper);
+    }
+    let affected = query.bind(scan_id).execute(pool).await?.rows_affected();
+    Ok(affected)
+}
+
+pub async fn cleanup_scan_keep_paths(pool: &SqlitePool, scan_id: i64) -> Result<(), ApiError> {
+    ensure_scan_keep_paths_table(pool).await?;
+    sqlx::query("DELETE FROM scan_keep_paths WHERE scan_id = ?")
+        .bind(scan_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 fn normalized_scope(scope_path: Option<&str>) -> String {
@@ -765,5 +853,117 @@ mod tests {
             paths,
             vec!["A/Al/01.flac", "A/AlbumX/stale.flac", "B/Al/stale.flac"]
         );
+    }
+
+    #[tokio::test]
+    async fn delete_absent_in_scope_handles_large_keep_sets_without_unbounded_sql_variables() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "A", None).await.unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Al",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Al"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        upsert(
+            &pool,
+            TrackUpsert {
+                album_id,
+                title: "stale",
+                track_number: None,
+                year: None,
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path: "A/Al/stale.flac",
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let keep = (0..40_000)
+            .map(|n| format!("A/Al/{n:05}.flac"))
+            .collect::<Vec<_>>();
+
+        let deleted = delete_absent_in_scope(&pool, Some("A/Al"), &keep)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_absent_in_scope_for_scan_uses_recorded_keep_paths_and_cleans_them() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let artist_id = artists::upsert_by_name(&pool, "A", None).await.unwrap();
+        let album_id = albums::upsert(
+            &pool,
+            albums::AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Al",
+                year: None,
+                qobuz_album_id: None,
+                path: Some("A/Al"),
+                cover_path: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        for path in ["A/Al/01.flac", "A/Al/stale.flac", "A/AlbumX/stale.flac"] {
+            upsert(
+                &pool,
+                TrackUpsert {
+                    album_id,
+                    title: path,
+                    track_number: None,
+                    year: None,
+                    disc_number: None,
+                    genre: None,
+                    qobuz_track_id: None,
+                    path,
+                    duration_sec: None,
+                    file_mtime: None,
+                    file_hash: None,
+                    file_size: None,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        reset_scan_keep_paths(&pool, 42).await.unwrap();
+        record_scan_keep_path(&pool, 42, "A/Al/01.flac")
+            .await
+            .unwrap();
+        let deleted = delete_absent_in_scope_for_scan(&pool, Some("A/Al"), 42)
+            .await
+            .unwrap();
+
+        assert_eq!(deleted, 1);
+        cleanup_scan_keep_paths(&pool, 42).await.unwrap();
+        let remaining_keep_rows: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM scan_keep_paths WHERE scan_id = 42")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining_keep_rows.0, 0);
+        let rows = list_by_album(&pool, album_id).await.unwrap();
+        let paths: Vec<_> = rows.into_iter().map(|row| row.path).collect();
+        assert_eq!(paths, vec!["A/Al/01.flac", "A/AlbumX/stale.flac"]);
     }
 }

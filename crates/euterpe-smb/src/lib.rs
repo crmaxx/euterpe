@@ -430,8 +430,18 @@ impl SmbStorageClient {
     ) -> Result<Vec<SmbDirectoryEntry>> {
         let _op = self.session.op_serial.lock().await;
         let unc = self.session.connect_share(location, credentials).await?;
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.session.is_dry_run() {
+            if location.path.contains("__query_setup_error__") {
+                self.session.record_open_resource();
+                self.session.record_close_resource();
+                return Err(SmbStorageError::Client("query setup failed".into()));
+            }
+            if location.path.contains("__query_item_error__") {
+                self.session.record_open_resource();
+                self.session.record_close_resource();
+                return Err(SmbStorageError::Client("query item failed".into()));
+            }
             return Ok(Vec::new());
         }
         let dir_path = normalize_remote_path(&location.path);
@@ -452,9 +462,14 @@ impl SmbStorageClient {
             return Err(SmbStorageError::ResourceType);
         };
         let dir = std::sync::Arc::new(dir);
-        let mut stream = smb::Directory::query::<smb::FileDirectoryInformation>(&dir, "*")
-            .await
-            .map_err(map_smb_error)?;
+        let mut close_guard = SmbDirectoryCloseGuard::new(self.session.clone(), dir.clone());
+        let query_result = smb::Directory::query::<smb::FileDirectoryInformation>(&dir, "*").await;
+        let mut stream = match query_result {
+            Ok(stream) => stream,
+            Err(e) => {
+                return Err(map_smb_error(e));
+            }
+        };
         let mut entries = Vec::new();
         use futures_util::StreamExt;
         while let Some(item) = stream.next().await {
@@ -462,13 +477,7 @@ impl SmbStorageClient {
                 Ok(item) => item,
                 Err(e) => {
                     drop(stream);
-                    if let Ok(dir) = std::sync::Arc::try_unwrap(dir) {
-                        let _ = close_resource_with_session(
-                            self.session.as_ref(),
-                            Resource::Directory(dir),
-                        )
-                        .await;
-                    }
+                    let _ = close_guard.close().await;
                     return Err(map_smb_error(e));
                 }
             };
@@ -494,9 +503,7 @@ impl SmbStorageClient {
             });
         }
         drop(stream);
-        if let Ok(dir) = std::sync::Arc::try_unwrap(dir) {
-            close_resource_with_session(self.session.as_ref(), Resource::Directory(dir)).await?;
-        }
+        close_guard.close().await?;
         entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
         Ok(entries)
     }
@@ -507,7 +514,7 @@ impl SmbStorageClient {
         credentials: &SmbCredentials,
     ) -> Result<SmbMetadata> {
         let _op = self.session.op_serial.lock().await;
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         if self.session.is_dry_run() {
             self.session.connect_share(location, credentials).await?;
             self.session.record_open_resource();
@@ -881,6 +888,19 @@ impl SmbStorageClient {
         recursive: bool,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<SmbWatchEvent>> + Send + 'static>>> {
         let _op = self.session.op_serial.lock().await;
+        #[cfg(any(test, feature = "test-hooks"))]
+        if self.session.is_dry_run() {
+            if location.path.contains("__watch_type_mismatch__") {
+                self.session.record_open_resource();
+                self.session.record_close_resource();
+                return Err(SmbStorageError::ResourceType);
+            }
+            if location.path.contains("__watch_setup_error__") {
+                self.session.record_open_resource();
+                self.session.record_close_resource();
+                return Err(SmbStorageError::Client("watch setup failed".into()));
+            }
+        }
         let resource = self
             .open_resource_inner(
                 location,
@@ -889,16 +909,23 @@ impl SmbStorageClient {
             )
             .await?;
         let Resource::Directory(dir) = resource else {
+            close_resource_with_session(self.session.as_ref(), resource).await?;
             return Err(SmbStorageError::ResourceType);
         };
         let dir = Arc::new(dir);
+        let mut close_guard = SmbDirectoryCloseGuard::new(self.session.clone(), dir.clone());
         let base_path = normalize_remote_path(&location.path);
-        let stream = smb::Directory::watch_stream(&dir, smb::NotifyFilter::all(), recursive)
-            .map_err(map_smb_error)?
-            .map(move |item| {
+        let watch_result = smb::Directory::watch_stream(&dir, smb::NotifyFilter::all(), recursive);
+        let stream = match watch_result {
+            Ok(stream) => stream.map(move |item| {
                 item.map(|notify| map_watch_event(&base_path, notify))
                     .map_err(map_smb_error)
-            });
+            }),
+            Err(e) => {
+                return Err(map_smb_error(e));
+            }
+        };
+        close_guard.disarm();
         Ok(detach_watch_stream_lifetime(Box::pin(stream)))
     }
 
@@ -946,6 +973,49 @@ fn resource_into_file(resource: Resource) -> Result<smb::File> {
     }
 }
 
+struct SmbDirectoryCloseGuard {
+    session: Arc<SmbSession>,
+    dir: Option<Arc<smb::Directory>>,
+}
+
+impl SmbDirectoryCloseGuard {
+    fn new(session: Arc<SmbSession>, dir: Arc<smb::Directory>) -> Self {
+        Self {
+            session,
+            dir: Some(dir),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.dir = None;
+    }
+
+    async fn close(&mut self) -> Result<()> {
+        let Some(dir) = self.dir.take() else {
+            return Ok(());
+        };
+        if let Ok(dir) = Arc::try_unwrap(dir) {
+            close_resource_with_session(self.session.as_ref(), Resource::Directory(dir)).await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SmbDirectoryCloseGuard {
+    fn drop(&mut self) {
+        let Some(dir) = self.dir.take() else {
+            return;
+        };
+        let session = self.session.clone();
+        if let Ok(dir) = Arc::try_unwrap(dir) {
+            tokio::spawn(async move {
+                let _ =
+                    close_resource_with_session(session.as_ref(), Resource::Directory(dir)).await;
+            });
+        }
+    }
+}
+
 async fn close_resource_with_session(_session: &SmbSession, resource: Resource) -> Result<()> {
     let result = match resource {
         Resource::File(file) => file.close().await.map_err(map_smb_error),
@@ -986,7 +1056,7 @@ impl Default for SmbStorageClient {
 /// One SMB file handle reused for sequential `read_block` calls (streaming).
 pub struct SmbReadFile {
     session: Arc<SmbSession>,
-    inner: SmbReadFileInner,
+    inner: Option<SmbReadFileInner>,
 }
 
 enum SmbReadFileInner {
@@ -999,7 +1069,7 @@ impl SmbReadFile {
     fn live(session: Arc<SmbSession>, file: smb::File) -> Self {
         Self {
             session,
-            inner: SmbReadFileInner::Live(file),
+            inner: Some(SmbReadFileInner::Live(file)),
         }
     }
 
@@ -1007,14 +1077,14 @@ impl SmbReadFile {
     fn dry_run(session: Arc<SmbSession>) -> Self {
         Self {
             session,
-            inner: SmbReadFileInner::DryRun,
+            inner: Some(SmbReadFileInner::DryRun),
         }
     }
 
     pub async fn read_block(&self, offset: u64, len: usize) -> Result<Bytes> {
         let _op = self.session.op_serial.lock().await;
-        match &self.inner {
-            SmbReadFileInner::Live(file) => {
+        match self.inner.as_ref() {
+            Some(SmbReadFileInner::Live(file)) => {
                 let mut buf = vec![0; len];
                 let n = file
                     .read_block(&mut buf, offset, None, false)
@@ -1024,12 +1094,16 @@ impl SmbReadFile {
                 Ok(Bytes::from(buf))
             }
             #[cfg(any(test, feature = "test-hooks"))]
-            SmbReadFileInner::DryRun => Ok(Bytes::from(vec![0u8; len])),
+            Some(SmbReadFileInner::DryRun) => Ok(Bytes::from(vec![0u8; len])),
+            None => Err(SmbStorageError::Io("SMB file already closed".into())),
         }
     }
 
-    pub async fn close(self) -> Result<()> {
-        match self.inner {
+    pub async fn close(mut self) -> Result<()> {
+        let Some(inner) = self.inner.take() else {
+            return Ok(());
+        };
+        match inner {
             SmbReadFileInner::Live(file) => {
                 file.close().await.map_err(map_smb_error)?;
                 #[cfg(any(test, feature = "test-hooks"))]
@@ -1081,6 +1155,29 @@ impl SmbReadFile {
                 }
             },
         ))
+    }
+}
+
+impl Drop for SmbReadFile {
+    fn drop(&mut self) {
+        let Some(inner) = self.inner.take() else {
+            return;
+        };
+        let session = self.session.clone();
+        match inner {
+            SmbReadFileInner::Live(file) => {
+                tokio::spawn(async move {
+                    if file.close().await.is_ok() {
+                        #[cfg(any(test, feature = "test-hooks"))]
+                        session.record_close_resource();
+                    }
+                });
+            }
+            #[cfg(any(test, feature = "test-hooks"))]
+            SmbReadFileInner::DryRun => {
+                session.record_close_resource();
+            }
+        }
     }
 }
 
@@ -1771,6 +1868,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_byte_stream_before_eof_closes_opened_file_resource() {
+        use futures_util::StreamExt;
+        let (client, _) = SmbStorageClient::new_for_connect_tests();
+        let location = mock_location("track.flac");
+        let credentials = mock_credentials();
+        let file = client
+            .open_file_for_read(&location, &credentials)
+            .await
+            .unwrap();
+        let mut stream = file.byte_stream(0, Some(256 * 1024));
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.len(), 64 * 1024);
+        drop(stream);
+        tokio::task::yield_now().await;
+
+        assert_eq!(client.open_resource_count(), 1);
+        assert_eq!(client.close_resource_count(), 1);
+    }
+
+    #[tokio::test]
     async fn read_at_closes_opened_file_resource() {
         let (client, _) = SmbStorageClient::new_for_connect_tests();
         let location = mock_location("album/track.flac");
@@ -1782,6 +1900,70 @@ mod tests {
             .unwrap();
 
         assert_eq!(bytes.len(), 128);
+        assert_eq!(client.open_resource_count(), 1);
+        assert_eq!(client.close_resource_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_directory_query_setup_error_closes_opened_directory() {
+        let (client, _) = SmbStorageClient::new_for_connect_tests();
+        let location = mock_location("__query_setup_error__");
+        let credentials = mock_credentials();
+
+        let err = client
+            .list_directory(&location, &credentials)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SmbStorageError::Client(_)));
+        assert_eq!(client.open_resource_count(), 1);
+        assert_eq!(client.close_resource_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_directory_stream_item_error_closes_opened_directory() {
+        let (client, _) = SmbStorageClient::new_for_connect_tests();
+        let location = mock_location("__query_item_error__");
+        let credentials = mock_credentials();
+
+        let err = client
+            .list_directory(&location, &credentials)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, SmbStorageError::Client(_)));
+        assert_eq!(client.open_resource_count(), 1);
+        assert_eq!(client.close_resource_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn watch_directory_type_mismatch_closes_opened_resource() {
+        let (client, _) = SmbStorageClient::new_for_connect_tests();
+        let location = mock_location("__watch_type_mismatch__");
+        let credentials = mock_credentials();
+
+        let err = match client.watch_directory(&location, &credentials, true).await {
+            Ok(_) => panic!("watch_directory unexpectedly succeeded"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, SmbStorageError::ResourceType));
+        assert_eq!(client.open_resource_count(), 1);
+        assert_eq!(client.close_resource_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn watch_directory_setup_error_closes_opened_directory() {
+        let (client, _) = SmbStorageClient::new_for_connect_tests();
+        let location = mock_location("__watch_setup_error__");
+        let credentials = mock_credentials();
+
+        let err = match client.watch_directory(&location, &credentials, true).await {
+            Ok(_) => panic!("watch_directory unexpectedly succeeded"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, SmbStorageError::Client(_)));
         assert_eq!(client.open_resource_count(), 1);
         assert_eq!(client.close_resource_count(), 1);
     }
