@@ -2377,7 +2377,6 @@ components:
           $ref: "#/components/schemas/StorageLocationPatch"
         path:
           type: string
-          default: ""
 
     StorageBrowseEntry:
       type: object

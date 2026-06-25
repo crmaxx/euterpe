@@ -1128,8 +1128,7 @@ export interface components {
         };
         StorageBrowseRequest: {
             location: components["schemas"]["StorageLocationPatch"];
-            /** @default  */
-            path: string;
+            path?: string;
         };
         StorageBrowseEntry: {
             name: string;
