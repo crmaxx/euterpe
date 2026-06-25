@@ -430,13 +430,15 @@ impl SmbStorageClient {
     ) -> Result<Vec<SmbDirectoryEntry>> {
         let _op = self.session.op_serial.lock().await;
         let unc = self.session.connect_share(location, credentials).await?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if self.session.is_dry_run() {
+            #[cfg(test)]
             if location.path.contains("__query_setup_error__") {
                 self.session.record_open_resource();
                 self.session.record_close_resource();
                 return Err(SmbStorageError::Client("query setup failed".into()));
             }
+            #[cfg(test)]
             if location.path.contains("__query_item_error__") {
                 self.session.record_open_resource();
                 self.session.record_close_resource();
@@ -514,7 +516,7 @@ impl SmbStorageClient {
         credentials: &SmbCredentials,
     ) -> Result<SmbMetadata> {
         let _op = self.session.op_serial.lock().await;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if self.session.is_dry_run() {
             self.session.connect_share(location, credentials).await?;
             self.session.record_open_resource();
