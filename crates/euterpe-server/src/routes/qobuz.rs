@@ -2,6 +2,10 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
+use euterpe_data::repositories::{
+    qobuz as qobuz_accounts,
+    settings::{self, KEY_QOBUZ_ACTIVE_ACCOUNT_ID},
+};
 use serde::Deserialize;
 
 use crate::api::{
@@ -9,8 +13,6 @@ use crate::api::{
     QobuzOAuthStartResponse,
 };
 use crate::credentials;
-use crate::db::settings::KEY_QOBUZ_ACTIVE_ACCOUNT_ID;
-use crate::db::{qobuz_accounts, settings};
 use crate::error::ApiError;
 use crate::services::qobuz_oauth;
 use crate::state::AppState;
@@ -48,10 +50,10 @@ pub async fn oauth_callback(
 pub async fn connection_status(
     State(state): State<AppState>,
 ) -> Result<Json<QobuzConnectionStatusResponse>, ApiError> {
-    let connected = credentials::load_active(&state.config, &state.data.sqlx_pool())
+    let connected = credentials::load_active(&state.config, &state.data)
         .await?
         .is_some();
-    let active_account_id = settings::get(&state.data.sqlx_pool(), KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
+    let active_account_id = settings::get(&state.data, KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
         .await?
         .and_then(|s| s.parse().ok());
 
@@ -59,7 +61,7 @@ pub async fn connection_status(
     let mut display_name = None;
     let mut membership_label = None;
     if let Some(id) = active_account_id
-        && let Some(row) = qobuz_accounts::get_by_id(&state.data.sqlx_pool(), id).await?
+        && let Some(row) = qobuz_accounts::get_by_id(&state.data, id).await?
     {
         qobuz_user_id = Some(row.qobuz_user_id);
         display_name = row.display_name;
@@ -77,7 +79,7 @@ pub async fn connection_status(
 }
 
 pub async fn logout(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
-    credentials::disconnect_active(&state.data.sqlx_pool()).await?;
+    credentials::disconnect_active(&state.data).await?;
     state.reload_qobuz_from_db().await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -85,8 +87,8 @@ pub async fn logout(State(state): State<AppState>) -> Result<StatusCode, ApiErro
 pub async fn list_accounts(
     State(state): State<AppState>,
 ) -> Result<Json<QobuzAccountsListResponse>, ApiError> {
-    let rows = qobuz_accounts::list_without_uat(&state.data.sqlx_pool()).await?;
-    let active_account_id = settings::get(&state.data.sqlx_pool(), KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
+    let rows = qobuz_accounts::list_without_uat(&state.data).await?;
+    let active_account_id = settings::get(&state.data, KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
         .await?
         .and_then(|s| s.parse().ok());
     let items = rows

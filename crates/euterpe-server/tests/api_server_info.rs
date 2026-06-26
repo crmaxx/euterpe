@@ -46,7 +46,7 @@ async fn server_info_returns_config_snapshot() {
 async fn server_info_returns_smb_storage_summary_without_credentials() {
     let state = app::test_support::test_state_without_worker().await;
     app_settings::save_storage(
-        &state.data.sqlx_pool(),
+        &state.data,
         &StorageSettings {
             library: Some(StorageLocation::Smb {
                 host: "nas.secret.lan".to_string(),
@@ -64,7 +64,7 @@ async fn server_info_returns_smb_storage_summary_without_credentials() {
     .unwrap();
     {
         let mut runtime = state.runtime.write().await;
-        runtime.storage = app_settings::load_storage(&state.data.sqlx_pool(), &state.config).await;
+        runtime.storage = app_settings::load_storage(&state.data, &state.config).await;
     }
     let app = app::app(state);
 

@@ -17,7 +17,7 @@ async fn use_settings_local_storage(
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.data.sqlx_pool(), &state.config).await;
+    app_settings::refresh_runtime(&state.runtime, &state.data, &state.config).await;
     state.invalidate_library_storage_cache().await;
 }
 

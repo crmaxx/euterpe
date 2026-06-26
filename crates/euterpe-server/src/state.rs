@@ -56,12 +56,11 @@ impl AppState {
         hawk: Option<Arc<euterpe_hawk::Hawk>>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
-        let db = data.sqlx_pool();
         let runtime = Arc::new(RwLock::new(
-            app_settings::load_runtime_settings(&db, &config).await,
+            app_settings::load_runtime_settings(&data, &config).await,
         ));
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
-            if let Some(creds) = credentials::load_active(&config, &db).await? {
+            if let Some(creds) = credentials::load_active(&config, &data).await? {
                 let client = credentials::build_client(&creds, &config).await?;
                 Arc::new(Mutex::new(Box::new(client)))
             } else {
@@ -73,6 +72,7 @@ impl AppState {
             .build()
             .map_err(|e| ApiError::Config(e.to_string()))?;
 
+        let db = data.sqlx_pool();
         let torrent = if let Some(ref dir) = config.torrent_incoming_dir {
             let settings = crate::services::torrent_settings::load(&db).await?;
             let mut session_settings =
@@ -124,7 +124,7 @@ impl AppState {
     }
 
     pub async fn require_credentials(&self) -> Result<QobuzCredentials, ApiError> {
-        credentials::load_active(&self.config, &self.data.sqlx_pool())
+        credentials::load_active(&self.config, &self.data)
             .await?
             .ok_or_else(|| {
                 ApiError::Message("Qobuz not connected — complete OAuth in Settings".into())
@@ -132,13 +132,12 @@ impl AppState {
     }
 
     pub async fn reload_qobuz_from_db(&self) -> Result<(), ApiError> {
-        let new_client: Box<dyn QobuzApi + Send + Sync> = if let Some(creds) =
-            credentials::load_active(&self.config, &self.data.sqlx_pool()).await?
-        {
-            Box::new(credentials::build_client(&creds, &self.config).await?)
-        } else {
-            Box::new(NoopQobuz)
-        };
+        let new_client: Box<dyn QobuzApi + Send + Sync> =
+            if let Some(creds) = credentials::load_active(&self.config, &self.data).await? {
+                Box::new(credentials::build_client(&creds, &self.config).await?)
+            } else {
+                Box::new(NoopQobuz)
+            };
         *self.qobuz.lock().await = new_client;
         Ok(())
     }

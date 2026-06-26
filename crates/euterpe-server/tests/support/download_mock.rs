@@ -149,7 +149,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     db::migrate(&pool).await.unwrap();
     let data = euterpe_data::DataHandle::from_sqlite_pool(pool.clone());
     euterpe_server::services::app_settings::save_storage(
-        &pool,
+        &data,
         &euterpe_server::services::app_settings::StorageSettings::local(
             config.library_path.display().to_string(),
         ),
@@ -165,7 +165,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = Arc::new(Mutex::new(Box::new(mock)));
     let config = Arc::new(config);
     let runtime = Arc::new(tokio::sync::RwLock::new(
-        euterpe_server::services::app_settings::load_runtime_settings(&pool, &config).await,
+        euterpe_server::services::app_settings::load_runtime_settings(&data, &config).await,
     ));
 
     let state = AppState {

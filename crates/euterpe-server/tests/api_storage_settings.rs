@@ -161,10 +161,10 @@ async fn storage_settings_rejects_smb_password_without_master_key() {
         debug: false,
         static_dir: std::path::PathBuf::new(),
     };
-    let pool = euterpe_server::db::connect(&config.database_url)
+    let data = euterpe_data::connect_database(&config.database_url)
         .await
         .unwrap();
-    euterpe_server::db::migrate(&pool).await.unwrap();
+    euterpe_data::migrations::migrate(&data).await.unwrap();
 
     let (job_tx, _job_rx) = tokio::sync::mpsc::channel(1);
     let (convert_job_tx, _convert_job_rx) = tokio::sync::mpsc::channel(1);
@@ -173,7 +173,7 @@ async fn storage_settings_rejects_smb_password_without_master_key() {
     let (convert_events, _) = tokio::sync::broadcast::channel(1);
     let state = euterpe_server::AppState::new(
         config,
-        pool,
+        data,
         euterpe_server::AppChannels {
             job_tx,
             convert_job_tx,

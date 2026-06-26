@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use euterpe_converter::{FilePolicy, FlacEncodeSettings, FlacPreset};
+use euterpe_data::{DataHandle, repositories::settings};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use tokio::sync::RwLock;
 
 use crate::config::{AppConfig, LibraryScanConfig};
-use crate::db::settings;
 use crate::error::ApiError;
 
 pub const KEY_UI_PREFERENCES: &str = "ui.preferences";
@@ -389,40 +388,40 @@ pub fn storage_defaults(_config: &AppConfig) -> StorageSettings {
     StorageSettings::default()
 }
 
-pub async fn load_runtime_settings(pool: &SqlitePool, config: &AppConfig) -> RuntimeSettings {
+pub async fn load_runtime_settings(data: &DataHandle, config: &AppConfig) -> RuntimeSettings {
     RuntimeSettings {
-        ui: load_ui(pool, config).await,
-        converter: load_converter(pool).await,
-        library_scan: load_library_scan(pool, config).await,
-        downloads: load_downloads(pool, config).await,
-        storage: load_storage(pool, config).await,
+        ui: load_ui(data, config).await,
+        converter: load_converter(data).await,
+        library_scan: load_library_scan(data, config).await,
+        downloads: load_downloads(data, config).await,
+        storage: load_storage(data, config).await,
     }
 }
 
-pub async fn load_ui(pool: &SqlitePool, config: &AppConfig) -> UiPreferences {
-    load_json(pool, KEY_UI_PREFERENCES, ui_defaults_from_config(config)).await
+pub async fn load_ui(data: &DataHandle, config: &AppConfig) -> UiPreferences {
+    load_json(data, KEY_UI_PREFERENCES, ui_defaults_from_config(config)).await
 }
 
-pub async fn load_converter(pool: &SqlitePool) -> ConverterSettings {
-    load_json(pool, KEY_CONVERTER_SETTINGS, converter_defaults()).await
+pub async fn load_converter(data: &DataHandle) -> ConverterSettings {
+    load_json(data, KEY_CONVERTER_SETTINGS, converter_defaults()).await
 }
 
-pub async fn load_library_scan(pool: &SqlitePool, config: &AppConfig) -> LibraryScanSettings {
+pub async fn load_library_scan(data: &DataHandle, config: &AppConfig) -> LibraryScanSettings {
     load_json(
-        pool,
+        data,
         KEY_LIBRARY_SCAN_SETTINGS,
         library_scan_defaults(config),
     )
     .await
 }
 
-pub async fn load_downloads(pool: &SqlitePool, config: &AppConfig) -> DownloadsSettings {
-    load_json(pool, KEY_DOWNLOADS_SETTINGS, downloads_defaults(config)).await
+pub async fn load_downloads(data: &DataHandle, config: &AppConfig) -> DownloadsSettings {
+    load_json(data, KEY_DOWNLOADS_SETTINGS, downloads_defaults(config)).await
 }
 
-pub async fn load_storage(pool: &SqlitePool, config: &AppConfig) -> StorageSettings {
+pub async fn load_storage(data: &DataHandle, config: &AppConfig) -> StorageSettings {
     let mut settings: StorageSettings =
-        load_json(pool, KEY_STORAGE_SETTINGS, storage_defaults(config)).await;
+        load_json(data, KEY_STORAGE_SETTINGS, storage_defaults(config)).await;
     if settings.presets.is_empty()
         && let Some(location) = settings.library.clone()
     {
@@ -431,52 +430,53 @@ pub async fn load_storage(pool: &SqlitePool, config: &AppConfig) -> StorageSetti
     settings
 }
 
-async fn load_json<T>(pool: &SqlitePool, key: &str, default: T) -> T
+async fn load_json<T>(data: &DataHandle, key: &str, default: T) -> T
 where
     T: for<'de> Deserialize<'de>,
 {
-    let Some(raw) = settings::get(pool, key).await.ok().flatten() else {
+    let Some(raw) = settings::get(data, key).await.ok().flatten() else {
         return default;
     };
     serde_json::from_str(&raw).unwrap_or(default)
 }
 
-pub async fn save_ui(pool: &SqlitePool, value: &UiPreferences) -> Result<(), ApiError> {
+pub async fn save_ui(data: &DataHandle, value: &UiPreferences) -> Result<(), ApiError> {
     validate_ui(value)?;
-    save_json(pool, KEY_UI_PREFERENCES, value).await
+    save_json(data, KEY_UI_PREFERENCES, value).await
 }
 
-pub async fn save_converter(pool: &SqlitePool, value: &ConverterSettings) -> Result<(), ApiError> {
+pub async fn save_converter(data: &DataHandle, value: &ConverterSettings) -> Result<(), ApiError> {
     validate_converter(value)?;
-    save_json(pool, KEY_CONVERTER_SETTINGS, value).await
+    save_json(data, KEY_CONVERTER_SETTINGS, value).await
 }
 
 pub async fn save_library_scan(
-    pool: &SqlitePool,
+    data: &DataHandle,
     value: &LibraryScanSettings,
     debug: bool,
 ) -> Result<(), ApiError> {
     value.to_config(debug)?;
-    save_json(pool, KEY_LIBRARY_SCAN_SETTINGS, value).await
+    save_json(data, KEY_LIBRARY_SCAN_SETTINGS, value).await
 }
 
-pub async fn save_downloads(pool: &SqlitePool, value: &DownloadsSettings) -> Result<(), ApiError> {
+pub async fn save_downloads(data: &DataHandle, value: &DownloadsSettings) -> Result<(), ApiError> {
     validate_downloads(value)?;
-    save_json(pool, KEY_DOWNLOADS_SETTINGS, value).await
+    save_json(data, KEY_DOWNLOADS_SETTINGS, value).await
 }
 
-pub async fn save_storage(pool: &SqlitePool, value: &StorageSettings) -> Result<(), ApiError> {
+pub async fn save_storage(data: &DataHandle, value: &StorageSettings) -> Result<(), ApiError> {
     validate_storage(value)?;
-    save_json(pool, KEY_STORAGE_SETTINGS, value).await
+    save_json(data, KEY_STORAGE_SETTINGS, value).await
 }
 
-async fn save_json<T>(pool: &SqlitePool, key: &str, value: &T) -> Result<(), ApiError>
+async fn save_json<T>(data: &DataHandle, key: &str, value: &T) -> Result<(), ApiError>
 where
     T: Serialize,
 {
     let raw = serde_json::to_string(value)
         .map_err(|e| ApiError::Message(format!("settings encode: {e}")))?;
-    settings::set(pool, key, &raw).await
+    settings::set(data, key, &raw).await?;
+    Ok(())
 }
 
 pub fn validate_ui(v: &UiPreferences) -> Result<(), ApiError> {
@@ -549,9 +549,9 @@ pub async fn require_local_library_path(
 
 pub async fn refresh_runtime(
     handle: &RuntimeSettingsHandle,
-    pool: &SqlitePool,
+    data: &DataHandle,
     config: &AppConfig,
 ) {
-    let loaded = load_runtime_settings(pool, config).await;
+    let loaded = load_runtime_settings(data, config).await;
     *handle.write().await = loaded;
 }

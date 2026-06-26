@@ -115,7 +115,7 @@ async fn metadata_apply_requires_configured_library_storage_before_provider_call
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.data.sqlx_pool(), &state.config).await;
+    app_settings::refresh_runtime(&state.runtime, &state.data, &state.config).await;
     let integration_id = insert_integration(
         &state.data.sqlx_pool(),
         IntegrationInsert {
@@ -186,7 +186,7 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.data.sqlx_pool(), &state.config).await;
+    app_settings::refresh_runtime(&state.runtime, &state.data, &state.config).await;
 
     let track_rel = "Api Artist/Api Album/01 - Old.wav";
     let track_path = storage_root.path().join(track_rel);
