@@ -56,6 +56,22 @@ pub struct TrackUpsert<'a> {
     pub file_size: Option<i64>,
 }
 
+pub struct TrackMetadataUpdate<'a> {
+    pub title: &'a str,
+    pub track_number: Option<i32>,
+    pub year: Option<i32>,
+    pub disc_number: Option<i32>,
+    pub genre: Option<&'a str>,
+    pub file_mtime: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackHashBackfillRow {
+    pub id: i64,
+    pub path: String,
+    pub file_size: Option<i64>,
+}
+
 #[derive(Debug, WeldsModel)]
 #[welds(table = "artists")]
 struct Artist {
@@ -291,6 +307,77 @@ pub async fn list_tracks_by_album(handle: &DataHandle, album_id: i64) -> Result<
     Ok(rows)
 }
 
+pub async fn list_tracks_by_album_or_path_prefix(
+    handle: &DataHandle,
+    album_id: i64,
+    album_path: Option<&str>,
+) -> Result<Vec<TrackRow>> {
+    let Some(album_path) = album_path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return list_tracks_by_album(handle, album_id).await;
+    };
+    let mut rows = Track::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter(|track| track.album_id == album_id || path_in_scope(&track.path, album_path))
+        .map(track_row_from_model)
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|track| (filename_sort_key(&track.path), track.path.clone()));
+    Ok(rows)
+}
+
+pub async fn get_track_fingerprint_by_path(
+    handle: &DataHandle,
+    path: &str,
+) -> Result<Option<(Option<String>, Option<i64>)>> {
+    Ok(Track::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .find(|track| track.path == path)
+        .map(|track| (track.file_mtime.clone(), track.file_size)))
+}
+
+pub async fn update_track_metadata(
+    handle: &DataHandle,
+    id: i64,
+    meta: TrackMetadataUpdate<'_>,
+) -> Result<bool> {
+    let Some(mut track) = Track::find_by_id(handle.client(), id).await? else {
+        return Ok(false);
+    };
+    track.title = meta.title.to_string();
+    track.track_number = meta.track_number;
+    track.year = meta.year;
+    track.disc_number = meta.disc_number;
+    track.genre = meta.genre.map(ToString::to_string);
+    track.file_mtime = meta.file_mtime.map(ToString::to_string);
+    track.updated_at = sqlite_timestamp();
+    track.save(handle.client()).await?;
+    Ok(true)
+}
+
+pub async fn update_track_path(handle: &DataHandle, id: i64, path: &str) -> Result<bool> {
+    let Some(mut track) = Track::find_by_id(handle.client(), id).await? else {
+        return Ok(false);
+    };
+    track.path = path.to_string();
+    track.updated_at = sqlite_timestamp();
+    track.save(handle.client()).await?;
+    Ok(true)
+}
+
+pub async fn delete_track_by_path(handle: &DataHandle, path: &str) -> Result<u64> {
+    let mut deleted = 0;
+    for mut track in Track::all().run(handle.client()).await? {
+        if track.path == path {
+            track.delete(handle.client()).await?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 pub async fn delete_tracks_by_path_or_prefix(handle: &DataHandle, path: &str) -> Result<u64> {
     let prefix = format!("{}/", path.trim_end_matches('/'));
     let mut deleted = 0;
@@ -301,6 +388,63 @@ pub async fn delete_tracks_by_path_or_prefix(handle: &DataHandle, path: &str) ->
         }
     }
     Ok(deleted)
+}
+
+pub async fn list_tracks_needing_file_hash_batch(
+    handle: &DataHandle,
+    after_id: i64,
+    limit: i64,
+) -> Result<Vec<TrackHashBackfillRow>> {
+    let mut rows = Track::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter(|track| {
+            track.id > after_id
+                && track
+                    .file_hash
+                    .as_deref()
+                    .is_none_or(|hash| hash.trim().is_empty())
+        })
+        .map(|track| TrackHashBackfillRow {
+            id: track.id,
+            path: track.path.clone(),
+            file_size: track.file_size,
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|row| row.id);
+    rows.truncate(limit.max(0) as usize);
+    Ok(rows)
+}
+
+pub async fn set_track_file_hash(handle: &DataHandle, id: i64, file_hash: &str) -> Result<bool> {
+    let Some(mut track) = Track::find_by_id(handle.client(), id).await? else {
+        return Ok(false);
+    };
+    track.file_hash = Some(file_hash.to_string());
+    track.updated_at = sqlite_timestamp();
+    track.save(handle.client()).await?;
+    Ok(true)
+}
+
+pub async fn update_track_path_fingerprint(
+    handle: &DataHandle,
+    id: i64,
+    path: &str,
+    file_size: Option<i64>,
+    file_hash: Option<&str>,
+    file_mtime: Option<&str>,
+) -> Result<bool> {
+    let Some(mut track) = Track::find_by_id(handle.client(), id).await? else {
+        return Ok(false);
+    };
+    track.path = path.to_string();
+    track.file_size = file_size;
+    track.file_hash = file_hash.map(ToString::to_string);
+    track.file_mtime = file_mtime.map(ToString::to_string);
+    track.updated_at = sqlite_timestamp();
+    track.save(handle.client()).await?;
+    Ok(true)
 }
 
 fn apply_album_update(album: &mut Album, update: &AlbumUpsert<'_>) {

@@ -1,15 +1,8 @@
-use std::path::Path;
-
 use sqlx::SqlitePool;
 
 use crate::error::ApiError;
-
-fn filename_sort_key(path: &str) -> String {
-    Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_lowercase())
-        .unwrap_or_else(|| path.to_lowercase())
-}
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::catalog;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TrackRow {
@@ -48,12 +41,8 @@ pub async fn get_fingerprint_by_path(
     pool: &SqlitePool,
     path: &str,
 ) -> Result<Option<(Option<String>, Option<i64>)>, ApiError> {
-    let row: Option<(Option<String>, Option<i64>)> =
-        sqlx::query_as("SELECT file_mtime, file_size FROM tracks WHERE path = ?")
-            .bind(path)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::get_track_fingerprint_by_path(&handle, path).await?)
 }
 
 /// Fields updated by `update_metadata` (library tag PATCH → DB row).
@@ -67,93 +56,41 @@ pub struct TrackMetadataUpdate<'a> {
 }
 
 pub async fn upsert(pool: &SqlitePool, track: TrackUpsert<'_>) -> Result<i64, ApiError> {
-    let existing: Option<(i64,)> = sqlx::query_as("SELECT id FROM tracks WHERE path = ?")
-        .bind(track.path)
-        .fetch_optional(pool)
-        .await?;
-
-    if let Some((id,)) = existing {
-        sqlx::query(
-            r#"
-            UPDATE tracks
-            SET album_id = ?, title = ?, track_number = ?, year = ?, disc_number = ?, genre = ?,
-                qobuz_track_id = COALESCE(?, qobuz_track_id),
-                duration_sec = ?, file_mtime = ?, file_hash = ?, file_size = ?,
-                updated_at = datetime('now')
-            WHERE id = ?
-            "#,
-        )
-        .bind(track.album_id)
-        .bind(track.title)
-        .bind(track.track_number)
-        .bind(track.year)
-        .bind(track.disc_number)
-        .bind(track.genre)
-        .bind(track.qobuz_track_id)
-        .bind(track.duration_sec)
-        .bind(track.file_mtime)
-        .bind(track.file_hash)
-        .bind(track.file_size)
-        .bind(id)
-        .execute(pool)
-        .await?;
-        return Ok(id);
-    }
-
-    let result = sqlx::query(
-        r#"
-        INSERT INTO tracks (
-            album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
-            duration_sec, file_mtime, file_hash, file_size
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::upsert_track(
+        &handle,
+        catalog::TrackUpsert {
+            album_id: track.album_id,
+            title: track.title,
+            track_number: track.track_number,
+            year: track.year,
+            disc_number: track.disc_number,
+            genre: track.genre,
+            qobuz_track_id: track.qobuz_track_id,
+            path: track.path,
+            duration_sec: track.duration_sec,
+            file_mtime: track.file_mtime,
+            file_hash: track.file_hash,
+            file_size: track.file_size,
+        },
     )
-    .bind(track.album_id)
-    .bind(track.title)
-    .bind(track.track_number)
-    .bind(track.year)
-    .bind(track.disc_number)
-    .bind(track.genre)
-    .bind(track.qobuz_track_id)
-    .bind(track.path)
-    .bind(track.duration_sec)
-    .bind(track.file_mtime)
-    .bind(track.file_hash)
-    .bind(track.file_size)
-    .execute(pool)
-    .await?;
-    Ok(result.last_insert_rowid())
+    .await?)
 }
 
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<TrackRow>, ApiError> {
-    let row: Option<TrackRow> = sqlx::query_as(
-        r#"
-        SELECT id, album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
-               duration_sec, file_mtime, file_hash, file_size
-        FROM tracks WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::get_track_by_id(&handle, id)
+        .await?
+        .map(track_row_from_data))
 }
 
 pub async fn list_by_album(pool: &SqlitePool, album_id: i64) -> Result<Vec<TrackRow>, ApiError> {
-    let mut rows: Vec<TrackRow> = sqlx::query_as(
-        r#"
-        SELECT id, album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
-               duration_sec, file_mtime, file_hash, file_size
-        FROM tracks
-        WHERE album_id = ?
-        "#,
-    )
-    .bind(album_id)
-    .fetch_all(pool)
-    .await?;
-    rows.sort_by_key(|a| filename_sort_key(&a.path));
-    Ok(rows)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::list_tracks_by_album(&handle, album_id)
+        .await?
+        .into_iter()
+        .map(track_row_from_data)
+        .collect())
 }
 
 pub async fn list_by_album_or_path_prefix(
@@ -161,26 +98,14 @@ pub async fn list_by_album_or_path_prefix(
     album_id: i64,
     album_path: Option<&str>,
 ) -> Result<Vec<TrackRow>, ApiError> {
-    let Some(album_path) = album_path.map(str::trim).filter(|path| !path.is_empty()) else {
-        return list_by_album(pool, album_id).await;
-    };
-    let (lower, upper) = path_prefix_bounds(album_path);
-    let mut rows: Vec<TrackRow> = sqlx::query_as(
-        r#"
-        SELECT id, album_id, title, track_number, year, disc_number, genre, qobuz_track_id, path,
-               duration_sec, file_mtime, file_hash, file_size
-        FROM tracks
-        WHERE album_id = ? OR path = ? OR (path >= ? AND path < ?)
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(
+        catalog::list_tracks_by_album_or_path_prefix(&handle, album_id, album_path)
+            .await?
+            .into_iter()
+            .map(track_row_from_data)
+            .collect(),
     )
-    .bind(album_id)
-    .bind(album_path)
-    .bind(lower)
-    .bind(upper)
-    .fetch_all(pool)
-    .await?;
-    rows.sort_by_key(|a| filename_sort_key(&a.path));
-    Ok(rows)
 }
 
 pub async fn update_metadata(
@@ -188,66 +113,42 @@ pub async fn update_metadata(
     id: i64,
     meta: TrackMetadataUpdate<'_>,
 ) -> Result<(), ApiError> {
-    let n = sqlx::query(
-        r#"
-        UPDATE tracks
-        SET title = ?, track_number = ?, year = ?, disc_number = ?, genre = ?,
-            file_mtime = ?, updated_at = datetime('now')
-        WHERE id = ?
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    if !catalog::update_track_metadata(
+        &handle,
+        id,
+        catalog::TrackMetadataUpdate {
+            title: meta.title,
+            track_number: meta.track_number,
+            year: meta.year,
+            disc_number: meta.disc_number,
+            genre: meta.genre,
+            file_mtime: meta.file_mtime,
+        },
     )
-    .bind(meta.title)
-    .bind(meta.track_number)
-    .bind(meta.year)
-    .bind(meta.disc_number)
-    .bind(meta.genre)
-    .bind(meta.file_mtime)
-    .bind(id)
-    .execute(pool)
     .await?
-    .rows_affected();
-    if n == 0 {
+    {
         return Err(ApiError::Message("track not found".into()));
     }
     Ok(())
 }
 
 pub async fn update_path(pool: &SqlitePool, id: i64, path: &str) -> Result<(), ApiError> {
-    let n = sqlx::query(
-        r#"
-        UPDATE tracks SET path = ?, updated_at = datetime('now') WHERE id = ?
-        "#,
-    )
-    .bind(path)
-    .bind(id)
-    .execute(pool)
-    .await?
-    .rows_affected();
-    if n == 0 {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    if !catalog::update_track_path(&handle, id, path).await? {
         return Err(ApiError::Message("track not found".into()));
     }
     Ok(())
 }
 
 pub async fn delete_by_path(pool: &SqlitePool, path: &str) -> Result<u64, ApiError> {
-    let affected = sqlx::query("DELETE FROM tracks WHERE path = ?")
-        .bind(path)
-        .execute(pool)
-        .await?
-        .rows_affected();
-    Ok(affected)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::delete_track_by_path(&handle, path).await?)
 }
 
 pub async fn delete_by_path_or_prefix(pool: &SqlitePool, path: &str) -> Result<u64, ApiError> {
-    let (lower, upper) = path_prefix_bounds(path);
-    let affected = sqlx::query("DELETE FROM tracks WHERE path = ? OR (path >= ? AND path < ?)")
-        .bind(path)
-        .bind(lower)
-        .bind(upper)
-        .execute(pool)
-        .await?
-        .rows_affected();
-    Ok(affected)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::delete_tracks_by_path_or_prefix(&handle, path).await?)
 }
 
 pub async fn delete_absent_in_scope(
@@ -404,31 +305,23 @@ pub async fn list_needing_file_hash_batch(
     after_id: i64,
     limit: i64,
 ) -> Result<Vec<TrackHashBackfillRow>, ApiError> {
-    let rows = sqlx::query_as::<_, TrackHashBackfillRow>(
-        r#"
-        SELECT id, path, file_size
-        FROM tracks
-        WHERE id > ? AND (file_hash IS NULL OR TRIM(file_hash) = '')
-        ORDER BY id
-        LIMIT ?
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(
+        catalog::list_tracks_needing_file_hash_batch(&handle, after_id, limit)
+            .await?
+            .into_iter()
+            .map(|row| TrackHashBackfillRow {
+                id: row.id,
+                path: row.path,
+                file_size: row.file_size,
+            })
+            .collect(),
     )
-    .bind(after_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows)
 }
 
 pub async fn set_file_hash(pool: &SqlitePool, id: i64, file_hash: &str) -> Result<(), ApiError> {
-    let n =
-        sqlx::query("UPDATE tracks SET file_hash = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(file_hash)
-            .bind(id)
-            .execute(pool)
-            .await?
-            .rows_affected();
-    if n == 0 {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    if !catalog::set_track_file_hash(&handle, id, file_hash).await? {
         return Err(ApiError::Message("track not found".into()));
     }
     Ok(())
@@ -442,25 +335,31 @@ pub async fn update_path_fingerprint(
     file_hash: Option<&str>,
     file_mtime: Option<&str>,
 ) -> Result<(), ApiError> {
-    let n = sqlx::query(
-        r#"
-        UPDATE tracks
-        SET path = ?, file_size = ?, file_hash = ?, file_mtime = ?, updated_at = datetime('now')
-        WHERE id = ?
-        "#,
-    )
-    .bind(path)
-    .bind(file_size)
-    .bind(file_hash)
-    .bind(file_mtime)
-    .bind(id)
-    .execute(pool)
-    .await?
-    .rows_affected();
-    if n == 0 {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    if !catalog::update_track_path_fingerprint(&handle, id, path, file_size, file_hash, file_mtime)
+        .await?
+    {
         return Err(ApiError::Message("track not found".into()));
     }
     Ok(())
+}
+
+fn track_row_from_data(row: catalog::TrackRow) -> TrackRow {
+    TrackRow {
+        id: row.id,
+        album_id: row.album_id,
+        title: row.title,
+        track_number: row.track_number,
+        year: row.year,
+        disc_number: row.disc_number,
+        genre: row.genre,
+        qobuz_track_id: row.qobuz_track_id,
+        path: row.path,
+        duration_sec: row.duration_sec,
+        file_mtime: row.file_mtime,
+        file_hash: row.file_hash,
+        file_size: row.file_size,
+    }
 }
 
 pub fn path_extension_lower(path: &str) -> Option<String> {
