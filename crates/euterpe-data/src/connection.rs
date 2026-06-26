@@ -1,7 +1,7 @@
-use welds::connections::sqlite::SqliteClient;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::path::PathBuf;
 use std::str::FromStr;
+use welds::connections::sqlite::SqliteClient;
 
 use crate::error::{DataError, Result};
 
@@ -13,9 +13,7 @@ pub struct DataHandle {
 impl DataHandle {
     pub async fn connect(database_url: &str) -> Result<Self> {
         ensure_db_parent_dir(database_url)?;
-        let url = database_url
-            .strip_prefix("sqlite:")
-            .unwrap_or(database_url);
+        let url = database_url.strip_prefix("sqlite:").unwrap_or(database_url);
         if url.trim().is_empty() {
             return Err(DataError::Config("empty SQLite database URL".to_string()));
         }
