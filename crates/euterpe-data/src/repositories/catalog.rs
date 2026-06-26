@@ -188,6 +188,60 @@ pub async fn get_album_by_id(handle: &DataHandle, id: i64) -> Result<Option<Albu
         }))
 }
 
+pub async fn set_album_cover_path(handle: &DataHandle, id: i64, cover_path: &str) -> Result<bool> {
+    let Some(mut album) = Album::find_by_id(handle.client(), id).await? else {
+        return Ok(false);
+    };
+    album.cover_path = Some(cover_path.to_string());
+    album.updated_at = sqlite_timestamp();
+    album.save(handle.client()).await?;
+    Ok(true)
+}
+
+pub async fn album_id_by_path(handle: &DataHandle, path: &str) -> Result<Option<i64>> {
+    Ok(Album::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .find(|album| album.path.as_deref() == Some(path))
+        .map(|album| album.id))
+}
+
+pub async fn find_album_id_by_qobuz_album_id(
+    handle: &DataHandle,
+    qobuz_id: i64,
+) -> Result<Option<i64>> {
+    Ok(Album::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .find(|album| album.qobuz_album_id == Some(qobuz_id))
+        .map(|album| album.id))
+}
+
+pub async fn delete_empty_storage_albums_in_scope(
+    handle: &DataHandle,
+    scope_path: Option<&str>,
+) -> Result<u64> {
+    let scope = normalized_scope(scope_path);
+    let tracks = Track::all().run(handle.client()).await?;
+    let mut deleted = 0;
+    for mut album in Album::all().run(handle.client()).await? {
+        let Some(path) = album.path.as_deref() else {
+            continue;
+        };
+        if !scope.is_empty() && !path_in_scope(path, &scope) {
+            continue;
+        }
+        if tracks.iter().any(|track| track.album_id == album.id) {
+            continue;
+        }
+        album.delete(handle.client()).await?;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
 pub async fn upsert_track(handle: &DataHandle, track: TrackUpsert<'_>) -> Result<i64> {
     let mut tracks = Track::all().run(handle.client()).await?;
     if let Some(existing) = tracks
@@ -305,6 +359,22 @@ fn filename_sort_key(path: &str) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().to_lowercase())
         .unwrap_or_else(|| path.to_lowercase())
+}
+
+fn normalized_scope(scope_path: Option<&str>) -> String {
+    scope_path
+        .unwrap_or_default()
+        .trim()
+        .trim_matches('/')
+        .to_string()
+}
+
+fn path_in_scope(path: &str, scope: &str) -> bool {
+    if scope.is_empty() {
+        return true;
+    }
+    let prefix = format!("{}/", scope.trim_end_matches('/'));
+    path == scope || path.starts_with(&prefix)
 }
 
 fn sqlite_timestamp() -> String {

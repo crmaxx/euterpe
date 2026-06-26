@@ -172,3 +172,141 @@ async fn tracks_list_by_album_sorts_by_filename_and_prefix_delete_keeps_siblings
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].path, "Artist/AlbumX/01.flac");
 }
+
+#[tokio::test]
+async fn album_helpers_find_cover_and_delete_empty_storage_albums_in_scope() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    let artist_id = catalog::upsert_artist_by_name(&handle, "Artist", None)
+        .await
+        .unwrap();
+    let empty_in_scope = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Empty",
+            year: None,
+            qobuz_album_id: Some(42),
+            path: Some("Artist/Empty"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let non_empty = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Full",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Artist/Full"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let empty_outside_scope = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Outside",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Other/Outside"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let metadata_only = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Metadata",
+            year: None,
+            qobuz_album_id: Some(99),
+            path: None,
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    catalog::upsert_track(
+        &handle,
+        TrackUpsert {
+            album_id: non_empty,
+            title: "Track",
+            track_number: None,
+            year: None,
+            disc_number: None,
+            genre: None,
+            qobuz_track_id: None,
+            path: "Artist/Full/01.flac",
+            duration_sec: None,
+            file_mtime: None,
+            file_hash: None,
+            file_size: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        catalog::album_id_by_path(&handle, "Artist/Empty")
+            .await
+            .unwrap(),
+        Some(empty_in_scope)
+    );
+    assert_eq!(
+        catalog::find_album_id_by_qobuz_album_id(&handle, 42)
+            .await
+            .unwrap(),
+        Some(empty_in_scope)
+    );
+
+    assert!(
+        catalog::set_album_cover_path(&handle, empty_in_scope, "cover.jpg")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        catalog::get_album_by_id(&handle, empty_in_scope)
+            .await
+            .unwrap()
+            .unwrap()
+            .cover_path
+            .as_deref(),
+        Some("cover.jpg")
+    );
+
+    let deleted = catalog::delete_empty_storage_albums_in_scope(&handle, Some("Artist"))
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+    assert!(
+        catalog::get_album_by_id(&handle, empty_in_scope)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        catalog::get_album_by_id(&handle, non_empty)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        catalog::get_album_by_id(&handle, empty_outside_scope)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        catalog::get_album_by_id(&handle, metadata_only)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}

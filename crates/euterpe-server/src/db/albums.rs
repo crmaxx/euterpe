@@ -6,6 +6,8 @@ use crate::api::keyset::{
 };
 use crate::api::{KeysetPage, SortKeyKind, SortKeyValue, SortOrder};
 use crate::error::ApiError;
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::catalog;
 
 fn bind_sort_keys<'q, T>(
     mut query: sqlx::query::QueryAs<'q, sqlx::Sqlite, T, sqlx::sqlite::SqliteArguments<'q>>,
@@ -42,87 +44,26 @@ pub struct AlbumUpsert<'a> {
 }
 
 pub async fn upsert(pool: &SqlitePool, album: AlbumUpsert<'_>) -> Result<i64, ApiError> {
-    if let Some(path) = album.path {
-        let row: (i64,) = sqlx::query_as(
-            r#"
-            INSERT INTO albums (artist_id, title, year, qobuz_album_id, path, cover_path)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(path) DO UPDATE SET
-                artist_id = excluded.artist_id,
-                title = excluded.title,
-                year = excluded.year,
-                qobuz_album_id = COALESCE(excluded.qobuz_album_id, albums.qobuz_album_id),
-                cover_path = COALESCE(excluded.cover_path, albums.cover_path),
-                updated_at = datetime('now')
-            RETURNING id
-            "#,
-        )
-        .bind(album.artist_id)
-        .bind(album.title)
-        .bind(album.year)
-        .bind(album.qobuz_album_id)
-        .bind(path)
-        .bind(album.cover_path)
-        .fetch_one(pool)
-        .await?;
-        return Ok(row.0);
-    }
-
-    if let Some(qid) = album.qobuz_album_id {
-        let existing: Option<(i64,)> =
-            sqlx::query_as("SELECT id FROM albums WHERE qobuz_album_id = ?")
-                .bind(qid)
-                .fetch_optional(pool)
-                .await?;
-        if let Some((id,)) = existing {
-            sqlx::query(
-                r#"
-                UPDATE albums
-                SET artist_id = ?, title = ?, year = ?, path = COALESCE(?, path),
-                    cover_path = COALESCE(?, cover_path), updated_at = datetime('now')
-                WHERE id = ?
-                "#,
-            )
-            .bind(album.artist_id)
-            .bind(album.title)
-            .bind(album.year)
-            .bind(album.path)
-            .bind(album.cover_path)
-            .bind(id)
-            .execute(pool)
-            .await?;
-            return Ok(id);
-        }
-    }
-
-    let result = sqlx::query(
-        r#"
-        INSERT INTO albums (artist_id, title, year, qobuz_album_id, path, cover_path)
-        VALUES (?, ?, ?, ?, ?, ?)
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::upsert_album(
+        &handle,
+        catalog::AlbumUpsert {
+            artist_id: album.artist_id,
+            title: album.title,
+            year: album.year,
+            qobuz_album_id: album.qobuz_album_id,
+            path: album.path,
+            cover_path: album.cover_path,
+        },
     )
-    .bind(album.artist_id)
-    .bind(album.title)
-    .bind(album.year)
-    .bind(album.qobuz_album_id)
-    .bind(album.path)
-    .bind(album.cover_path)
-    .execute(pool)
-    .await?;
-    Ok(result.last_insert_rowid())
+    .await?)
 }
 
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<AlbumRow>, ApiError> {
-    let row: Option<AlbumRow> = sqlx::query_as(
-        r#"
-        SELECT id, artist_id, title, year, qobuz_album_id, path, cover_path
-        FROM albums WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::get_album_by_id(&handle, id)
+        .await?
+        .map(album_row_from_data))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,58 +219,24 @@ pub struct AlbumListRow {
 }
 
 pub async fn set_cover_path(pool: &SqlitePool, id: i64, cover_path: &str) -> Result<(), ApiError> {
-    let n =
-        sqlx::query("UPDATE albums SET cover_path = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(cover_path)
-            .bind(id)
-            .execute(pool)
-            .await?
-            .rows_affected();
-    if n == 0 {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    if !catalog::set_album_cover_path(&handle, id, cover_path).await? {
         return Err(ApiError::Message("album not found".into()));
     }
     Ok(())
 }
 
 pub async fn id_by_path(pool: &SqlitePool, path: &str) -> Result<Option<i64>, ApiError> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM albums WHERE path = ?")
-        .bind(path)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.map(|(id,)| id))
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::album_id_by_path(&handle, path).await?)
 }
 
 pub async fn delete_empty_storage_albums_in_scope(
     pool: &SqlitePool,
     scope_path: Option<&str>,
 ) -> Result<u64, ApiError> {
-    let scope = normalized_scope(scope_path);
-    let mut sql = String::from(
-        r#"
-        DELETE FROM albums
-        WHERE path IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM tracks t WHERE t.album_id = albums.id)
-        "#,
-    );
-    if !scope.is_empty() {
-        sql.push_str(" AND (path = ? OR (path >= ? AND path < ?))");
-    }
-
-    let mut query = sqlx::query(&sql);
-    if !scope.is_empty() {
-        let (lower, upper) = path_prefix_bounds(&scope);
-        query = query.bind(scope).bind(lower).bind(upper);
-    }
-    let affected = query.execute(pool).await?.rows_affected();
-    Ok(affected)
-}
-
-fn normalized_scope(scope_path: Option<&str>) -> String {
-    scope_path
-        .unwrap_or_default()
-        .trim()
-        .trim_matches('/')
-        .to_string()
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::delete_empty_storage_albums_in_scope(&handle, scope_path).await?)
 }
 
 pub(crate) fn path_prefix_bounds(path: &str) -> (String, String) {
@@ -348,11 +255,20 @@ pub async fn find_id_by_qobuz_album_id(
     pool: &SqlitePool,
     qobuz_id: i64,
 ) -> Result<Option<i64>, ApiError> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM albums WHERE qobuz_album_id = ?")
-        .bind(qobuz_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.map(|(id,)| id))
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::find_album_id_by_qobuz_album_id(&handle, qobuz_id).await?)
+}
+
+fn album_row_from_data(row: catalog::AlbumRow) -> AlbumRow {
+    AlbumRow {
+        id: row.id,
+        artist_id: row.artist_id,
+        title: row.title,
+        year: row.year,
+        qobuz_album_id: row.qobuz_album_id,
+        path: row.path,
+        cover_path: row.cover_path,
+    }
 }
 
 #[cfg(test)]
