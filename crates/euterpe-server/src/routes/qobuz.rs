@@ -48,10 +48,10 @@ pub async fn oauth_callback(
 pub async fn connection_status(
     State(state): State<AppState>,
 ) -> Result<Json<QobuzConnectionStatusResponse>, ApiError> {
-    let connected = credentials::load_active(&state.config, &state.db)
+    let connected = credentials::load_active(&state.config, &state.data.sqlx_pool())
         .await?
         .is_some();
-    let active_account_id = settings::get(&state.db, KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
+    let active_account_id = settings::get(&state.data.sqlx_pool(), KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
         .await?
         .and_then(|s| s.parse().ok());
 
@@ -59,7 +59,7 @@ pub async fn connection_status(
     let mut display_name = None;
     let mut membership_label = None;
     if let Some(id) = active_account_id
-        && let Some(row) = qobuz_accounts::get_by_id(&state.db, id).await?
+        && let Some(row) = qobuz_accounts::get_by_id(&state.data.sqlx_pool(), id).await?
     {
         qobuz_user_id = Some(row.qobuz_user_id);
         display_name = row.display_name;
@@ -77,7 +77,7 @@ pub async fn connection_status(
 }
 
 pub async fn logout(State(state): State<AppState>) -> Result<StatusCode, ApiError> {
-    credentials::disconnect_active(&state.db).await?;
+    credentials::disconnect_active(&state.data.sqlx_pool()).await?;
     state.reload_qobuz_from_db().await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -85,8 +85,8 @@ pub async fn logout(State(state): State<AppState>) -> Result<StatusCode, ApiErro
 pub async fn list_accounts(
     State(state): State<AppState>,
 ) -> Result<Json<QobuzAccountsListResponse>, ApiError> {
-    let rows = qobuz_accounts::list_without_uat(&state.db).await?;
-    let active_account_id = settings::get(&state.db, KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
+    let rows = qobuz_accounts::list_without_uat(&state.data.sqlx_pool()).await?;
+    let active_account_id = settings::get(&state.data.sqlx_pool(), KEY_QOBUZ_ACTIVE_ACCOUNT_ID)
         .await?
         .and_then(|s| s.parse().ok());
     let items = rows

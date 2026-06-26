@@ -52,7 +52,7 @@ fn purge_requested(q: &DeleteDownloadQuery) -> bool {
 }
 
 async fn cancel_torrent_for_job(state: &AppState, id: i64) -> Result<(), ApiError> {
-    let Some(payload) = download_jobs::get_payload(&state.db, id).await? else {
+    let Some(payload) = download_jobs::get_payload(&state.data.sqlx_pool(), id).await? else {
         return Ok(());
     };
     let Some(t) = payload.torrent else {
@@ -77,7 +77,14 @@ async fn queue_album_download(
     display_title: Option<String>,
 ) -> Result<i64, ApiError> {
     let qobuz_for_dedup = qobuz_id.filter(|id| *id > 0);
-    if download_jobs::has_running_album(&state.db, album_api_id, qobuz_for_dedup, quality).await? {
+    if download_jobs::has_running_album(
+        &state.data.sqlx_pool(),
+        album_api_id,
+        qobuz_for_dedup,
+        quality,
+    )
+    .await?
+    {
         return Err(ApiError::Message(
             "JOB_ALREADY_RUNNING: album download in progress".into(),
         ));
@@ -90,7 +97,7 @@ async fn queue_album_download(
     };
     let catalog_id = qobuz_id.unwrap_or(0);
     let job_id = download_jobs::insert_queued(
-        &state.db,
+        &state.data.sqlx_pool(),
         DownloadJobType::Album,
         catalog_id,
         quality,
@@ -144,7 +151,7 @@ pub async fn create_download(
     };
 
     let display_title = if let Some(catalog_id) = body.qobuz_id.filter(|id| *id > 0) {
-        favorites::album_meta(&state.db, catalog_id)
+        favorites::album_meta(&state.data.sqlx_pool(), catalog_id)
             .await?
             .map(|m| format_album_display_title(&m.artist_name, &m.title))
     } else {
@@ -229,7 +236,7 @@ pub async fn list_downloads(
         Some(s) => SortOrder::parse(s)?,
     };
     let page = download_jobs::list_keyset(
-        &state.db,
+        &state.data.sqlx_pool(),
         DownloadsListParams {
             sort,
             order,
@@ -250,7 +257,7 @@ pub async fn get_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<crate::api::DownloadJob>, ApiError> {
-    download_jobs::get(&state.db, id)
+    download_jobs::get(&state.data.sqlx_pool(), id)
         .await?
         .map(Json)
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))
@@ -259,11 +266,11 @@ pub async fn get_download(
 pub async fn purge_finished_downloads(
     State(state): State<AppState>,
 ) -> Result<Json<DownloadPurgeResponse>, ApiError> {
-    let torrent_ids = download_jobs::list_terminal_torrent_job_ids(&state.db).await?;
+    let torrent_ids = download_jobs::list_terminal_torrent_job_ids(&state.data.sqlx_pool()).await?;
     for id in torrent_ids {
         torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
     }
-    let deleted = download_jobs::purge_finished(&state.db).await? as i64;
+    let deleted = download_jobs::purge_finished(&state.data.sqlx_pool()).await? as i64;
     Ok(Json(DownloadPurgeResponse { deleted }))
 }
 
@@ -272,7 +279,7 @@ pub async fn delete_download(
     Path(id): Path<i64>,
     Query(q): Query<DeleteDownloadQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let job = download_jobs::get(&state.db, id)
+    let job = download_jobs::get(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))?;
 
@@ -285,7 +292,7 @@ pub async fn delete_download(
         if job.job_type == DownloadJobType::Torrent {
             torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
         }
-        if !download_jobs::delete_by_id(&state.db, id).await? {
+        if !download_jobs::delete_by_id(&state.data.sqlx_pool(), id).await? {
             return Err(ApiError::Message(format!("job {id} not found")));
         }
         return Ok(StatusCode::NO_CONTENT);
@@ -302,7 +309,7 @@ pub async fn delete_download(
 
     cancel_torrent_for_job(&state, id).await?;
 
-    if !download_jobs::cancel(&state.db, id).await? {
+    if !download_jobs::cancel(&state.data.sqlx_pool(), id).await? {
         return Err(ApiError::Message(format!("job {id} not found")));
     }
 
@@ -328,7 +335,7 @@ pub async fn patch_download_priority(
         }
     };
 
-    download_jobs::adjust_queue_priority(&state.db, id, direction).await?;
+    download_jobs::adjust_queue_priority(&state.data.sqlx_pool(), id, direction).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -337,7 +344,7 @@ pub async fn retry_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    download_jobs::retry_failed(&state.db, id).await?;
+    download_jobs::retry_failed(&state.data.sqlx_pool(), id).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -346,11 +353,11 @@ pub async fn pause_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let job = download_jobs::get(&state.db, id)
+    let job = download_jobs::get(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))?;
 
-    download_jobs::pause(&state.db, id).await?;
+    download_jobs::pause(&state.data.sqlx_pool(), id).await?;
 
     if job.job_type == DownloadJobType::Torrent {
         cancel_torrent_for_job(&state, id).await?;
@@ -364,7 +371,7 @@ pub async fn resume_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    download_jobs::resume_paused(&state.db, id).await?;
+    download_jobs::resume_paused(&state.data.sqlx_pool(), id).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }

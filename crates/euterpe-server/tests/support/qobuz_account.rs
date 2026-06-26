@@ -11,7 +11,7 @@ pub async fn seed_active_qobuz_account(state: &AppState, user_id: u64, token: &s
         display_name: None,
         membership_label: None,
     };
-    credentials::persist_oauth_account(&state.db, master, &login)
+    credentials::persist_oauth_account(&state.data.sqlx_pool(), master, &login)
         .await
         .expect("seed account");
 }

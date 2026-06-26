@@ -46,7 +46,7 @@ async fn server_info_returns_config_snapshot() {
 async fn server_info_returns_smb_storage_summary_without_credentials() {
     let state = app::test_support::test_state_without_worker().await;
     app_settings::save_storage(
-        &state.db,
+        &state.data.sqlx_pool(),
         &StorageSettings {
             library: Some(StorageLocation::Smb {
                 host: "nas.secret.lan".to_string(),
@@ -64,7 +64,7 @@ async fn server_info_returns_smb_storage_summary_without_credentials() {
     .unwrap();
     {
         let mut runtime = state.runtime.write().await;
-        runtime.storage = app_settings::load_storage(&state.db, &state.config).await;
+        runtime.storage = app_settings::load_storage(&state.data.sqlx_pool(), &state.config).await;
     }
     let app = app::app(state);
 
@@ -231,7 +231,7 @@ async fn sync_latest_returns_most_recent_run() {
         VALUES ('2020-01-01T00:00:00Z', '2020-01-01T00:01:00Z', 'success', 10, 1, 0)
         "#,
     )
-    .execute(&state.db)
+    .execute(&state.data.sqlx_pool())
     .await
     .unwrap();
     sqlx::query(
@@ -240,7 +240,7 @@ async fn sync_latest_returns_most_recent_run() {
         VALUES ('2021-01-01T00:00:00Z', 'running')
         "#,
     )
-    .execute(&state.db)
+    .execute(&state.data.sqlx_pool())
     .await
     .unwrap();
 

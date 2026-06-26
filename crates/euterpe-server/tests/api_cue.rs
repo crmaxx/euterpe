@@ -61,11 +61,12 @@ FILE "album.flac" FLAC
 "#,
     )
     .unwrap();
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Cue Artist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "Cue Artist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "Cue Album",
@@ -104,11 +105,12 @@ FILE "album.flac" FLAC
 "#,
     )
     .unwrap();
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Cue Artist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "Cue Artist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "Real Album",

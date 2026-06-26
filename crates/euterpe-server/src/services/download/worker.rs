@@ -3,11 +3,11 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use euterpe_data::DataHandle;
 use euterpe_qobuz::{AlbumDetail, DEFAULT_USER_AGENT, QobuzApi, QobuzError, Quality, TrackSummary};
 use euterpe_torrent::TorrentEngine;
 use futures_util::{StreamExt, TryStreamExt};
 use reqwest::Client;
-use sqlx::SqlitePool;
 use tokio::sync::{Mutex, Semaphore, broadcast, mpsc};
 #[cfg(test)]
 use tokio_util::io::StreamReader;
@@ -41,7 +41,7 @@ pub fn quality_from_format_id(id: u8) -> Option<Quality> {
 }
 
 pub struct WorkerDeps {
-    pub pool: SqlitePool,
+    pub data: DataHandle,
     pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     pub config: Arc<AppConfig>,
     pub runtime: crate::services::app_settings::RuntimeSettingsHandle,
@@ -81,11 +81,13 @@ async fn try_dispatch(deps: &Arc<WorkerDeps>) -> Result<(), ApiError> {
         let mut dispatched = false;
 
         let album_running =
-            download_jobs::count_running_by_type(&deps.pool, DownloadJobType::Album).await?;
+            download_jobs::count_running_by_type(&deps.data.sqlx_pool(), DownloadJobType::Album)
+                .await?;
         if album_running == 0
             && let Some(id) =
-                download_jobs::next_queued_id(&deps.pool, DownloadJobType::Album).await?
-            && download_jobs::claim_running(&deps.pool, id).await?
+                download_jobs::next_queued_id(&deps.data.sqlx_pool(), DownloadJobType::Album)
+                    .await?
+            && download_jobs::claim_running(&deps.data.sqlx_pool(), id).await?
         {
             dispatched = true;
             let deps = Arc::clone(deps);
@@ -104,12 +106,16 @@ async fn try_dispatch(deps: &Arc<WorkerDeps>) -> Result<(), ApiError> {
             0
         };
         if torrent_max > 0 {
-            let torrent_running =
-                download_jobs::count_running_by_type(&deps.pool, DownloadJobType::Torrent).await?;
+            let torrent_running = download_jobs::count_running_by_type(
+                &deps.data.sqlx_pool(),
+                DownloadJobType::Torrent,
+            )
+            .await?;
             if torrent_running < torrent_max as u64
                 && let Some(id) =
-                    download_jobs::next_queued_id(&deps.pool, DownloadJobType::Torrent).await?
-                && download_jobs::claim_running(&deps.pool, id).await?
+                    download_jobs::next_queued_id(&deps.data.sqlx_pool(), DownloadJobType::Torrent)
+                        .await?
+                && download_jobs::claim_running(&deps.data.sqlx_pool(), id).await?
             {
                 dispatched = true;
                 let deps = Arc::clone(deps);
@@ -294,7 +300,7 @@ async fn fetch_album_detail(
 
 /// Claim a queued job and run it (used in tests; production uses scheduler + `execute_job`).
 pub async fn run_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
-    if !download_jobs::claim_running(&deps.pool, job_id).await? {
+    if !download_jobs::claim_running(&deps.data.sqlx_pool(), job_id).await? {
         return Ok(());
     }
     execute_job(job_id, deps).await
@@ -304,7 +310,7 @@ pub async fn run_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
 pub async fn execute_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
     dl_debug!(deps, job_id, "download job executing");
 
-    let job = download_jobs::get(&deps.pool, job_id)
+    let job = download_jobs::get(&deps.data.sqlx_pool(), job_id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {job_id} not found")))?;
 
@@ -321,11 +327,12 @@ pub async fn execute_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError>
     };
 
     if let Err(e) = result {
-        if download_jobs::get(&deps.pool, job_id)
+        if download_jobs::get(&deps.data.sqlx_pool(), job_id)
             .await?
             .is_some_and(|j| j.status == crate::api::DownloadJobStatus::Running)
         {
-            let _ = download_jobs::finish_failed(&deps.pool, job_id, &e.to_string()).await;
+            let _ =
+                download_jobs::finish_failed(&deps.data.sqlx_pool(), job_id, &e.to_string()).await;
         }
         return Err(e);
     }
@@ -339,11 +346,11 @@ async fn run_album_job(
     deps: &WorkerDeps,
 ) -> Result<(), ApiError> {
     let meta = if album_id > 0 {
-        favorites::album_meta(&deps.pool, album_id).await?
+        favorites::album_meta(&deps.data.sqlx_pool(), album_id).await?
     } else {
         None
     };
-    let payload = download_jobs::get_payload(&deps.pool, job_id).await?;
+    let payload = download_jobs::get_payload(&deps.data.sqlx_pool(), job_id).await?;
     let stored_api_id = payload.as_ref().and_then(|p| p.album_api_id.clone());
     tracing::info!(
         job_id,
@@ -372,7 +379,7 @@ async fn run_album_job(
     let label = format_album_display_title(artist, &album.summary.title);
     let mut job_payload = payload.unwrap_or_default();
     job_payload.display_title = Some(label);
-    download_jobs::set_payload(&deps.pool, job_id, &job_payload).await?;
+    download_jobs::set_payload(&deps.data.sqlx_pool(), job_id, &job_payload).await?;
 
     let tracks = album
         .tracks
@@ -407,7 +414,7 @@ async fn run_album_job(
                     .acquire_owned()
                     .await
                     .map_err(|e| ApiError::Message(e.to_string()))?;
-                if download_jobs::is_stopped(&deps.pool, job_id).await? {
+                if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
                     return Ok::<(usize, u64, u64), ApiError>((idx, track.id, 0));
                 }
                 dl_debug!(
@@ -429,15 +436,20 @@ async fn run_album_job(
 
     while let Some(result) = downloads.next().await {
         let (_idx, _track_id, speed_bps) = result?;
-        if download_jobs::is_stopped(&deps.pool, job_id).await? {
+        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
             dl_debug!(deps, job_id, "download job stopped");
             tracing::info!(job_id, "download job stopped (cancelled or paused)");
             return Ok(());
         }
         done += 1;
         let progress = (done as f64 / total as f64) * 100.0;
-        download_jobs::update_progress_and_speed(&deps.pool, job_id, progress, Some(speed_bps))
-            .await?;
+        download_jobs::update_progress_and_speed(
+            &deps.data.sqlx_pool(),
+            job_id,
+            progress,
+            Some(speed_bps),
+        )
+        .await?;
         let _ = deps.events.send(JobProgressEvent {
             id: job_id,
             progress_pct: progress,
@@ -461,7 +473,7 @@ async fn run_album_job(
     let register_result = match &storage_location {
         StorageLocation::Local { path } => {
             crate::library::register_download::register_album_from_qobuz_download(
-                &deps.pool,
+                &deps.data.sqlx_pool(),
                 &std::path::PathBuf::from(path),
                 album_id,
                 &album,
@@ -473,7 +485,7 @@ async fn run_album_job(
             let storage =
                 storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
             crate::library::register_download::register_album_from_qobuz_download_storage(
-                &deps.pool,
+                &deps.data.sqlx_pool(),
                 storage.as_ref(),
                 album_id,
                 &album,
@@ -494,7 +506,7 @@ async fn run_album_job(
         StorageLocation::Local { path } => {
             crate::library::covers::apply_album_cover_after_download(
                 &deps.http,
-                &deps.pool,
+                &deps.data.sqlx_pool(),
                 &std::path::PathBuf::from(path),
                 &album,
                 quality,
@@ -507,7 +519,7 @@ async fn run_album_job(
                 storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
             crate::library::covers::apply_album_cover_after_download_storage(
                 &deps.http,
-                &deps.pool,
+                &deps.data.sqlx_pool(),
                 storage.as_ref(),
                 &album,
                 quality,
@@ -520,11 +532,11 @@ async fn run_album_job(
         tracing::warn!(job_id, error = %e, "album cover download/embed failed");
     }
 
-    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+    if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
         return Ok(());
     }
 
-    download_jobs::finish_success(&deps.pool, job_id).await?;
+    download_jobs::finish_success(&deps.data.sqlx_pool(), job_id).await?;
     dl_debug!(
         deps,
         job_id,
@@ -664,7 +676,7 @@ async fn download_track(
     let mut downloaded_size: Option<u64> = None;
 
     for attempt in 1..=MAX_ATTEMPTS {
-        if download_jobs::is_stopped(&deps.pool, job_id).await? {
+        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
             return Ok(0);
         }
 
@@ -1232,7 +1244,7 @@ mod tests {
         let config = test_config(dir.path());
         (
             WorkerDeps {
-                pool,
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                     album,
                     stream_url,
@@ -1521,7 +1533,7 @@ mod tests {
         let (job_tx, _job_rx) = mpsc::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album,
                 stream_url: format!("http://{addr}/stream"),
@@ -1658,7 +1670,7 @@ mod tests {
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let album_for_assert = album.clone();
         let deps = WorkerDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album,
                 stream_url,
@@ -1804,7 +1816,7 @@ mod tests {
         let (job_tx, _job_rx) = mpsc::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album,
                 stream_url,
@@ -1949,7 +1961,7 @@ mod tests {
         let (job_tx, _job_rx) = mpsc::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album: album.clone(),
                 stream_url: format!("http://{addr}/stream"),
@@ -2089,7 +2101,7 @@ mod tests {
         let (job_tx, _job_rx) = mpsc::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album: album.clone(),
                 stream_url: format!("http://{addr}/stream"),
@@ -2201,7 +2213,7 @@ mod tests {
         let (job_tx, _job_rx) = mpsc::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
         let deps = WorkerDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
                 album,
                 stream_url: format!("http://{addr}/stream"),

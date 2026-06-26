@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use euterpe_data::DataHandle;
 use flume::Sender;
 use futures_util::StreamExt;
 use sqlx::SqlitePool;
@@ -45,7 +46,7 @@ macro_rules! scan_debug {
 
 #[derive(Clone)]
 pub struct ScanDeps {
-    pub pool: SqlitePool,
+    pub data: DataHandle,
     pub library_path: PathBuf,
     pub events: broadcast::Sender<ScanProgressEvent>,
     pub scan: LibraryScanConfig,
@@ -146,14 +147,15 @@ struct ScanIndexJob {
 
 pub async fn run_scan(scan_id: i64, deps: ScanDeps) {
     if let Err(e) = run_scan_inner(scan_id, &deps).await {
-        if library_scan_runs::is_cancelled(&deps.pool, scan_id)
+        if library_scan_runs::is_cancelled(&deps.data.sqlx_pool(), scan_id)
             .await
             .unwrap_or(false)
         {
             return;
         }
         tracing::error!(scan_id, error = %e, "library scan failed");
-        let _ = library_scan_runs::finish_failed(&deps.pool, scan_id, &e.to_string()).await;
+        let _ =
+            library_scan_runs::finish_failed(&deps.data.sqlx_pool(), scan_id, &e.to_string()).await;
     }
 }
 
@@ -276,7 +278,7 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
     let (path_tx, path_rx) = flume::bounded::<PathBuf>(deps.scan.path_queue_capacity);
     let (index_tx, index_rx) = mpsc::channel(deps.scan.index_queue_capacity);
 
-    let writer_pool = deps.pool.clone();
+    let writer_pool = deps.data.sqlx_pool();
     let writer_counters = counters.clone();
     let writer_debug = debug;
     let writer_scan_deps = deps.clone();
@@ -297,7 +299,7 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
     for worker_id in 0..n_proc {
         let path_rx = path_rx.clone();
         let root = root.clone();
-        let pool = deps.pool.clone();
+        let pool = deps.data.sqlx_pool();
         let index_tx = index_tx.clone();
         let proc_counters = counters.clone();
         let proc_debug = debug;
@@ -321,7 +323,7 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
     for worker_id in 0..n_enum {
         let dir_queue = dir_queue.clone();
         let path_tx = path_tx.clone();
-        let pool = deps.pool.clone();
+        let pool = deps.data.sqlx_pool();
         let enum_counters = counters.clone();
         let enum_debug = debug;
         enum_handles.push(tokio::spawn(async move {
@@ -349,7 +351,7 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
         .expect("scan files_total lock poisoned") = Some(discovered);
     flush_scan_progress(
         scan_id,
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         discovered,
         counters.files_processed.load(Ordering::Relaxed),
         counters.files_indexed.load(Ordering::Relaxed),
@@ -380,7 +382,7 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
     let indexed = counters.files_indexed.load(Ordering::Relaxed);
     flush_scan_progress(
         scan_id,
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         seen,
         processed,
         indexed,
@@ -389,12 +391,12 @@ async fn run_scan_inner(scan_id: i64, deps: &ScanDeps) -> Result<(), ApiError> {
     )
     .await?;
 
-    if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+    if library_scan_runs::is_cancelled(&deps.data.sqlx_pool(), scan_id).await? {
         scan_debug!(debug, scan_id, "library scan cancelled");
         return Ok(());
     }
 
-    library_scan_runs::finish_success(&deps.pool, scan_id).await?;
+    library_scan_runs::finish_success(&deps.data.sqlx_pool(), scan_id).await?;
     scan_debug!(
         debug,
         scan_id,
@@ -850,7 +852,7 @@ pub fn spawn_scan(scan_id: i64, deps: ScanDeps) {
 
 #[derive(Clone)]
 pub struct StorageScanDeps {
-    pub pool: SqlitePool,
+    pub data: DataHandle,
     pub storage: Arc<dyn LibraryStorage>,
     pub events: broadcast::Sender<ScanProgressEvent>,
     pub scan: LibraryScanConfig,
@@ -1025,16 +1027,16 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
         events: deps.events.clone(),
     };
     let entries_walked = Arc::new(AtomicI64::new(0));
-    flush_storage_scan_discovery(scan_id, &deps.pool, 0, 0, &counters).await?;
-    tracks::reset_scan_keep_paths(&deps.pool, scan_id).await?;
+    flush_storage_scan_discovery(scan_id, &deps.data.sqlx_pool(), 0, 0, &counters).await?;
+    tracks::reset_scan_keep_paths(&deps.data.sqlx_pool(), scan_id).await?;
 
     let mut dirs: VecDeque<StoragePath> = VecDeque::new();
     dirs.push_back(deps.scan_root.clone().unwrap_or_else(StoragePath::root));
     let mut visited = HashSet::new();
     let mut audio_entries: Vec<AudioScanEntry> = Vec::new();
     while let Some(dir) = dirs.pop_front() {
-        if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
-            tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
+        if library_scan_runs::is_cancelled(&deps.data.sqlx_pool(), scan_id).await? {
+            tracks::cleanup_scan_keep_paths(&deps.data.sqlx_pool(), scan_id).await?;
             return Ok(());
         }
         let dir_key = dir.as_str().to_string();
@@ -1061,7 +1063,14 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
             audio_seen,
             "storage scan listed directory"
         );
-        flush_storage_scan_discovery(scan_id, &deps.pool, walked, audio_seen, &counters).await?;
+        flush_storage_scan_discovery(
+            scan_id,
+            &deps.data.sqlx_pool(),
+            walked,
+            audio_seen,
+            &counters,
+        )
+        .await?;
 
         let mut subdirs = 0usize;
         let mut audio_here = 0usize;
@@ -1082,7 +1091,8 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
                 );
                 continue;
             };
-            tracks::record_scan_keep_path(&deps.pool, scan_id, entry.path.as_str()).await?;
+            tracks::record_scan_keep_path(&deps.data.sqlx_pool(), scan_id, entry.path.as_str())
+                .await?;
             audio_entries.push(AudioScanEntry {
                 path: entry.path,
                 size,
@@ -1114,7 +1124,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
     counters.files_seen.store(0, Ordering::Relaxed);
     flush_scan_progress(
         scan_id,
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         0,
         0,
         0,
@@ -1124,7 +1134,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
     .await?;
 
     let scan_deps = ScanDeps {
-        pool: deps.pool.clone(),
+        data: deps.data.clone(),
         library_path: PathBuf::new(),
         events: deps.events.clone(),
         scan: deps.scan.clone(),
@@ -1158,7 +1168,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
 
     let entry_ctx = StorageAudioEntryCtx {
         scan_id,
-        pool: deps.pool.clone(),
+        pool: deps.data.sqlx_pool(),
         storage: deps.storage.clone(),
         audio_total: audio_count,
         scan_deps,
@@ -1172,10 +1182,10 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
     let mut in_flight = 0usize;
     loop {
         while in_flight < processing_workers {
-            if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+            if library_scan_runs::is_cancelled(&deps.data.sqlx_pool(), scan_id).await? {
                 tasks.abort_all();
                 while tasks.join_next().await.is_some() {}
-                tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
+                tracks::cleanup_scan_keep_paths(&deps.data.sqlx_pool(), scan_id).await?;
                 return Ok(());
             }
             let Some(entry) = entries.next() else {
@@ -1201,6 +1211,7 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
         if in_flight == 0 {
             break;
         }
+        let cancel_pool = deps.data.sqlx_pool();
         tokio::select! {
             result = tasks.join_next() => {
                 in_flight = in_flight.saturating_sub(1);
@@ -1210,11 +1221,11 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
                     tracing::error!(scan_id, error = %e, "storage scan indexing task join failed");
                 }
             }
-            cancelled = library_scan_runs::is_cancelled(&deps.pool, scan_id) => {
+            cancelled = library_scan_runs::is_cancelled(&cancel_pool, scan_id) => {
                 if cancelled? {
                     tasks.abort_all();
                     while tasks.join_next().await.is_some() {}
-                    tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
+                    tracks::cleanup_scan_keep_paths(&deps.data.sqlx_pool(), scan_id).await?;
                     return Ok(());
                 }
             }
@@ -1229,21 +1240,21 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
             "storage scan finished indexing with fewer files than discovered"
         );
     }
-    if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
-        tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
+    if library_scan_runs::is_cancelled(&deps.data.sqlx_pool(), scan_id).await? {
+        tracks::cleanup_scan_keep_paths(&deps.data.sqlx_pool(), scan_id).await?;
         return Ok(());
     }
-    storage_scan_album_cover_pass(&deps.pool, &deps.storage, &album_paths).await?;
-    if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
-        tracks::cleanup_scan_keep_paths(&deps.pool, scan_id).await?;
+    storage_scan_album_cover_pass(&deps.data.sqlx_pool(), &deps.storage, &album_paths).await?;
+    if library_scan_runs::is_cancelled(&deps.data.sqlx_pool(), scan_id).await? {
+        tracks::cleanup_scan_keep_paths(&deps.data.sqlx_pool(), scan_id).await?;
         return Ok(());
     }
-    storage_scan_prune_stale(&deps.pool, scan_id, deps.scan_root.as_ref()).await?;
+    storage_scan_prune_stale(&deps.data.sqlx_pool(), scan_id, deps.scan_root.as_ref()).await?;
 
     let total = counters.files_seen.load(Ordering::Relaxed);
     flush_scan_progress(
         scan_id,
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         total,
         counters.files_processed.load(Ordering::Relaxed),
         counters.files_indexed.load(Ordering::Relaxed),
@@ -1251,12 +1262,12 @@ async fn run_storage_scan(scan_id: i64, deps: StorageScanDeps) -> Result<(), Api
         &deps.events,
     )
     .await?;
-    if library_scan_runs::is_cancelled(&deps.pool, scan_id).await? {
+    if library_scan_runs::is_cancelled(&deps.data.sqlx_pool(), scan_id).await? {
         return Ok(());
     }
-    library_scan_runs::finish_success(&deps.pool, scan_id).await?;
+    library_scan_runs::finish_success(&deps.data.sqlx_pool(), scan_id).await?;
     if deps.runtime.is_some() {
-        spawn_storage_hash_backfill(deps.pool.clone(), deps.storage.clone(), smb_io);
+        spawn_storage_hash_backfill(deps.data.sqlx_pool(), deps.storage.clone(), smb_io);
     }
     Ok(())
 }
@@ -1626,7 +1637,7 @@ pub async fn start_scan(
     spawn_scan(
         scan_id,
         ScanDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             library_path,
             events,
             scan,
@@ -1666,7 +1677,7 @@ pub async fn start_scan_storage(
     }
     let scan_id = library_scan_runs::start(pool).await?;
     let deps = StorageScanDeps {
-        pool: pool.clone(),
+        data: DataHandle::from_sqlite_pool(pool.clone()),
         storage,
         events,
         scan,
@@ -1675,7 +1686,7 @@ pub async fn start_scan_storage(
         runtime,
     };
     tokio::spawn(async move {
-        let pool = deps.pool.clone();
+        let pool = deps.data.sqlx_pool();
         match run_storage_scan(scan_id, deps).await {
             Ok(()) => {}
             Err(e) => {
@@ -1825,7 +1836,7 @@ mod tests {
         run_scan(
             scan_id,
             ScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 library_path: dir.path().to_path_buf(),
                 events,
                 scan: scan_cfg_1_1(),
@@ -1902,7 +1913,7 @@ mod tests {
         run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
                 events,
                 scan: scan_cfg_1_1(),
@@ -2010,7 +2021,7 @@ mod tests {
         run_scan(
             scan_id,
             ScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 library_path: dir.path().to_path_buf(),
                 events,
                 scan: LibraryScanConfig {
@@ -2089,7 +2100,7 @@ mod tests {
         migrate(&pool).await.unwrap();
         let (events, _) = broadcast::channel(8);
         let deps = ScanDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             library_path: dir.path().to_path_buf(),
             events: events.clone(),
             scan: scan_cfg_1_1(),
@@ -2222,7 +2233,7 @@ mod tests {
         run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage,
                 events,
                 scan: scan_cfg_1_1(),
@@ -2286,7 +2297,7 @@ mod tests {
         run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
                 events,
                 scan: scan_cfg_1_1(),
@@ -2345,7 +2356,7 @@ mod tests {
         run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
                 events,
                 scan: scan_cfg_1_1(),
@@ -2439,7 +2450,7 @@ mod tests {
         let err = run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage: std::sync::Arc::new(FailingListStorage),
                 events,
                 scan: scan_cfg_1_1(),
@@ -2668,7 +2679,7 @@ mod tests {
         run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
                 events,
                 scan: scan_cfg_1_1(),
@@ -2715,7 +2726,7 @@ mod tests {
         run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage: std::sync::Arc::new(OversizedListingStorage::new(
                     dir.path(),
                     STORAGE_MAX_READ_BYTES + 1,
@@ -2852,7 +2863,7 @@ mod tests {
         run_storage_scan(
             scan_id,
             StorageScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 storage: std::sync::Arc::new(LocalStorage::new(dir.path())),
                 events,
                 scan: scan_cfg_1_1(),
@@ -2922,7 +2933,7 @@ mod tests {
         let storage: std::sync::Arc<dyn crate::library::storage::LibraryStorage> =
             std::sync::Arc::new(LocalStorage::new(dir.path()));
         let storage_deps = || StorageScanDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             storage: storage.clone(),
             events: events.clone(),
             scan: scan_cfg_1_1(),
@@ -3011,7 +3022,7 @@ mod tests {
         run_scan(
             scan_id,
             ScanDeps {
-                pool: pool.clone(),
+                data: DataHandle::from_sqlite_pool(pool.clone()),
                 library_path: dir.path().to_path_buf(),
                 events,
                 scan: LibraryScanConfig {

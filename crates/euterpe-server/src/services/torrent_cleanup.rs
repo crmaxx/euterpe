@@ -9,7 +9,7 @@ pub async fn remove_job_incoming_dir(state: &AppState, job_id: i64) -> Result<()
     let Some(incoming) = state.config.torrent_incoming_dir.as_ref() else {
         return Ok(());
     };
-    let Some(payload) = download_jobs::get_payload(&state.db, job_id).await? else {
+    let Some(payload) = download_jobs::get_payload(&state.data.sqlx_pool(), job_id).await? else {
         return Ok(());
     };
     let Some(torrent) = payload.torrent else {

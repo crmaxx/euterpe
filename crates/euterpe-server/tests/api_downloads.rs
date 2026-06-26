@@ -148,7 +148,7 @@ async fn download_job_completes_via_worker() {
         stream_url: format!("http://{addr}/cdn"),
     };
     let state = state_with_download_mock(mock).await;
-    let pool = state.db.clone();
+    let pool = state.data.sqlx_pool();
     let app = app::app(state);
 
     let create = app
@@ -198,7 +198,7 @@ async fn download_job_completes_via_worker() {
 #[tokio::test]
 async fn purge_finished_deletes_terminal_jobs() {
     let state = test_state_without_worker().await;
-    let pool = state.db.clone();
+    let pool = state.data.sqlx_pool();
     let payload = DownloadJobPayload {
         torrent: None,
         album_api_id: Some("1".into()),
@@ -248,7 +248,7 @@ async fn purge_finished_deletes_terminal_jobs() {
 #[tokio::test]
 async fn delete_with_purge_removes_terminal_job() {
     let state = test_state_without_worker().await;
-    let pool = state.db.clone();
+    let pool = state.data.sqlx_pool();
     let payload = DownloadJobPayload {
         torrent: None,
         album_api_id: Some("1".into()),
@@ -278,7 +278,7 @@ async fn delete_with_purge_removes_terminal_job() {
 #[tokio::test]
 async fn delete_with_purge_rejects_running_job() {
     let state = test_state_without_worker().await;
-    let pool = state.db.clone();
+    let pool = state.data.sqlx_pool();
     let payload = DownloadJobPayload {
         torrent: None,
         album_api_id: Some("1".into()),
@@ -307,7 +307,7 @@ async fn delete_with_purge_rejects_running_job() {
 #[tokio::test]
 async fn list_downloads_keyset_by_id_desc() {
     let state = test_state_without_worker().await;
-    let pool = state.db.clone();
+    let pool = state.data.sqlx_pool();
     for i in 1..=4 {
         let payload = DownloadJobPayload {
             torrent: None,

@@ -118,11 +118,11 @@ async fn oauth_callback_exchanges_code_and_stores_account() {
         state.config = std::sync::Arc::new(cfg);
     }
 
-    euterpe_server::db::qobuz_accounts::purge_expired_oauth_states(&state.db)
+    euterpe_server::db::qobuz_accounts::purge_expired_oauth_states(&state.data.sqlx_pool())
         .await
         .unwrap();
     euterpe_server::db::qobuz_accounts::insert_oauth_state(
-        &state.db,
+        &state.data.sqlx_pool(),
         oauth_state,
         chrono::Utc::now() + chrono::Duration::minutes(10),
     )
@@ -139,7 +139,7 @@ async fn oauth_callback_exchanges_code_and_stores_account() {
     let loc = resp.headers().get("location").unwrap().to_str().unwrap();
     assert!(loc.contains("/settings?qobuz=connected"));
 
-    let creds = euterpe_server::credentials::load_active(&state.config, &state.db)
+    let creds = euterpe_server::credentials::load_active(&state.config, &state.data.sqlx_pool())
         .await
         .unwrap();
     assert!(creds.is_some());
@@ -199,11 +199,11 @@ async fn oauth_callback_accepts_code_autorisation_without_state_when_single_pend
         state.config = std::sync::Arc::new(cfg);
     }
 
-    euterpe_server::db::qobuz_accounts::purge_expired_oauth_states(&state.db)
+    euterpe_server::db::qobuz_accounts::purge_expired_oauth_states(&state.data.sqlx_pool())
         .await
         .unwrap();
     euterpe_server::db::qobuz_accounts::insert_oauth_state(
-        &state.db,
+        &state.data.sqlx_pool(),
         "only-pending",
         chrono::Utc::now() + chrono::Duration::minutes(10),
     )
@@ -222,7 +222,7 @@ async fn oauth_callback_accepts_code_autorisation_without_state_when_single_pend
         .unwrap();
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
 
-    let creds = euterpe_server::credentials::load_active(&state.config, &state.db)
+    let creds = euterpe_server::credentials::load_active(&state.config, &state.data.sqlx_pool())
         .await
         .unwrap()
         .expect("connected");
@@ -248,7 +248,7 @@ async fn logout_clears_active_account() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
 
-    let creds = euterpe_server::credentials::load_active(&state.config, &state.db)
+    let creds = euterpe_server::credentials::load_active(&state.config, &state.data.sqlx_pool())
         .await
         .unwrap();
     assert!(creds.is_none());

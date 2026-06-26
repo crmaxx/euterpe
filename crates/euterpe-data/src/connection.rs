@@ -30,8 +30,13 @@ impl DataHandle {
             .foreign_keys(true)
             .busy_timeout(std::time::Duration::from_secs(5));
 
+        let max_connections = if database_url.contains(":memory:") {
+            1
+        } else {
+            5
+        };
         let pool = SqlitePoolOptions::new()
-            .max_connections(5)
+            .max_connections(max_connections)
             .connect_with(options)
             .await?;
 
@@ -42,6 +47,10 @@ impl DataHandle {
 
     pub fn client(&self) -> &SqliteClient {
         &self.client
+    }
+
+    pub fn sqlx_pool(&self) -> sqlx::SqlitePool {
+        self.client.as_sqlx_pool().clone()
     }
 }
 

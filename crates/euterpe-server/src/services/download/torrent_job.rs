@@ -29,13 +29,13 @@ async fn persist_torrent_runtime(
     progress_pct: f64,
     download_speed_bps: u64,
 ) -> Result<(), ApiError> {
-    let mut payload = download_jobs::get_payload(&deps.pool, job_id)
+    let mut payload = download_jobs::get_payload(&deps.data.sqlx_pool(), job_id)
         .await?
         .unwrap_or_default();
     payload.set_torrent_runtime(snapshot.clone());
-    download_jobs::set_payload(&deps.pool, job_id, &payload).await?;
+    download_jobs::set_payload(&deps.data.sqlx_pool(), job_id, &payload).await?;
     download_jobs::update_progress_and_speed(
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         job_id,
         progress_pct,
         Some(download_speed_bps),
@@ -94,13 +94,13 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         .as_ref()
         .ok_or_else(|| ApiError::Message("torrent engine not configured".into()))?;
 
-    let mut payload = download_jobs::get_payload(&deps.pool, job_id)
+    let mut payload = download_jobs::get_payload(&deps.data.sqlx_pool(), job_id)
         .await?
         .and_then(|p| p.torrent)
         .ok_or_else(|| ApiError::Message(format!("job {job_id} missing torrent payload")))?;
 
     let save_dir = PathBuf::from(&payload.save_dir_incoming);
-    let settings = torrent_settings::load(&deps.pool).await?;
+    let settings = torrent_settings::load(&deps.data.sqlx_pool()).await?;
     let limits = torrent_settings::to_limits_config(&settings);
 
     let torrent_bytes = if payload.magnet.is_none() {
@@ -141,7 +141,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         torrent: Some(payload.clone()),
         ..Default::default()
     };
-    download_jobs::set_payload(&deps.pool, job_id, &wrapped).await?;
+    download_jobs::set_payload(&deps.data.sqlx_pool(), job_id, &wrapped).await?;
 
     let poll_stats = || async {
         let stats = torrent.job_stats(&handle).await.map_err(map_torrent_err)?;
@@ -156,9 +156,9 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         let mut ticker = interval(Duration::from_secs(1));
         loop {
             ticker.tick().await;
-            if download_jobs::is_stopped(&deps.pool, job_id).await? {
+            if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
                 let _ = torrent.cancel(&handle).await;
-                if download_jobs::is_cancelled(&deps.pool, job_id).await? {
+                if download_jobs::is_cancelled(&deps.data.sqlx_pool(), job_id).await? {
                     let _ = tokio::fs::remove_dir_all(&save_dir).await;
                 }
                 return Ok(());
@@ -175,9 +175,9 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         .await
         .map_err(map_torrent_err)?;
 
-    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+    if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
         let _ = torrent.cancel(&handle).await;
-        if download_jobs::is_cancelled(&deps.pool, job_id).await? {
+        if download_jobs::is_cancelled(&deps.data.sqlx_pool(), job_id).await? {
             let _ = tokio::fs::remove_dir_all(&save_dir).await;
         }
         return Ok(());
@@ -209,7 +209,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
             storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
         let import_cancelled = Arc::new(AtomicBool::new(false));
         let monitor = spawn_job_stop_monitor(
-            deps.pool.clone(),
+            deps.data.sqlx_pool(),
             job_id,
             Arc::clone(&import_cancelled),
             Duration::from_millis(200),
@@ -225,8 +225,8 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         )
         .await;
         monitor.abort();
-        if download_jobs::is_stopped(&deps.pool, job_id).await? {
-            cleanup_cancelled_incoming(&deps.pool, job_id, &save_dir).await?;
+        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
+            cleanup_cancelled_incoming(&deps.data.sqlx_pool(), job_id, &save_dir).await?;
             return Ok(());
         }
         let rel = copy_result?;
@@ -235,7 +235,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
             torrent: Some(payload.clone()),
             ..Default::default()
         };
-        download_jobs::set_payload(&deps.pool, job_id, &wrapped).await?;
+        download_jobs::set_payload(&deps.data.sqlx_pool(), job_id, &wrapped).await?;
 
         if payload.auto_index_after_import || payload.post_download.is_some() {
             let scan_cfg = deps
@@ -244,7 +244,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
                 .await
                 .library_scan_config(deps.config.debug)?;
             let scan_id = library_scan::start_scan_storage(
-                &deps.pool,
+                &deps.data.sqlx_pool(),
                 storage.clone(),
                 deps.scan_events.clone(),
                 scan_cfg,
@@ -253,14 +253,14 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
                 Some(deps.runtime.clone()),
             )
             .await?;
-            if wait_scan_finished_or_stopped(&deps.pool, job_id, scan_id).await? {
-                cleanup_cancelled_incoming(&deps.pool, job_id, &save_dir).await?;
+            if wait_scan_finished_or_stopped(&deps.data.sqlx_pool(), job_id, scan_id).await? {
+                cleanup_cancelled_incoming(&deps.data.sqlx_pool(), job_id, &save_dir).await?;
                 return Ok(());
             }
         }
 
-        if download_jobs::is_stopped(&deps.pool, job_id).await? {
-            cleanup_cancelled_incoming(&deps.pool, job_id, &save_dir).await?;
+        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
+            cleanup_cancelled_incoming(&deps.data.sqlx_pool(), job_id, &save_dir).await?;
             return Ok(());
         }
         if let Some(post) = &payload.post_download {
@@ -275,11 +275,11 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         .await
         .map_err(map_torrent_err)?;
 
-    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+    if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
         return Ok(());
     }
 
-    download_jobs::finish_success(&deps.pool, job_id).await?;
+    download_jobs::finish_success(&deps.data.sqlx_pool(), job_id).await?;
     let _ = deps.events.send(JobProgressEvent {
         id: job_id,
         progress_pct: 100.0,
@@ -295,18 +295,18 @@ async fn run_torrent_post_download(
     library_dest_rel: &str,
     post: &TorrentPostDownloadOptions,
 ) -> Result<(), ApiError> {
-    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+    if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
         return Ok(());
     }
 
     let mut convert_job_id = None;
     if post.convert_after_download {
-        let album_id = imported_album_id(&deps.pool, library_dest_rel, post).await?;
-        if download_jobs::is_stopped(&deps.pool, job_id).await? {
+        let album_id = imported_album_id(&deps.data.sqlx_pool(), library_dest_rel, post).await?;
+        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
             return Ok(());
         }
         let queued_convert_job_id =
-            start_album_convert(&deps.pool, album_id, &deps.convert_job_tx).await?;
+            start_album_convert(&deps.data.sqlx_pool(), album_id, &deps.convert_job_tx).await?;
         convert_job_id = Some(queued_convert_job_id);
         tracing::info!(
             job_id,
@@ -318,7 +318,7 @@ async fn run_torrent_post_download(
     }
 
     if post.split_after_download || post.split_after_conversion {
-        if download_jobs::is_stopped(&deps.pool, job_id).await? {
+        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
             return Ok(());
         }
         if post.split_after_conversion {
@@ -330,10 +330,12 @@ async fn run_torrent_post_download(
             let convert_job_id = convert_job_id.ok_or_else(|| {
                 ApiError::Message("torrent post-download conversion job was not queued".into())
             })?;
-            if wait_convert_finished_or_stopped(&deps.pool, job_id, convert_job_id).await? {
+            if wait_convert_finished_or_stopped(&deps.data.sqlx_pool(), job_id, convert_job_id)
+                .await?
+            {
                 return Ok(());
             }
-            if download_jobs::is_stopped(&deps.pool, job_id).await? {
+            if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
                 return Ok(());
             }
         }
@@ -368,7 +370,7 @@ async fn run_torrent_cue_split_after_download(
     let cue_album_rel = cue_rel.parent().unwrap_or_else(|| {
         StoragePath::parse(library_dest_rel).unwrap_or_else(|_| StoragePath::root())
     });
-    let album_id = imported_album_id(&deps.pool, library_dest_rel, post).await?;
+    let album_id = imported_album_id(&deps.data.sqlx_pool(), library_dest_rel, post).await?;
     let loaded = cue::load_album_cue_storage(
         storage.as_ref(),
         cue_album_rel.as_str(),
@@ -399,11 +401,16 @@ async fn run_torrent_cue_split_after_download(
         .iter()
         .filter(|track| track.selected)
         .count() as i64;
-    let cue_job_id =
-        cue_jobs::create_queued(&deps.pool, album_id, tracks_total, Some(&payload_json)).await?;
-    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+    let cue_job_id = cue_jobs::create_queued(
+        &deps.data.sqlx_pool(),
+        album_id,
+        tracks_total,
+        Some(&payload_json),
+    )
+    .await?;
+    if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
         cue_jobs::finish_failed(
-            &deps.pool,
+            &deps.data.sqlx_pool(),
             cue_job_id,
             "torrent job stopped before CUE split",
         )
@@ -412,13 +419,13 @@ async fn run_torrent_cue_split_after_download(
     }
     let split_cancelled = Arc::new(AtomicBool::new(false));
     let monitor = spawn_job_stop_monitor(
-        deps.pool.clone(),
+        deps.data.sqlx_pool(),
         job_id,
         Arc::clone(&split_cancelled),
         Duration::from_millis(200),
     );
     let split_result = cue::run_storage_cue_split_job(
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         storage.clone(),
         cue_job_id,
         CueSplitRequest {
@@ -434,7 +441,7 @@ async fn run_torrent_cue_split_after_download(
     .await;
     monitor.abort();
     split_result?;
-    if download_jobs::is_stopped(&deps.pool, job_id).await? {
+    if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
         return Ok(());
     }
 
@@ -444,7 +451,7 @@ async fn run_torrent_cue_split_after_download(
         .await
         .library_scan_config(deps.config.debug)?;
     let scan_id = library_scan::start_scan_storage(
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         storage,
         deps.scan_events.clone(),
         scan_cfg,
@@ -453,7 +460,7 @@ async fn run_torrent_cue_split_after_download(
         Some(deps.runtime.clone()),
     )
     .await?;
-    let _ = wait_scan_finished_or_stopped(&deps.pool, job_id, scan_id).await?;
+    let _ = wait_scan_finished_or_stopped(&deps.data.sqlx_pool(), job_id, scan_id).await?;
     Ok(())
 }
 
@@ -685,7 +692,7 @@ mod tests {
 
     fn worker_deps_from_state(state: &crate::AppState) -> WorkerDeps {
         WorkerDeps {
-            pool: state.db.clone(),
+            data: state.data.clone(),
             qobuz: Arc::clone(&state.qobuz),
             config: Arc::clone(&state.config),
             runtime: state.runtime.clone(),
@@ -725,11 +732,11 @@ FILE "album.flac" FLAC
 "#,
         )
         .unwrap();
-        let artist_id = artists::upsert_by_name(&state.db, "Torrent Artist", None)
+        let artist_id = artists::upsert_by_name(&state.data.sqlx_pool(), "Torrent Artist", None)
             .await
             .unwrap();
         let album_id = albums::upsert(
-            &state.db,
+            &state.data.sqlx_pool(),
             albums::AlbumUpsert {
                 artist_id: Some(artist_id),
                 title: "Torrent Cue Album",
@@ -742,7 +749,7 @@ FILE "album.flac" FLAC
         .await
         .unwrap();
         tracks::upsert(
-            &state.db,
+            &state.data.sqlx_pool(),
             tracks::TrackUpsert {
                 album_id,
                 title: "Convertible source",
@@ -889,24 +896,34 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn conversion_wait_returns_when_convert_job_succeeds() {
         let (state, _, album_rel) = seed_torrent_cue_album().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
-        let album_id = albums::id_by_path(&state.db, &album_rel)
+        let album_id = albums::id_by_path(&state.data.sqlx_pool(), &album_rel)
             .await
             .unwrap()
             .unwrap();
-        let convert_job_id =
-            convert_jobs::create(&state.db, album_id, convert_jobs::ConvertTrigger::Manual, 1)
-                .await
-                .unwrap();
+        let convert_job_id = convert_jobs::create(
+            &state.data.sqlx_pool(),
+            album_id,
+            convert_jobs::ConvertTrigger::Manual,
+            1,
+        )
+        .await
+        .unwrap();
         convert_jobs::finish(
-            &state.db,
+            &state.data.sqlx_pool(),
             convert_job_id,
             convert_jobs::ConvertJobStatus::Success,
             None,
@@ -915,9 +932,10 @@ FILE "album.flac" FLAC
         .await
         .unwrap();
 
-        let stopped = wait_convert_finished_or_stopped(&state.db, job_id, convert_job_id)
-            .await
-            .unwrap();
+        let stopped =
+            wait_convert_finished_or_stopped(&state.data.sqlx_pool(), job_id, convert_job_id)
+                .await
+                .unwrap();
 
         assert!(!stopped);
     }
@@ -925,24 +943,34 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn conversion_wait_errors_when_convert_job_fails() {
         let (state, _, album_rel) = seed_torrent_cue_album().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
-        let album_id = albums::id_by_path(&state.db, &album_rel)
+        let album_id = albums::id_by_path(&state.data.sqlx_pool(), &album_rel)
             .await
             .unwrap()
             .unwrap();
-        let convert_job_id =
-            convert_jobs::create(&state.db, album_id, convert_jobs::ConvertTrigger::Manual, 1)
-                .await
-                .unwrap();
+        let convert_job_id = convert_jobs::create(
+            &state.data.sqlx_pool(),
+            album_id,
+            convert_jobs::ConvertTrigger::Manual,
+            1,
+        )
+        .await
+        .unwrap();
         convert_jobs::finish(
-            &state.db,
+            &state.data.sqlx_pool(),
             convert_job_id,
             convert_jobs::ConvertJobStatus::Failed,
             Some("encode exploded"),
@@ -951,9 +979,10 @@ FILE "album.flac" FLAC
         .await
         .unwrap();
 
-        let error = wait_convert_finished_or_stopped(&state.db, job_id, convert_job_id)
-            .await
-            .unwrap_err();
+        let error =
+            wait_convert_finished_or_stopped(&state.data.sqlx_pool(), job_id, convert_job_id)
+                .await
+                .unwrap_err();
 
         assert!(error.to_string().contains("encode exploded"));
     }
@@ -961,27 +990,40 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn conversion_wait_returns_when_torrent_job_is_cancelled() {
         let (state, _, album_rel) = seed_torrent_cue_album().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
-        let album_id = albums::id_by_path(&state.db, &album_rel)
+        let album_id = albums::id_by_path(&state.data.sqlx_pool(), &album_rel)
             .await
             .unwrap()
             .unwrap();
-        let convert_job_id =
-            convert_jobs::create(&state.db, album_id, convert_jobs::ConvertTrigger::Manual, 1)
-                .await
-                .unwrap();
+        let convert_job_id = convert_jobs::create(
+            &state.data.sqlx_pool(),
+            album_id,
+            convert_jobs::ConvertTrigger::Manual,
+            1,
+        )
+        .await
+        .unwrap();
 
-        download_jobs::cancel(&state.db, job_id).await.unwrap();
-        let stopped = wait_convert_finished_or_stopped(&state.db, job_id, convert_job_id)
+        download_jobs::cancel(&state.data.sqlx_pool(), job_id)
             .await
             .unwrap();
+        let stopped =
+            wait_convert_finished_or_stopped(&state.data.sqlx_pool(), job_id, convert_job_id)
+                .await
+                .unwrap();
 
         assert!(stopped);
     }
@@ -989,16 +1031,22 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn conversion_wait_errors_when_convert_job_disappears() {
         let state = crate::app::test_support::test_state_without_worker().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
 
-        let error = wait_convert_finished_or_stopped(&state.db, job_id, 999)
+        let error = wait_convert_finished_or_stopped(&state.data.sqlx_pool(), job_id, 999)
             .await
             .unwrap_err();
 
@@ -1008,11 +1056,17 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn split_after_download_runs_storage_split_instead_of_worker_placeholder() {
         let (state, album_dir, album_rel) = seed_torrent_cue_album().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
@@ -1053,11 +1107,17 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn split_after_conversion_without_conversion_fails_with_clear_prerequisite() {
         let state = crate::app::test_support::test_state_without_worker().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
@@ -1082,19 +1142,25 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn split_after_conversion_waits_for_conversion_success_then_runs_storage_split() {
         let (state, album_dir, album_rel) = seed_torrent_cue_album().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
-        let album_id = albums::id_by_path(&state.db, &album_rel)
+        let album_id = albums::id_by_path(&state.data.sqlx_pool(), &album_rel)
             .await
             .unwrap()
             .unwrap();
-        let pool = state.db.clone();
+        let pool = state.data.sqlx_pool();
         let finisher = tokio::spawn(async move {
             loop {
                 if let Some(row) = convert_jobs::latest_for_album(&pool, album_id)
@@ -1136,15 +1202,23 @@ FILE "album.flac" FLAC
     #[tokio::test]
     async fn cancellation_before_torrent_cue_split_prevents_output_writes() {
         let (state, album_dir, album_rel) = seed_torrent_cue_album().await;
-        let job_id = download_jobs::insert_queued(&state.db, DownloadJobType::Torrent, 0, 0, None)
-            .await
-            .unwrap();
+        let job_id = download_jobs::insert_queued(
+            &state.data.sqlx_pool(),
+            DownloadJobType::Torrent,
+            0,
+            0,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(
-            download_jobs::claim_running(&state.db, job_id)
+            download_jobs::claim_running(&state.data.sqlx_pool(), job_id)
                 .await
                 .unwrap()
         );
-        download_jobs::cancel(&state.db, job_id).await.unwrap();
+        download_jobs::cancel(&state.data.sqlx_pool(), job_id)
+            .await
+            .unwrap();
         let deps = worker_deps_from_state(&state);
         let post = TorrentPostDownloadOptions {
             split_after_download: true,

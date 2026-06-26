@@ -55,7 +55,7 @@ async fn storage_settings_encrypts_smb_password_and_redacts_response() {
 
     let raw: (String,) =
         sqlx::query_as("SELECT value FROM settings WHERE key = 'storage.settings'")
-            .fetch_one(&state.db)
+            .fetch_one(&state.data.sqlx_pool())
             .await
             .unwrap();
     assert!(!raw.0.contains("secret"));

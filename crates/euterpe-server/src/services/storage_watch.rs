@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use euterpe_data::DataHandle;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -74,7 +75,7 @@ impl StorageWatchStatus {
 
 #[derive(Clone)]
 pub struct StorageWatchDeps {
-    pub pool: sqlx::SqlitePool,
+    pub data: DataHandle,
     pub config: Arc<AppConfig>,
     pub runtime: RuntimeSettingsHandle,
     pub scan_events: tokio::sync::broadcast::Sender<crate::api::ScanProgressEvent>,
@@ -433,7 +434,7 @@ async fn schedule_debounced_changes(
     cancel: &CancellationToken,
 ) -> Result<(), ApiError> {
     for prune in prunes {
-        let deleted = prune_removed_watch_path(&deps.pool, &prune).await?;
+        let deleted = prune_removed_watch_path(&deps.data.sqlx_pool(), &prune).await?;
         if deleted > 0 {
             tracing::info!(
                 path = %prune.as_str(),
@@ -445,7 +446,7 @@ async fn schedule_debounced_changes(
     if !scan_requested || cancel.is_cancelled() {
         return Ok(());
     }
-    while library_scan_runs::has_running(&deps.pool).await? {
+    while library_scan_runs::has_running(&deps.data.sqlx_pool()).await? {
         if cancel.is_cancelled() {
             return Ok(());
         }
@@ -467,7 +468,7 @@ async fn schedule_debounced_changes(
         .library_scan_config(deps.config.debug)?;
     watch.pause_for_scan().await;
     let scan_id = match crate::services::library_scan::start_scan_storage(
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         storage,
         deps.scan_events.clone(),
         scan_cfg,
@@ -483,7 +484,7 @@ async fn schedule_debounced_changes(
             return Err(error);
         }
     };
-    crate::services::library_scan::wait_scan_finished(&deps.pool, scan_id).await;
+    crate::services::library_scan::wait_scan_finished(&deps.data.sqlx_pool(), scan_id).await;
     watch.restart().await;
     Ok(())
 }
@@ -722,7 +723,7 @@ mod tests {
         let (scan_events, mut scan_rx) = broadcast::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(1);
         let deps = StorageWatchDeps {
-            pool: pool.clone(),
+            data: euterpe_data::DataHandle::from_sqlite_pool(pool.clone()),
             config: Arc::new(AppConfig::from_env().unwrap()),
             runtime,
             scan_events,

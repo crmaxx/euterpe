@@ -9,6 +9,7 @@ use axum::http::Request;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use euterpe_data::{connect_database, migrations as data_migrations};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
@@ -25,7 +26,7 @@ use crate::api::{
 };
 use crate::config::AppConfig;
 use crate::credentials;
-use crate::db::{self, favorites, sync_runs};
+use crate::db::{favorites, sync_runs};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
@@ -285,8 +286,8 @@ pub async fn serve(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.ensure_torrent_incoming_dir()?;
 
-    let pool = db::connect(&config.database_url).await?;
-    db::migrate(&pool).await?;
+    let data = connect_database(&config.database_url).await?;
+    data_migrations::migrate(&data).await?;
 
     let (job_tx, job_rx) = mpsc::channel(32);
     let (convert_job_tx, convert_job_rx) = mpsc::channel(32);
@@ -298,7 +299,7 @@ pub async fn serve(
     let config = Arc::new(config);
     let state = AppState::new(
         (*config).clone(),
-        pool.clone(),
+        data.clone(),
         AppChannels {
             job_tx: job_tx.clone(),
             convert_job_tx: convert_job_tx.clone(),
@@ -312,7 +313,7 @@ pub async fn serve(
     state.storage_watch.restart().await;
 
     let worker_deps = WorkerDeps {
-        pool: pool.clone(),
+        data: data.clone(),
         qobuz: Arc::clone(&state.qobuz),
         config: Arc::clone(&state.config),
         runtime: state.runtime.clone(),
@@ -333,7 +334,7 @@ pub async fn serve(
     spawn_worker(job_rx, worker_deps);
 
     let convert_deps = ConvertWorkerDeps {
-        pool: pool.clone(),
+        data: data.clone(),
         config: Arc::clone(&state.config),
         runtime: state.runtime.clone(),
         events: convert_events,
@@ -367,7 +368,7 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoResponse>, ApiError> {
-    let credentials_configured = credentials::load_active(&state.config, &state.db)
+    let credentials_configured = credentials::load_active(&state.config, &state.data.sqlx_pool())
         .await?
         .is_some();
     let runtime = state.runtime.read().await;
@@ -418,7 +419,7 @@ fn public_server_storage_view(location: StorageLocationView) -> StorageLocationV
 async fn qobuz_sync_latest(
     State(state): State<AppState>,
 ) -> Result<Json<QobuzSyncLatestResponse>, ApiError> {
-    let run = sync_runs::latest(&state.db).await?;
+    let run = sync_runs::latest(&state.data.sqlx_pool()).await?;
     Ok(Json(QobuzSyncLatestResponse { run }))
 }
 
@@ -445,7 +446,7 @@ async fn qobuz_sync_handler(
 ) -> Result<Json<QobuzSyncResponse>, ApiError> {
     tracing::debug!("POST /api/v1/qobuz/sync");
     state.require_credentials().await?;
-    let resp = qobuz_sync::run(&state.db, Arc::clone(&state.qobuz)).await?;
+    let resp = qobuz_sync::run(&state.data.sqlx_pool(), Arc::clone(&state.qobuz)).await?;
     tracing::debug!(
         run_id = resp.run_id,
         albums_total = resp.albums_total,
@@ -497,7 +498,7 @@ async fn list_favorites(
         Some(s) => SortOrder::parse(s)?,
     };
     let page = favorites::list_albums_keyset(
-        &state.db,
+        &state.data.sqlx_pool(),
         FavoritesListParams {
             sort,
             order,
@@ -528,7 +529,7 @@ async fn add_favorites(
         guard.favorite_add_albums(&body.album_ids).await?;
     }
     for &id in &body.album_ids {
-        favorites::upsert_album(&state.db, id, "", "", None, None).await?;
+        favorites::upsert_album(&state.data.sqlx_pool(), id, "", "", None, None).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -545,13 +546,12 @@ async fn remove_favorites(
         let guard = state.qobuz.lock().await;
         guard.favorite_remove_albums(&body.album_ids).await?;
     }
-    favorites::mark_albums_removed(&state.db, &body.album_ids).await?;
+    favorites::mark_albums_removed(&state.data.sqlx_pool(), &body.album_ids).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub mod test_support {
     use super::*;
-    use crate::db;
     use crate::services::download::{WorkerDeps, spawn_worker};
 
     fn test_config() -> AppConfig {
@@ -579,8 +579,9 @@ pub mod test_support {
 
     async fn test_state_inner(with_worker: bool) -> AppState {
         let config = test_config();
-        let pool = db::connect(&config.database_url).await.unwrap();
-        db::migrate(&pool).await.unwrap();
+        let data = connect_database(&config.database_url).await.unwrap();
+        data_migrations::migrate(&data).await.unwrap();
+        let pool = data.sqlx_pool();
         crate::services::app_settings::save_storage(
             &pool,
             &crate::services::app_settings::StorageSettings::local(
@@ -598,7 +599,7 @@ pub mod test_support {
 
         let state = AppState::new(
             config.clone(),
-            pool.clone(),
+            data.clone(),
             AppChannels {
                 job_tx,
                 convert_job_tx: convert_job_tx.clone(),
@@ -616,7 +617,7 @@ pub mod test_support {
             spawn_worker(
                 job_rx,
                 WorkerDeps {
-                    pool,
+                    data: data.clone(),
                     qobuz: Arc::clone(&state.qobuz),
                     config: Arc::new(config),
                     runtime: state.runtime.clone(),

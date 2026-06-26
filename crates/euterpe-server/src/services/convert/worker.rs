@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use crate::library::file_hash::content_hash_xxh64;
 use bytes::Bytes;
 use euterpe_converter::{ConvertOptions, ConvertProgress, FilePolicy, FlacEncodeSettings};
+use euterpe_data::DataHandle;
 use sqlx::SqlitePool;
 use tokio::sync::{Semaphore, broadcast, mpsc};
 use tokio::task::JoinSet;
@@ -19,7 +20,7 @@ use crate::library::tags::is_convertible_path;
 use crate::services::app_settings;
 
 pub struct ConvertWorkerDeps {
-    pub pool: SqlitePool,
+    pub data: DataHandle,
     pub config: Arc<AppConfig>,
     pub runtime: app_settings::RuntimeSettingsHandle,
     pub events: broadcast::Sender<ConvertProgressEvent>,
@@ -121,8 +122,15 @@ async fn persist_convert_snapshot(
     let done = files_completed_count(snapshot);
     let total = snapshot.len() as i64;
     let pct = job_progress_pct(snapshot);
-    let updated =
-        convert_jobs::update_progress(&deps.pool, job_id, done, total, pct, Some(&payload)).await?;
+    let updated = convert_jobs::update_progress(
+        &deps.data.sqlx_pool(),
+        job_id,
+        done,
+        total,
+        pct,
+        Some(&payload),
+    )
+    .await?;
     if updated {
         emit_convert_progress(deps, job_id, album_id, "running", snapshot, None);
     }
@@ -146,10 +154,10 @@ pub fn spawn_convert_worker(
 
 async fn try_dispatch(deps: &Arc<ConvertWorkerDeps>) -> Result<(), ApiError> {
     loop {
-        let Some(id) = convert_jobs::next_queued_id(&deps.pool).await? else {
+        let Some(id) = convert_jobs::next_queued_id(&deps.data.sqlx_pool()).await? else {
             break;
         };
-        if !convert_jobs::claim_running(&deps.pool, id).await? {
+        if !convert_jobs::claim_running(&deps.data.sqlx_pool(), id).await? {
             continue;
         }
         let deps = Arc::clone(deps);
@@ -171,7 +179,7 @@ async fn try_dispatch(deps: &Arc<ConvertWorkerDeps>) -> Result<(), ApiError> {
 }
 
 async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), ApiError> {
-    let row = convert_jobs::get_by_id(&deps.pool, job_id)
+    let row = convert_jobs::get_by_id(&deps.data.sqlx_pool(), job_id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("convert job {job_id} not found")))?;
 
@@ -179,7 +187,7 @@ async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), A
     let flac: FlacEncodeSettings = (&settings.flac_encode).into();
     let file_policy: FilePolicy = settings.file_policy.clone().into();
 
-    let track_rows = tracks::list_by_album(&deps.pool, row.album_id).await?;
+    let track_rows = tracks::list_by_album(&deps.data.sqlx_pool(), row.album_id).await?;
     let storage = library_storage_from_deps(deps).await?;
     let mut targets: Vec<(i64, String)> = Vec::new();
     for t in track_rows {
@@ -191,7 +199,7 @@ async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), A
 
     if targets.is_empty() {
         convert_jobs::finish(
-            &deps.pool,
+            &deps.data.sqlx_pool(),
             job_id,
             ConvertJobStatus::Success,
             None,
@@ -217,7 +225,7 @@ async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), A
     let initial_payload = serde_json::to_string(statuses.lock().unwrap().as_slice())
         .map_err(|e| ApiError::Message(e.to_string()))?;
     let _ = convert_jobs::update_progress(
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         job_id,
         0,
         targets.len() as i64,
@@ -383,7 +391,7 @@ async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), A
                         }
                     }
                     match tracks::update_path_fingerprint(
-                        &deps.pool,
+                        &deps.data.sqlx_pool(),
                         track_id,
                         &new_rel,
                         i64::try_from(bytes_len).ok(),
@@ -442,7 +450,7 @@ async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), A
         Some("one or more files failed to convert".to_string())
     };
     convert_jobs::finish(
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         job_id,
         status,
         err_msg.as_deref(),
@@ -459,7 +467,7 @@ async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), A
         err_msg.clone(),
     );
 
-    if let Some(album) = crate::db::albums::get_by_id(&deps.pool, row.album_id).await?
+    if let Some(album) = crate::db::albums::get_by_id(&deps.data.sqlx_pool(), row.album_id).await?
         && let Some(ref album_path) = album.path
         && let Ok(scan_root) = StoragePath::parse(album_path)
     {
@@ -469,7 +477,7 @@ async fn execute_job(job_id: i64, deps: &Arc<ConvertWorkerDeps>) -> Result<(), A
             .await
             .library_scan_config(deps.config.debug)?;
         let _ = crate::services::library_scan::start_scan_storage(
-            &deps.pool,
+            &deps.data.sqlx_pool(),
             storage,
             deps.scan_events.clone(),
             scan_cfg,
@@ -508,11 +516,11 @@ async fn mark_job_failed(
     job_id: i64,
     message: &str,
 ) -> Result<(), ApiError> {
-    let row = convert_jobs::get_by_id(&deps.pool, job_id)
+    let row = convert_jobs::get_by_id(&deps.data.sqlx_pool(), job_id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("convert job {job_id} not found")))?;
     convert_jobs::finish(
-        &deps.pool,
+        &deps.data.sqlx_pool(),
         job_id,
         ConvertJobStatus::Failed,
         Some(message),
@@ -718,7 +726,7 @@ mod tests {
         let (scan_events, _) = broadcast::channel(8);
         let (job_tx, _job_rx) = mpsc::channel(8);
         let deps = Arc::new(ConvertWorkerDeps {
-            pool: pool.clone(),
+            data: DataHandle::from_sqlite_pool(pool.clone()),
             config: Arc::new(test_config(config_dir.path().to_path_buf())),
             runtime,
             events,

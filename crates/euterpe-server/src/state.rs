@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use euterpe_data::DataHandle;
 use euterpe_qobuz::QobuzApi;
 use euterpe_torrent::TorrentEngine;
 use reqwest::Client;
-use sqlx::SqlitePool;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 use crate::api::{ConvertProgressEvent, JobProgressEvent, ScanProgressEvent};
@@ -29,7 +29,7 @@ pub struct AppChannels {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: SqlitePool,
+    pub data: DataHandle,
     pub config: Arc<AppConfig>,
     pub http: Client,
     pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
@@ -51,11 +51,12 @@ pub struct AppState {
 impl AppState {
     pub async fn new(
         config: AppConfig,
-        db: SqlitePool,
+        data: DataHandle,
         channels: AppChannels,
         hawk: Option<Arc<euterpe_hawk::Hawk>>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
+        let db = data.sqlx_pool();
         let runtime = Arc::new(RwLock::new(
             app_settings::load_runtime_settings(&db, &config).await,
         ));
@@ -91,7 +92,7 @@ impl AppState {
 
         let storage_watch = crate::services::storage_watch::StorageWatchHandle::new(
             crate::services::storage_watch::StorageWatchDeps {
-                pool: db.clone(),
+                data: data.clone(),
                 config: config.clone(),
                 runtime: runtime.clone(),
                 scan_events: channels.scan_events.clone(),
@@ -100,7 +101,7 @@ impl AppState {
         );
 
         Ok(Self {
-            db,
+            data,
             config,
             http,
             qobuz,
@@ -123,7 +124,7 @@ impl AppState {
     }
 
     pub async fn require_credentials(&self) -> Result<QobuzCredentials, ApiError> {
-        credentials::load_active(&self.config, &self.db)
+        credentials::load_active(&self.config, &self.data.sqlx_pool())
             .await?
             .ok_or_else(|| {
                 ApiError::Message("Qobuz not connected — complete OAuth in Settings".into())
@@ -131,12 +132,13 @@ impl AppState {
     }
 
     pub async fn reload_qobuz_from_db(&self) -> Result<(), ApiError> {
-        let new_client: Box<dyn QobuzApi + Send + Sync> =
-            if let Some(creds) = credentials::load_active(&self.config, &self.db).await? {
-                Box::new(credentials::build_client(&creds, &self.config).await?)
-            } else {
-                Box::new(NoopQobuz)
-            };
+        let new_client: Box<dyn QobuzApi + Send + Sync> = if let Some(creds) =
+            credentials::load_active(&self.config, &self.data.sqlx_pool()).await?
+        {
+            Box::new(credentials::build_client(&creds, &self.config).await?)
+        } else {
+            Box::new(NoopQobuz)
+        };
         *self.qobuz.lock().await = new_client;
         Ok(())
     }

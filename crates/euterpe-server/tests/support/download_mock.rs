@@ -147,6 +147,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     };
     let pool = db::connect(&config.database_url).await.unwrap();
     db::migrate(&pool).await.unwrap();
+    let data = euterpe_data::DataHandle::from_sqlite_pool(pool.clone());
     euterpe_server::services::app_settings::save_storage(
         &pool,
         &euterpe_server::services::app_settings::StorageSettings::local(
@@ -168,7 +169,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     ));
 
     let state = AppState {
-        db: pool.clone(),
+        data: data.clone(),
         config: Arc::clone(&config),
         http: Client::new(),
         qobuz: Arc::clone(&qobuz),
@@ -180,7 +181,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         runtime: runtime.clone(),
         storage_watch: euterpe_server::services::storage_watch::StorageWatchHandle::new(
             euterpe_server::services::storage_watch::StorageWatchDeps {
-                pool: pool.clone(),
+                data: data.clone(),
                 config: Arc::clone(&config),
                 runtime,
                 scan_events,
@@ -199,7 +200,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     spawn_worker(
         job_rx,
         WorkerDeps {
-            pool,
+            data,
             qobuz,
             config,
             runtime: state.runtime.clone(),

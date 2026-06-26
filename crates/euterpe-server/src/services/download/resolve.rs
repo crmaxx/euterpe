@@ -55,7 +55,13 @@ pub async fn resolve_album_api_id_for_state(
     catalog_id: u64,
     from_request: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
-    resolve_album_api_id(&state.db, &state.qobuz, catalog_id, from_request).await
+    resolve_album_api_id(
+        &state.data.sqlx_pool(),
+        &state.qobuz,
+        catalog_id,
+        from_request,
+    )
+    .await
 }
 
 /// Resolve via Qobuz favorites (JSON scan + parsed list). No `album/get` probe loop.

@@ -12,12 +12,12 @@ async fn use_settings_local_storage(
     root: &std::path::Path,
 ) {
     app_settings::save_storage(
-        &state.db,
+        &state.data.sqlx_pool(),
         &StorageSettings::local(root.display().to_string()),
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.db, &state.config).await;
+    app_settings::refresh_runtime(&state.runtime, &state.data.sqlx_pool(), &state.config).await;
     state.invalidate_library_storage_cache().await;
 }
 
@@ -119,12 +119,13 @@ async fn library_scan_indexes_files() {
 #[tokio::test]
 async fn library_albums_keyset_sort_and_search() {
     let state = app::test_support::test_state().await;
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Zed", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "Zed", None)
+            .await
+            .unwrap();
     for (title, year) in [("Alpha", 2020), ("Beta", 2021), ("Gamma", 2019)] {
         euterpe_server::db::albums::upsert(
-            &state.db,
+            &state.data.sqlx_pool(),
             euterpe_server::db::albums::AlbumUpsert {
                 artist_id: Some(artist_id),
                 title,
@@ -412,11 +413,12 @@ async fn library_album_cover_get_returns_file_bytes() {
     std::fs::create_dir_all(lib.join("CovArtist/CovAlbum")).unwrap();
     std::fs::write(lib.join("CovArtist/CovAlbum/cover.jpg"), b"cover-bytes").unwrap();
 
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "CovArtist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "CovArtist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "CovAlbum",
@@ -430,7 +432,7 @@ async fn library_album_cover_get_returns_file_bytes() {
     .unwrap();
 
     let no_cover_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "NoCoverAlbum",
@@ -477,11 +479,12 @@ async fn library_album_cover_put_writes_file_and_updates_db() {
     let lib = state.config.library_path.clone();
     std::fs::create_dir_all(lib.join("PutArtist/PutAlbum")).unwrap();
 
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "PutArtist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "PutArtist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "PutAlbum",
@@ -519,7 +522,7 @@ async fn library_album_cover_put_writes_file_and_updates_db() {
     assert_eq!(json["cover_path"], "PutArtist/PutAlbum/cover.png");
 
     assert!(lib.join("PutArtist/PutAlbum/cover.png").is_file());
-    let row = euterpe_server::db::albums::get_by_id(&state.db, album_id)
+    let row = euterpe_server::db::albums::get_by_id(&state.data.sqlx_pool(), album_id)
         .await
         .unwrap()
         .unwrap();
@@ -543,11 +546,12 @@ async fn library_album_cover_put_writes_file_and_updates_db() {
 #[tokio::test]
 async fn library_album_cover_put_rejects_missing_album_path() {
     let state = app::test_support::test_state().await;
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "NoPath", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "NoPath", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "Ghost",
@@ -580,11 +584,12 @@ async fn library_album_cover_put_rejects_unsupported_content_type() {
     let state = app::test_support::test_state().await;
     let lib = state.config.library_path.clone();
     std::fs::create_dir_all(lib.join("TxtArtist/TxtAlbum")).unwrap();
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "TxtArtist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "TxtArtist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "TxtAlbum",
@@ -617,11 +622,12 @@ async fn library_album_cover_put_rejects_oversized_body() {
     let state = app::test_support::test_state().await;
     let lib = state.config.library_path.clone();
     std::fs::create_dir_all(lib.join("BigArtist/BigAlbum")).unwrap();
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "BigArtist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "BigArtist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "BigAlbum",
@@ -815,11 +821,15 @@ async fn library_patch_track_tags_updates_storage_file() {
     )
     .unwrap();
 
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "TrackTag Artist", None)
-        .await
-        .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(
+        &state.data.sqlx_pool(),
+        "TrackTag Artist",
+        None,
+    )
+    .await
+    .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "TrackTag Album",
@@ -832,7 +842,7 @@ async fn library_patch_track_tags_updates_storage_file() {
     .await
     .unwrap();
     let track_id = euterpe_server::db::tracks::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::tracks::TrackUpsert {
             album_id,
             title: "Original",
@@ -896,11 +906,12 @@ async fn library_track_stream_serves_audio() {
     let path = library.join("Stream Artist/Stream Album/play.wav");
     write_minimal_wav(&path);
 
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Stream Artist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "Stream Artist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "Stream Album",
@@ -913,7 +924,7 @@ async fn library_track_stream_serves_audio() {
     .await
     .unwrap();
     let track_id = euterpe_server::db::tracks::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::tracks::TrackUpsert {
             album_id,
             title: "Play",
@@ -975,11 +986,12 @@ async fn library_track_stream_range_returns_partial_content() {
     let path = library.join("Range Artist/Range Album/range.wav");
     write_wav_with_byte_length(&path, 2048);
 
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Range Artist", None)
-        .await
-        .unwrap();
+    let artist_id =
+        euterpe_server::db::artists::upsert_by_name(&state.data.sqlx_pool(), "Range Artist", None)
+            .await
+            .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "Range Album",
@@ -992,7 +1004,7 @@ async fn library_track_stream_range_returns_partial_content() {
     .await
     .unwrap();
     let track_id = euterpe_server::db::tracks::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::tracks::TrackUpsert {
             album_id,
             title: "Range",
@@ -1121,11 +1133,15 @@ async fn library_track_detail_reads_tags_via_settings_storage() {
     )
     .unwrap();
 
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "TagRead Artist", None)
-        .await
-        .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(
+        &state.data.sqlx_pool(),
+        "TagRead Artist",
+        None,
+    )
+    .await
+    .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "TagRead Album",
@@ -1138,7 +1154,7 @@ async fn library_track_detail_reads_tags_via_settings_storage() {
     .await
     .unwrap();
     let track_id = euterpe_server::db::tracks::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::tracks::TrackUpsert {
             album_id,
             title: "Read Title",
@@ -1192,12 +1208,15 @@ async fn library_album_list_discovers_cover_via_settings_storage() {
     )
     .unwrap();
 
-    let artist_id =
-        euterpe_server::db::artists::upsert_by_name(&state.db, "CoverDisc Artist", None)
-            .await
-            .unwrap();
+    let artist_id = euterpe_server::db::artists::upsert_by_name(
+        &state.data.sqlx_pool(),
+        "CoverDisc Artist",
+        None,
+    )
+    .await
+    .unwrap();
     let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         euterpe_server::db::albums::AlbumUpsert {
             artist_id: Some(artist_id),
             title: "CoverDisc Album",

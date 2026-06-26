@@ -107,7 +107,7 @@ async fn create_list_delete_musicbrainz_integration() {
 async fn metadata_apply_requires_configured_library_storage_before_provider_call() {
     let state = app::test_support::test_state().await;
     app_settings::save_storage(
-        &state.db,
+        &state.data.sqlx_pool(),
         &StorageSettings {
             library: None,
             presets: Vec::new(),
@@ -115,9 +115,9 @@ async fn metadata_apply_requires_configured_library_storage_before_provider_call
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.db, &state.config).await;
+    app_settings::refresh_runtime(&state.runtime, &state.data.sqlx_pool(), &state.config).await;
     let integration_id = insert_integration(
-        &state.db,
+        &state.data.sqlx_pool(),
         IntegrationInsert {
             type_: IntegrationType::TagSource,
             provider: IntegrationProvider::Tracktype,
@@ -181,12 +181,12 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
     let config_library_path = state.config.library_path.clone();
     let storage_root = tempfile::tempdir().unwrap();
     app_settings::save_storage(
-        &state.db,
+        &state.data.sqlx_pool(),
         &StorageSettings::local(storage_root.path().display().to_string()),
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.db, &state.config).await;
+    app_settings::refresh_runtime(&state.runtime, &state.data.sqlx_pool(), &state.config).await;
 
     let track_rel = "Api Artist/Api Album/01 - Old.wav";
     let track_path = storage_root.path().join(track_rel);
@@ -214,7 +214,7 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
     .unwrap();
 
     let album_id = albums::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         albums::AlbumUpsert {
             artist_id: None,
             title: "Api Album",
@@ -227,7 +227,7 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
     .await
     .unwrap();
     tracks::upsert(
-        &state.db,
+        &state.data.sqlx_pool(),
         tracks::TrackUpsert {
             album_id,
             title: "Old",
@@ -265,7 +265,7 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
         .await;
     let config_json = json!({ "api_base": server.url() }).to_string();
     let integration_id = insert_integration(
-        &state.db,
+        &state.data.sqlx_pool(),
         IntegrationInsert {
             type_: IntegrationType::TagSource,
             provider: IntegrationProvider::Tracktype,

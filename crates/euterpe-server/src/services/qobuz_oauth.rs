@@ -25,8 +25,8 @@ pub async fn oauth_start(state: &AppState) -> Result<OAuthStart, ApiError> {
         + ChronoDuration::from_std(state.config.oauth_state_ttl)
             .map_err(|e| ApiError::Config(format!("invalid oauth state ttl: {e}")))?;
 
-    qobuz_accounts::purge_expired_oauth_states(&state.db).await?;
-    qobuz_accounts::insert_oauth_state(&state.db, &oauth_state, expires).await?;
+    qobuz_accounts::purge_expired_oauth_states(&state.data.sqlx_pool()).await?;
+    qobuz_accounts::insert_oauth_state(&state.data.sqlx_pool(), &oauth_state, expires).await?;
 
     let redirect_uri = redirect_uri_with_state(&state.config.oauth_callback_url(), &oauth_state);
     let url = authorize_url(&bootstrap.app_id, &redirect_uri);
@@ -45,8 +45,8 @@ pub async fn oauth_callback(
     let master = state.master_key()?;
 
     let state_ok = match oauth_state.filter(|s| !s.is_empty()) {
-        Some(s) => qobuz_accounts::consume_oauth_state(&state.db, s).await?,
-        None => qobuz_accounts::consume_sole_pending_oauth_state(&state.db)
+        Some(s) => qobuz_accounts::consume_oauth_state(&state.data.sqlx_pool(), s).await?,
+        None => qobuz_accounts::consume_sole_pending_oauth_state(&state.data.sqlx_pool())
             .await?
             .is_some(),
     };
@@ -71,7 +71,8 @@ pub async fn oauth_callback(
     .await
     .map_err(ApiError::from)?;
 
-    let account_id = credentials::persist_oauth_account(&state.db, master, &login).await?;
+    let account_id =
+        credentials::persist_oauth_account(&state.data.sqlx_pool(), master, &login).await?;
     state.reload_qobuz_from_db().await?;
     Ok(account_id)
 }

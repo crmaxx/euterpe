@@ -10,7 +10,7 @@ const SILENT_FLAC: &[u8] = include_bytes!("fixtures/silent.flac");
 
 async fn setup_album_with_integration() -> (euterpe_server::AppState, i64, i64) {
     let state = app::test_support::test_state().await;
-    let pool = state.db.clone();
+    let pool = state.data.sqlx_pool();
     let library = state.config.library_path.clone();
 
     let album_dir = library.join("Test Artist/Test Album");

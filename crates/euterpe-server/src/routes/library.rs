@@ -53,7 +53,7 @@ pub async fn start_library_scan(
     };
     state.storage_watch.pause_for_scan().await;
     let scan_id = match library_scan::start_scan_storage(
-        &state.db,
+        &state.data.sqlx_pool(),
         storage,
         state.scan_events.clone(),
         scan_cfg,
@@ -69,7 +69,7 @@ pub async fn start_library_scan(
             return Err(error);
         }
     };
-    let pool = state.db.clone();
+    let pool = state.data.sqlx_pool();
     let watch = state.storage_watch.clone();
     tokio::spawn(async move {
         library_scan::wait_scan_finished(&pool, scan_id).await;
@@ -85,14 +85,14 @@ pub async fn cancel_library_scan(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    library_scan::request_cancel(&state.db, id).await?;
+    library_scan::request_cancel(&state.data.sqlx_pool(), id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn library_scan_latest(
     State(state): State<AppState>,
 ) -> Result<Json<LibraryScanLatestResponse>, ApiError> {
-    let run = library_scan_runs::latest(&state.db).await?;
+    let run = library_scan_runs::latest(&state.data.sqlx_pool()).await?;
     Ok(Json(LibraryScanLatestResponse { run }))
 }
 
@@ -100,7 +100,7 @@ pub async fn get_library_scan(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<LibraryScanRunSummary>, ApiError> {
-    let run = library_scan_runs::get_by_id(&state.db, id)
+    let run = library_scan_runs::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("scan not found".into()))?;
     Ok(Json(run))
@@ -141,7 +141,7 @@ pub async fn list_library_albums(
         Some(s) => SortOrder::parse(s)?,
     };
     let page = albums::list_keyset(
-        &state.db,
+        &state.data.sqlx_pool(),
         AlbumsListParams {
             sort,
             order,
@@ -189,11 +189,11 @@ pub async fn get_library_album(
     Path(id): Path<i64>,
 ) -> Result<Json<LibraryAlbumDetailResponse>, ApiError> {
     let location = state.runtime.read().await.storage.library.clone();
-    let album = albums::get_by_id(&state.db, id)
+    let album = albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let artist_name = if let Some(aid) = album.artist_id {
-        artists::name_by_id(&state.db, aid)
+        artists::name_by_id(&state.data.sqlx_pool(), aid)
             .await?
             .unwrap_or_default()
     } else {
@@ -207,7 +207,7 @@ pub async fn get_library_album(
         album.cover_path.as_deref(),
     )
     .await?;
-    let track_rows = tracks::list_by_album(&state.db, id).await?;
+    let track_rows = tracks::list_by_album(&state.data.sqlx_pool(), id).await?;
     let album_tags_from_file = match track_rows.first() {
         Some(first) => read_track_tags_for_state(&state, location.as_ref(), &first.path)
             .await
@@ -227,7 +227,8 @@ pub async fn get_library_album(
             duration_sec: t.duration_sec,
         })
         .collect();
-    let has_convertible_tracks = tracks::album_has_convertible_tracks(&state.db, id).await?;
+    let has_convertible_tracks =
+        tracks::album_has_convertible_tracks(&state.data.sqlx_pool(), id).await?;
     let has_cue_files =
         album_has_cue_files_for_state(&state, location.as_ref(), album.path.as_deref()).await?;
     Ok(Json(LibraryAlbumDetailResponse {
@@ -254,11 +255,12 @@ pub async fn patch_library_album_tags(
     Path(id): Path<i64>,
     Json(body): Json<LibraryAlbumTagsPatchRequest>,
 ) -> Result<Json<LibraryAlbumDetailResponse>, ApiError> {
-    let album = albums::get_by_id(&state.db, id)
+    let album = albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let track_rows =
-        tracks::list_by_album_or_path_prefix(&state.db, id, album.path.as_deref()).await?;
+        tracks::list_by_album_or_path_prefix(&state.data.sqlx_pool(), id, album.path.as_deref())
+            .await?;
     if track_rows.is_empty() {
         return Err(ApiError::bad_request("album has no tracks"));
     }
@@ -283,7 +285,7 @@ pub async fn patch_library_album_tags(
         let meta = storage.metadata(&storage_path).await.ok();
         let file_size = meta.and_then(|m| i64::try_from(m.size).ok());
         tracks::update_metadata(
-            &state.db,
+            &state.data.sqlx_pool(),
             track.id,
             tracks::TrackMetadataUpdate {
                 title: &track.title,
@@ -299,16 +301,16 @@ pub async fn patch_library_album_tags(
         )
         .await?;
         if let Some(file_size) = file_size {
-            tracks::set_file_size(&state.db, track.id, file_size).await?;
+            tracks::set_file_size(&state.data.sqlx_pool(), track.id, file_size).await?;
         }
     }
 
     let album_year = body.year.or(album.year);
     if let Some(artist_name) = &artist_name {
-        let artist_id = artists::upsert_by_name(&state.db, artist_name, None).await?;
+        let artist_id = artists::upsert_by_name(&state.data.sqlx_pool(), artist_name, None).await?;
         let title = album_title.as_deref().unwrap_or(album.title.as_str());
         let _ = albums::upsert(
-            &state.db,
+            &state.data.sqlx_pool(),
             albums::AlbumUpsert {
                 artist_id: Some(artist_id),
                 title,
@@ -322,7 +324,7 @@ pub async fn patch_library_album_tags(
     } else if album_title.is_some() || body.year.is_some() {
         let title = album_title.as_deref().unwrap_or(album.title.as_str());
         let _ = albums::upsert(
-            &state.db,
+            &state.data.sqlx_pool(),
             albums::AlbumUpsert {
                 artist_id: album.artist_id,
                 title,
@@ -344,7 +346,7 @@ pub async fn put_library_album_cover(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<AlbumCoverUploadResponse>, ApiError> {
-    let album = albums::get_by_id(&state.db, id)
+    let album = albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let album_rel = album
@@ -359,7 +361,7 @@ pub async fn put_library_album_cover(
         .map(str::to_string);
     let storage = state.library_storage().await?;
     let result = covers::write_album_cover_from_bytes_storage(
-        &state.db,
+        &state.data.sqlx_pool(),
         storage.as_ref(),
         id,
         album_rel,
@@ -378,7 +380,7 @@ pub async fn get_library_album_cover(
     Path(id): Path<i64>,
 ) -> Result<Response, ApiError> {
     let location = state.runtime.read().await.storage.library.clone();
-    let album = albums::get_by_id(&state.db, id)
+    let album = albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let rel = album_cover_path_for_state(
@@ -414,7 +416,7 @@ pub async fn get_library_track_stream(
     Path(id): Path<i64>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let track = tracks::get_by_id(&state.db, id)
+    let track = tracks::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("track not found".into()))?;
     let rel = track.path.trim();
@@ -438,7 +440,7 @@ pub async fn patch_library_track_tags(
     Path(id): Path<i64>,
     Json(body): Json<LibraryTrackTagsPatchRequest>,
 ) -> Result<Json<LibraryTrackDetailResponse>, ApiError> {
-    let track = tracks::get_by_id(&state.db, id)
+    let track = tracks::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("track not found".into()))?;
     let storage = state.library_storage().await?;
@@ -461,13 +463,13 @@ pub async fn patch_library_track_tags(
     let album_year = body.year.or(updated.year.map(|y| y as i32));
 
     if let Some(artist_name) = &artist_name {
-        let artist_id = artists::upsert_by_name(&state.db, artist_name, None).await?;
+        let artist_id = artists::upsert_by_name(&state.data.sqlx_pool(), artist_name, None).await?;
         if let Some(album_title) = &album_title {
-            let album = albums::get_by_id(&state.db, track.album_id)
+            let album = albums::get_by_id(&state.data.sqlx_pool(), track.album_id)
                 .await?
                 .ok_or_else(|| ApiError::Message("album not found".into()))?;
             let _ = albums::upsert(
-                &state.db,
+                &state.data.sqlx_pool(),
                 albums::AlbumUpsert {
                     artist_id: Some(artist_id),
                     title: album_title,
@@ -480,11 +482,11 @@ pub async fn patch_library_track_tags(
             .await?;
         }
     } else if body.year.is_some() {
-        let album = albums::get_by_id(&state.db, track.album_id)
+        let album = albums::get_by_id(&state.data.sqlx_pool(), track.album_id)
             .await?
             .ok_or_else(|| ApiError::Message("album not found".into()))?;
         let _ = albums::upsert(
-            &state.db,
+            &state.data.sqlx_pool(),
             albums::AlbumUpsert {
                 artist_id: album.artist_id,
                 title: &album.title,
@@ -500,7 +502,7 @@ pub async fn patch_library_track_tags(
     let meta = storage.metadata(&storage_path).await.ok();
     let file_size = meta.and_then(|m| i64::try_from(m.size).ok());
     tracks::update_metadata(
-        &state.db,
+        &state.data.sqlx_pool(),
         id,
         tracks::TrackMetadataUpdate {
             title: &updated.title,
@@ -516,7 +518,7 @@ pub async fn patch_library_track_tags(
     )
     .await?;
     if let Some(file_size) = file_size {
-        tracks::set_file_size(&state.db, id, file_size).await?;
+        tracks::set_file_size(&state.data.sqlx_pool(), id, file_size).await?;
     }
 
     let detail = track_detail(&state, id).await?;
@@ -525,7 +527,7 @@ pub async fn patch_library_track_tags(
 
 async fn track_detail(state: &AppState, id: i64) -> Result<LibraryTrackDetailResponse, ApiError> {
     let location = state.runtime.read().await.storage.library.clone();
-    let track = tracks::get_by_id(&state.db, id)
+    let track = tracks::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("track not found".into()))?;
     let t = read_track_tags_for_state(state, location.as_ref(), &track.path).await?;
@@ -548,10 +550,10 @@ pub async fn post_library_album_convert(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<(StatusCode, Json<ConvertAlbumResponse>), ApiError> {
-    albums::get_by_id(&state.db, id)
+    albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
-    let job_id = start_album_convert(&state.db, id, &state.convert_job_tx).await?;
+    let job_id = start_album_convert(&state.data.sqlx_pool(), id, &state.convert_job_tx).await?;
     Ok((StatusCode::ACCEPTED, Json(ConvertAlbumResponse { job_id })))
 }
 
@@ -565,7 +567,7 @@ pub async fn get_library_album_cue(
     Path(id): Path<i64>,
     Query(q): Query<CueQuery>,
 ) -> Result<Json<CueAlbumResponse>, ApiError> {
-    let album = albums::get_by_id(&state.db, id)
+    let album = albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let album_path = album
@@ -583,7 +585,7 @@ pub async fn validate_library_album_cue(
     Path(id): Path<i64>,
     Json(body): Json<CueValidateRequest>,
 ) -> Result<Json<CueValidationResponse>, ApiError> {
-    albums::get_by_id(&state.db, id)
+    albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     Ok(Json(cue::validate_api_document(&body.document)))
@@ -594,7 +596,7 @@ pub async fn split_library_album_cue(
     Path(id): Path<i64>,
     Json(body): Json<CueSplitRequest>,
 ) -> Result<(StatusCode, Json<CueSplitResponse>), ApiError> {
-    let album = albums::get_by_id(&state.db, id)
+    let album = albums::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let album_path = album.path.clone();
@@ -627,7 +629,13 @@ pub async fn split_library_album_cue(
     let payload_json =
         serde_json::to_string(&payload).map_err(|e| ApiError::Message(e.to_string()))?;
     let tracks_total = body.document.tracks.iter().filter(|t| t.selected).count() as i64;
-    let job_id = cue_jobs::create_queued(&state.db, id, tracks_total, Some(&payload_json)).await?;
+    let job_id = cue_jobs::create_queued(
+        &state.data.sqlx_pool(),
+        id,
+        tracks_total,
+        Some(&payload_json),
+    )
+    .await?;
     spawn_cue_split_job(state, job_id, body, album_path);
     Ok((StatusCode::ACCEPTED, Json(CueSplitResponse { job_id })))
 }
@@ -673,7 +681,8 @@ async fn run_cue_split_job(
     album_path: Option<String>,
 ) -> Result<(), ApiError> {
     let storage = state.library_storage().await?;
-    cue::run_storage_cue_split_job(&state.db, storage.clone(), job_id, body, None).await?;
+    cue::run_storage_cue_split_job(&state.data.sqlx_pool(), storage.clone(), job_id, body, None)
+        .await?;
     if let Some(album_path) = album_path
         && let Ok(scan_root) = StoragePath::parse(album_path)
     {
@@ -684,7 +693,7 @@ async fn run_cue_split_job(
             .library_scan_config(state.config.debug)?;
         state.storage_watch.pause_for_scan().await;
         match library_scan::start_scan_storage(
-            &state.db,
+            &state.data.sqlx_pool(),
             storage,
             state.scan_events.clone(),
             scan_cfg,
@@ -695,7 +704,7 @@ async fn run_cue_split_job(
         .await
         {
             Ok(scan_id) => {
-                let pool = state.db.clone();
+                let pool = state.data.sqlx_pool();
                 let watch = state.storage_watch.clone();
                 tokio::spawn(async move {
                     library_scan::wait_scan_finished(&pool, scan_id).await;
@@ -718,10 +727,10 @@ pub async fn get_library_album_cue_latest(
     State(state): State<AppState>,
     Path(album_id): Path<i64>,
 ) -> Result<Json<CueJobResponse>, ApiError> {
-    albums::get_by_id(&state.db, album_id)
+    albums::get_by_id(&state.data.sqlx_pool(), album_id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
-    let job = cue_jobs::latest_for_album(&state.db, album_id)
+    let job = cue_jobs::latest_for_album(&state.data.sqlx_pool(), album_id)
         .await?
         .map(cue::cue_job_to_api);
     Ok(Json(CueJobResponse { job }))
@@ -731,7 +740,7 @@ pub async fn get_library_album_convert_latest(
     State(state): State<AppState>,
     Path(album_id): Path<i64>,
 ) -> Result<Json<ConvertJobResponse>, ApiError> {
-    let row = convert_jobs::latest_for_album(&state.db, album_id)
+    let row = convert_jobs::latest_for_album(&state.data.sqlx_pool(), album_id)
         .await?
         .ok_or_else(|| ApiError::Message("no convert job for album".into()))?;
     let job = convert_jobs::row_to_summary(row).await?;
@@ -742,7 +751,7 @@ pub async fn get_convert_job(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<ConvertJobResponse>, ApiError> {
-    let row = convert_jobs::get_by_id(&state.db, id)
+    let row = convert_jobs::get_by_id(&state.data.sqlx_pool(), id)
         .await?
         .ok_or_else(|| ApiError::Message("convert job not found".into()))?;
     let job = convert_jobs::row_to_summary(row).await?;
@@ -760,7 +769,7 @@ async fn album_cover_path_for_state(
         Some(_) => {
             let storage = state.library_storage().await?;
             covers::ensure_album_cover_path_storage(
-                &state.db,
+                &state.data.sqlx_pool(),
                 storage.as_ref(),
                 album_id,
                 album_path,

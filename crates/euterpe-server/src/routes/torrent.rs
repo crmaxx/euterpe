@@ -293,7 +293,7 @@ pub async fn confirm_torrent(
     };
 
     let job_id = download_jobs::insert_queued(
-        &state.db,
+        &state.data.sqlx_pool(),
         DownloadJobType::Torrent,
         0,
         0,
@@ -316,13 +316,13 @@ pub async fn confirm_torrent(
             .map_err(|e| ApiError::Message(e.to_string()))?;
     }
 
-    let mut payload = download_jobs::get_payload(&state.db, job_id)
+    let mut payload = download_jobs::get_payload(&state.data.sqlx_pool(), job_id)
         .await?
         .and_then(|p| p.torrent)
         .ok_or_else(|| ApiError::Message("torrent payload missing after insert".into()))?;
     payload.save_dir_incoming = job_dir.display().to_string();
     download_jobs::set_payload(
-        &state.db,
+        &state.data.sqlx_pool(),
         job_id,
         &DownloadJobPayload {
             torrent: Some(payload),
