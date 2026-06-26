@@ -1,11 +1,13 @@
+use euterpe_data::{
+    DataHandle,
+    repositories::integrations::{self, IntegrationInsert, IntegrationRow, IntegrationUpdate},
+};
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 use crate::api::{
     IntegrationCreateRequest, IntegrationListItem, IntegrationPatchRequest, IntegrationResponse,
 };
 use crate::config::AppConfig;
-use crate::db::integrations::{self, IntegrationInsert, IntegrationRow, IntegrationUpdate};
 use crate::error::ApiError;
 use crate::integrations::catalog::{
     IntegrationProvider, IntegrationType, catalog_entries, default_display_name,
@@ -30,7 +32,7 @@ pub fn row_to_item(row: &IntegrationRow) -> IntegrationListItem {
 }
 
 pub async fn list_integrations(
-    pool: &SqlitePool,
+    data: &DataHandle,
     type_filter: Option<&str>,
 ) -> Result<Vec<IntegrationListItem>, ApiError> {
     let t = match type_filter {
@@ -40,13 +42,13 @@ pub async fn list_integrations(
                 .ok_or_else(|| ApiError::bad_request("invalid type filter"))?,
         ),
     };
-    let rows = integrations::list(pool, t).await?;
+    let rows = integrations::list(data, t.map(IntegrationType::as_str)).await?;
     Ok(rows.iter().map(row_to_item).collect())
 }
 
 pub async fn create_integration(
     config: &AppConfig,
-    pool: &SqlitePool,
+    data: &DataHandle,
     body: IntegrationCreateRequest,
 ) -> Result<IntegrationResponse, ApiError> {
     let integration_type = IntegrationType::parse(&body.integration_type)
@@ -81,13 +83,13 @@ pub async fn create_integration(
         .display_name
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| default_display_name(provider).to_string());
-    let sort_order = integrations::max_sort_order(pool, integration_type).await?;
+    let sort_order = integrations::max_sort_order(data, integration_type.as_str()).await?;
 
     let id = integrations::insert(
-        pool,
+        data,
         IntegrationInsert {
-            type_: integration_type,
-            provider,
+            type_: integration_type.as_str(),
+            provider: provider.as_str(),
             display_name: &display_name,
             enabled: body.enabled.unwrap_or(true),
             config_json: &config_json,
@@ -97,7 +99,7 @@ pub async fn create_integration(
     )
     .await?;
 
-    let row = integrations::get_by_id(pool, id)
+    let row = integrations::get_by_id(data, id)
         .await?
         .ok_or_else(|| ApiError::Message("integration not found".into()))?;
     Ok(IntegrationResponse {
@@ -107,11 +109,11 @@ pub async fn create_integration(
 
 pub async fn patch_integration(
     config: &AppConfig,
-    pool: &SqlitePool,
+    data: &DataHandle,
     id: i64,
     body: IntegrationPatchRequest,
 ) -> Result<IntegrationResponse, ApiError> {
-    let existing = integrations::get_by_id(pool, id)
+    let existing = integrations::get_by_id(data, id)
         .await?
         .ok_or_else(|| ApiError::Message("integration not found".into()))?;
     let provider = IntegrationProvider::parse(&existing.provider)
@@ -144,7 +146,7 @@ pub async fn patch_integration(
     };
 
     integrations::update(
-        pool,
+        data,
         id,
         IntegrationUpdate {
             display_name: body.display_name.as_deref(),
@@ -156,7 +158,7 @@ pub async fn patch_integration(
     )
     .await?;
 
-    let row = integrations::get_by_id(pool, id)
+    let row = integrations::get_by_id(data, id)
         .await?
         .ok_or_else(|| ApiError::Message("integration not found".into()))?;
     Ok(IntegrationResponse {
@@ -164,8 +166,8 @@ pub async fn patch_integration(
     })
 }
 
-pub async fn delete_integration(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
-    if !integrations::delete(pool, id).await? {
+pub async fn delete_integration(data: &DataHandle, id: i64) -> Result<(), ApiError> {
+    if !integrations::delete(data, id).await? {
         return Err(ApiError::Message("integration not found".into()));
     }
     Ok(())

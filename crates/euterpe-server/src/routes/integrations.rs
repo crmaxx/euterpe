@@ -25,8 +25,7 @@ pub async fn list_integrations(
     State(state): State<AppState>,
     Query(q): Query<IntegrationsListQuery>,
 ) -> Result<Json<IntegrationsListResponse>, ApiError> {
-    let items =
-        svc::list_integrations(&state.data.sqlx_pool(), q.integration_type.as_deref()).await?;
+    let items = svc::list_integrations(&state.data, q.integration_type.as_deref()).await?;
     Ok(Json(IntegrationsListResponse { items }))
 }
 
@@ -48,7 +47,7 @@ pub async fn create_integration(
     State(state): State<AppState>,
     Json(body): Json<IntegrationCreateRequest>,
 ) -> Result<(StatusCode, Json<IntegrationResponse>), ApiError> {
-    let resp = svc::create_integration(&state.config, &state.data.sqlx_pool(), body).await?;
+    let resp = svc::create_integration(&state.config, &state.data, body).await?;
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
@@ -58,7 +57,7 @@ pub async fn patch_integration(
     Json(body): Json<IntegrationPatchRequest>,
 ) -> Result<Json<IntegrationResponse>, ApiError> {
     Ok(Json(
-        svc::patch_integration(&state.config, &state.data.sqlx_pool(), id, body).await?,
+        svc::patch_integration(&state.config, &state.data, id, body).await?,
     ))
 }
 
@@ -66,7 +65,7 @@ pub async fn delete_integration(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    svc::delete_integration(&state.data.sqlx_pool(), id).await?;
+    svc::delete_integration(&state.data, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

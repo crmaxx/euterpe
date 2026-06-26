@@ -107,7 +107,7 @@ async fn create_list_delete_musicbrainz_integration() {
 async fn metadata_apply_requires_configured_library_storage_before_provider_call() {
     let state = app::test_support::test_state().await;
     app_settings::save_storage(
-        &state.data.sqlx_pool(),
+        &state.data,
         &StorageSettings {
             library: None,
             presets: Vec::new(),
@@ -181,7 +181,7 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
     let config_library_path = state.config.library_path.clone();
     let storage_root = tempfile::tempdir().unwrap();
     app_settings::save_storage(
-        &state.data.sqlx_pool(),
+        &state.data,
         &StorageSettings::local(storage_root.path().display().to_string()),
     )
     .await
