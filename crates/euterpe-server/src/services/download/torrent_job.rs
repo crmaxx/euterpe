@@ -100,7 +100,7 @@ pub async fn run_torrent_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiEr
         .ok_or_else(|| ApiError::Message(format!("job {job_id} missing torrent payload")))?;
 
     let save_dir = PathBuf::from(&payload.save_dir_incoming);
-    let settings = torrent_settings::load(&deps.data.sqlx_pool()).await?;
+    let settings = torrent_settings::load(&deps.data).await?;
     let limits = torrent_settings::to_limits_config(&settings);
 
     let torrent_bytes = if payload.magnet.is_none() {

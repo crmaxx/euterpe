@@ -72,9 +72,8 @@ impl AppState {
             .build()
             .map_err(|e| ApiError::Config(e.to_string()))?;
 
-        let db = data.sqlx_pool();
         let torrent = if let Some(ref dir) = config.torrent_incoming_dir {
-            let settings = crate::services::torrent_settings::load(&db).await?;
+            let settings = crate::services::torrent_settings::load(&data).await?;
             let mut session_settings =
                 crate::services::torrent_settings::to_session_settings(&settings);
             session_settings.enable_upnp_port_forwarding = config.torrent_enable_upnp;

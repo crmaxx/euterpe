@@ -9,7 +9,7 @@ use crate::state::AppState;
 pub async fn get_torrent_settings(
     State(state): State<AppState>,
 ) -> Result<Json<TorrentSettingsResponse>, ApiError> {
-    let settings = torrent_settings::load(&state.data.sqlx_pool()).await?;
+    let settings = torrent_settings::load(&state.data).await?;
     Ok(Json(TorrentSettingsResponse { settings }))
 }
 
@@ -17,7 +17,7 @@ pub async fn patch_torrent_settings(
     State(state): State<AppState>,
     Json(patch): Json<TorrentSettingsPatch>,
 ) -> Result<Json<TorrentSettingsResponse>, ApiError> {
-    let mut settings = torrent_settings::load(&state.data.sqlx_pool()).await?;
+    let mut settings = torrent_settings::load(&state.data).await?;
     if let Some(v) = patch.disable_upload {
         settings.disable_upload = v;
     }
@@ -33,6 +33,6 @@ pub async fn patch_torrent_settings(
             .map_err(|e| ApiError::Message(e.to_string()))?;
     }
 
-    torrent_settings::save(&state.data.sqlx_pool(), &settings).await?;
+    torrent_settings::save(&state.data, &settings).await?;
     Ok(Json(TorrentSettingsResponse { settings }))
 }
