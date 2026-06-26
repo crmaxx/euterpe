@@ -14,7 +14,9 @@ async fn settings_round_trip_insert_update_and_delete() {
         Some("first".to_string())
     );
 
-    settings::set(&handle, "custom.key", "second").await.unwrap();
+    settings::set(&handle, "custom.key", "second")
+        .await
+        .unwrap();
     assert_eq!(
         settings::get(&handle, "custom.key").await.unwrap(),
         Some("second".to_string())

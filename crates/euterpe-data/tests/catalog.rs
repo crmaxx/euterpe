@@ -1,0 +1,174 @@
+use euterpe_data::repositories::catalog::{self, AlbumUpsert, TrackUpsert};
+use euterpe_data::{connect_database, migrations};
+
+#[tokio::test]
+async fn artist_album_and_track_upserts_return_stable_ids() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+
+    let artist_id = catalog::upsert_artist_by_name(&handle, "Artist A", None)
+        .await
+        .unwrap();
+    let artist_again = catalog::upsert_artist_by_name(&handle, "artist a", None)
+        .await
+        .unwrap();
+    assert_eq!(artist_id, artist_again);
+
+    let album_id = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Album",
+            year: Some(2020),
+            qobuz_album_id: Some(10),
+            path: Some("Artist A/Album"),
+            cover_path: Some("cover.jpg"),
+        },
+    )
+    .await
+    .unwrap();
+    let album_again = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Album Updated",
+            year: Some(2021),
+            qobuz_album_id: None,
+            path: Some("Artist A/Album"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(album_id, album_again);
+
+    let album = catalog::get_album_by_id(&handle, album_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(album.title, "Album Updated");
+    assert_eq!(album.qobuz_album_id, Some(10));
+    assert_eq!(album.cover_path.as_deref(), Some("cover.jpg"));
+
+    let track_id = catalog::upsert_track(
+        &handle,
+        TrackUpsert {
+            album_id,
+            title: "Track",
+            track_number: Some(1),
+            year: Some(2021),
+            disc_number: Some(1),
+            genre: Some("Rock"),
+            qobuz_track_id: Some(99),
+            path: "Artist A/Album/01.flac",
+            duration_sec: Some(200),
+            file_mtime: Some("mtime"),
+            file_hash: Some("hash"),
+            file_size: Some(123),
+        },
+    )
+    .await
+    .unwrap();
+    let track_again = catalog::upsert_track(
+        &handle,
+        TrackUpsert {
+            album_id,
+            title: "Track Updated",
+            track_number: Some(1),
+            year: Some(2022),
+            disc_number: Some(1),
+            genre: Some("Jazz"),
+            qobuz_track_id: None,
+            path: "Artist A/Album/01.flac",
+            duration_sec: Some(201),
+            file_mtime: Some("mtime2"),
+            file_hash: Some("hash2"),
+            file_size: Some(456),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(track_id, track_again);
+
+    let track = catalog::get_track_by_id(&handle, track_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(track.title, "Track Updated");
+    assert_eq!(track.qobuz_track_id, Some(99));
+    assert_eq!(track.file_size, Some(456));
+}
+
+#[tokio::test]
+async fn tracks_list_by_album_sorts_by_filename_and_prefix_delete_keeps_siblings() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    let artist_id = catalog::upsert_artist_by_name(&handle, "Artist", None)
+        .await
+        .unwrap();
+    let album_id = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Album",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Artist/Album"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    for (path, title) in [
+        ("Artist/Album/10.flac", "Ten"),
+        ("Artist/Album/02.flac", "Two"),
+        ("Artist/Album/01.flac", "One"),
+        ("Artist/AlbumX/01.flac", "Sibling"),
+    ] {
+        catalog::upsert_track(
+            &handle,
+            TrackUpsert {
+                album_id,
+                title,
+                track_number: None,
+                year: None,
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path,
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let listed = catalog::list_tracks_by_album(&handle, album_id)
+        .await
+        .unwrap();
+    let paths: Vec<_> = listed.iter().map(|track| track.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "Artist/Album/01.flac",
+            "Artist/AlbumX/01.flac",
+            "Artist/Album/02.flac",
+            "Artist/Album/10.flac",
+        ]
+    );
+
+    let deleted = catalog::delete_tracks_by_path_or_prefix(&handle, "Artist/Album")
+        .await
+        .unwrap();
+    assert_eq!(deleted, 3);
+
+    let remaining = catalog::list_tracks_by_album(&handle, album_id)
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].path, "Artist/AlbumX/01.flac");
+}
