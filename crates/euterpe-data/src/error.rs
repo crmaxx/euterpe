@@ -7,5 +7,7 @@ pub enum DataError {
     #[error(transparent)]
     Database(#[from] sqlx::Error),
     #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
     Welds(#[from] welds::WeldsError),
 }

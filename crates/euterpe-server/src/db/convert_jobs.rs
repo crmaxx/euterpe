@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
 use crate::error::ApiError;
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::convert_jobs as data;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConvertJobStatus {
@@ -28,15 +30,6 @@ impl ConvertJobStatus {
 pub enum ConvertTrigger {
     Manual,
     Auto,
-}
-
-impl ConvertTrigger {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Manual => "manual",
-            Self::Auto => "auto",
-        }
-    }
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -66,17 +59,8 @@ pub struct ConvertFileStatus {
 }
 
 pub async fn album_has_active_job(pool: &SqlitePool, album_id: i64) -> Result<bool, ApiError> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        r#"
-        SELECT id FROM convert_jobs
-        WHERE album_id = ? AND status IN ('queued', 'running')
-        LIMIT 1
-        "#,
-    )
-    .bind(album_id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.is_some())
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::album_has_active_job(&handle, album_id).await?)
 }
 
 pub async fn create(
@@ -85,18 +69,14 @@ pub async fn create(
     trigger: ConvertTrigger,
     files_total: i64,
 ) -> Result<i64, ApiError> {
-    let result = sqlx::query(
-        r#"
-        INSERT INTO convert_jobs (album_id, status, trigger, files_total, files_done, progress_pct)
-        VALUES (?, 'queued', ?, ?, 0, 0)
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::create(
+        &handle,
+        album_id,
+        convert_trigger_to_data(trigger),
+        files_total,
     )
-    .bind(album_id)
-    .bind(trigger.as_str())
-    .bind(files_total)
-    .execute(pool)
-    .await?;
-    Ok(result.last_insert_rowid())
+    .await?)
 }
 
 pub async fn enqueue_album_if_needed(
@@ -104,39 +84,18 @@ pub async fn enqueue_album_if_needed(
     album_id: i64,
     files_total: i64,
 ) -> Result<Option<i64>, ApiError> {
-    if album_has_active_job(pool, album_id).await? {
-        return Ok(None);
-    }
-    let id = create(pool, album_id, ConvertTrigger::Auto, files_total).await?;
-    Ok(Some(id))
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::enqueue_album_if_needed(&handle, album_id, files_total).await?)
 }
 
 pub async fn claim_running(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
-    let result = sqlx::query(
-        r#"
-        UPDATE convert_jobs
-        SET status = 'running', updated_at = datetime('now')
-        WHERE id = ? AND status = 'queued'
-        "#,
-    )
-    .bind(id)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() > 0)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::claim_running(&handle, id).await?)
 }
 
 pub async fn next_queued_id(pool: &SqlitePool) -> Result<Option<i64>, ApiError> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        r#"
-        SELECT id FROM convert_jobs
-        WHERE status = 'queued'
-        ORDER BY id ASC
-        LIMIT 1
-        "#,
-    )
-    .fetch_optional(pool)
-    .await?;
-    Ok(row.map(|(id,)| id))
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::next_queued_id(&handle).await?)
 }
 
 pub async fn update_progress(
@@ -147,22 +106,16 @@ pub async fn update_progress(
     progress_pct: f64,
     payload_json: Option<&str>,
 ) -> Result<bool, ApiError> {
-    let result = sqlx::query(
-        r#"
-        UPDATE convert_jobs
-        SET files_done = ?, files_total = ?, progress_pct = ?, payload_json = COALESCE(?, payload_json),
-            updated_at = datetime('now')
-        WHERE id = ? AND status = 'running'
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::update_progress(
+        &handle,
+        id,
+        files_done,
+        files_total,
+        progress_pct,
+        payload_json,
     )
-    .bind(files_done)
-    .bind(files_total)
-    .bind(progress_pct)
-    .bind(payload_json)
-    .bind(id)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected() > 0)
+    .await?)
 }
 
 pub async fn finish(
@@ -172,49 +125,33 @@ pub async fn finish(
     error_message: Option<&str>,
     payload_json: Option<&str>,
 ) -> Result<(), ApiError> {
-    sqlx::query(
-        r#"
-        UPDATE convert_jobs
-        SET status = ?, error_message = ?, payload_json = COALESCE(?, payload_json),
-            progress_pct = CASE WHEN ? = 'success' THEN 100.0 ELSE progress_pct END,
-            updated_at = datetime('now')
-        WHERE id = ?
-        "#,
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    data::finish(
+        &handle,
+        id,
+        convert_status_to_data(status),
+        error_message,
+        payload_json,
     )
-    .bind(status.as_str())
-    .bind(error_message)
-    .bind(payload_json)
-    .bind(status.as_str())
-    .bind(id)
-    .execute(pool)
     .await?;
     Ok(())
 }
 
 pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<ConvertJobRow>, ApiError> {
-    sqlx::query_as::<_, ConvertJobRow>("SELECT * FROM convert_jobs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await
-        .map_err(Into::into)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::get_by_id(&handle, id)
+        .await?
+        .map(convert_row_from_data))
 }
 
 pub async fn latest_for_album(
     pool: &SqlitePool,
     album_id: i64,
 ) -> Result<Option<ConvertJobRow>, ApiError> {
-    sqlx::query_as::<_, ConvertJobRow>(
-        r#"
-        SELECT * FROM convert_jobs
-        WHERE album_id = ?
-        ORDER BY id DESC
-        LIMIT 1
-        "#,
-    )
-    .bind(album_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(Into::into)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::latest_for_album(&handle, album_id)
+        .await?
+        .map(convert_row_from_data))
 }
 
 pub async fn row_to_summary(row: ConvertJobRow) -> Result<crate::api::ConvertJobSummary, ApiError> {
@@ -231,6 +168,39 @@ pub async fn row_to_summary(row: ConvertJobRow) -> Result<crate::api::ConvertJob
         created_at: row.created_at,
         updated_at: row.updated_at,
     })
+}
+
+fn convert_status_to_data(status: ConvertJobStatus) -> data::ConvertJobStatus {
+    match status {
+        ConvertJobStatus::Queued => data::ConvertJobStatus::Queued,
+        ConvertJobStatus::Running => data::ConvertJobStatus::Running,
+        ConvertJobStatus::Success => data::ConvertJobStatus::Success,
+        ConvertJobStatus::Failed => data::ConvertJobStatus::Failed,
+        ConvertJobStatus::Cancelled => data::ConvertJobStatus::Cancelled,
+    }
+}
+
+fn convert_trigger_to_data(trigger: ConvertTrigger) -> data::ConvertTrigger {
+    match trigger {
+        ConvertTrigger::Manual => data::ConvertTrigger::Manual,
+        ConvertTrigger::Auto => data::ConvertTrigger::Auto,
+    }
+}
+
+fn convert_row_from_data(row: data::ConvertJobRow) -> ConvertJobRow {
+    ConvertJobRow {
+        id: row.id,
+        album_id: row.album_id,
+        status: row.status.as_str().to_string(),
+        trigger: row.trigger.as_str().to_string(),
+        files_total: row.files_total,
+        files_done: row.files_done,
+        progress_pct: row.progress_pct,
+        error_message: row.error_message,
+        payload_json: row.payload_json,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
 }
 
 #[cfg(test)]
