@@ -4,6 +4,7 @@ members = [
     "crates/euterpe-cue",
     "crates/euterpe-converter",
     "crates/euterpe-hawk",
+    "crates/euterpe-data",
     "crates/euterpe-qobuz",
     "crates/euterpe-smb",
     "crates/euterpe-torrent",

@@ -1405,6 +1405,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "euterpe-data"
+version = "0.1.0"
+dependencies = [
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "welds",
+]
+
+[[package]]
 name = "euterpe-hawk"
 version = "0.1.0"
 dependencies = [
@@ -1459,6 +1470,7 @@ dependencies = [
  "dotenvy",
  "euterpe-converter",
  "euterpe-cue",
+ "euterpe-data",
  "euterpe-hawk",
  "euterpe-qobuz",
  "euterpe-smb",
@@ -6089,6 +6101,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "welds"
+version = "0.4.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ecf5225c75f268cc8873b1b0a46c06648a68c536e0f3f29df50030898270991"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "colored",
+ "log",
+ "maybe-async",
+ "thiserror 2.0.18",
+ "welds-connections",
+ "welds-macros",
+]
+
+[[package]]
+name = "welds-connections"
+version = "0.4.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6109ec585034a30a074b69213b11417ae34d086e3fc6ac1033f271c5e96598a2"
+dependencies = [
+ "async-trait",
+ "log",
+ "maybe-async",
+ "sqlx",
+]
+
+[[package]]
+name = "welds-macros"
+version = "0.4.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c96661252c028dfd961e1bbe60b7533a8eb5b600681d66f6dbb2ba973575ee2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
