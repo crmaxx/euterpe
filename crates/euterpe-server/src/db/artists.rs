@@ -13,6 +13,11 @@ pub async fn upsert_by_name(
     Ok(catalog::upsert_artist_by_name(&handle, name, qobuz_artist_id).await?)
 }
 
+pub async fn name_by_id(pool: &SqlitePool, id: i64) -> Result<Option<String>, ApiError> {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::get_artist_name_by_id(&handle, id).await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

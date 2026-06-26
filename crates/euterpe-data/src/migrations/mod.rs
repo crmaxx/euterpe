@@ -21,6 +21,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     convert_jobs,
     convert_jobs_active_album_index,
     cue_jobs,
+    scan_keep_paths,
 ];
 
 const APPLIED_MIGRATION_NAMES: &[&str] = &[
@@ -41,6 +42,7 @@ const APPLIED_MIGRATION_NAMES: &[&str] = &[
     "015_convert_jobs",
     "016_convert_jobs_active_album_index",
     "017_cue_jobs",
+    "018_scan_keep_paths",
 ];
 
 pub async fn migrate(handle: &DataHandle) -> Result<()> {
@@ -186,5 +188,12 @@ fn cue_jobs(_: &TableState) -> welds::errors::Result<MigrationStep> {
     manual_step(
         "017_cue_jobs",
         include_str!("../../../../migrations/017_cue_jobs.sql"),
+    )
+}
+
+fn scan_keep_paths(_: &TableState) -> welds::errors::Result<MigrationStep> {
+    manual_step(
+        "018_scan_keep_paths",
+        include_str!("../../../../migrations/018_scan_keep_paths.sql"),
     )
 }

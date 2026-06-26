@@ -2,28 +2,14 @@ use serde_json::json;
 use sqlx::SqlitePool;
 
 use crate::api::keyset::{
-    decode_cursor, ensure_cursor_matches, fingerprint_json, finish_keyset_page, keyset_and_clause,
+    decode_cursor, ensure_cursor_matches, fingerprint_json, finish_keyset_page,
 };
 use crate::api::{KeysetPage, SortKeyKind, SortKeyValue, SortOrder};
 use crate::error::ApiError;
 use euterpe_data::DataHandle;
 use euterpe_data::repositories::catalog;
 
-fn bind_sort_keys<'q, T>(
-    mut query: sqlx::query::QueryAs<'q, sqlx::Sqlite, T, sqlx::sqlite::SqliteArguments<'q>>,
-    binds: &'q [SortKeyValue],
-) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, T, sqlx::sqlite::SqliteArguments<'q>> {
-    for b in binds {
-        query = match b {
-            SortKeyValue::Text(s) => query.bind(s),
-            SortKeyValue::Int(n) => query.bind(n),
-            SortKeyValue::Bool(n) => query.bind(n),
-        };
-    }
-    query
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct AlbumRow {
     pub id: i64,
     pub artist_id: Option<i64>,
@@ -91,27 +77,11 @@ impl AlbumsSort {
         }
     }
 
-    fn sort_sql(self) -> &'static str {
-        match self {
-            Self::Title => "a.title COLLATE NOCASE",
-            Self::Artist => "COALESCE(ar.name, '') COLLATE NOCASE",
-            Self::Year => "COALESCE(a.year, -1)",
-        }
-    }
-
     fn key_kind(self) -> SortKeyKind {
         match self {
             Self::Year => SortKeyKind::Int,
             _ => SortKeyKind::Text,
         }
-    }
-
-    fn order_sql(self, order: SortOrder) -> String {
-        let dir = match order {
-            SortOrder::Asc => "ASC",
-            SortOrder::Desc => "DESC",
-        };
-        format!("{} {dir}, a.id ASC", self.sort_sql())
     }
 
     fn primary_key(self, row: &AlbumListRow) -> SortKeyValue {
@@ -138,9 +108,7 @@ pub async fn list_keyset(
 ) -> Result<KeysetPage<AlbumListRow>, ApiError> {
     let fingerprint = fingerprint_json(&json!({ "q": params.q }));
 
-    let mut keyset_clause = String::new();
-    let mut keyset_binds: Vec<SortKeyValue> = Vec::new();
-    if let Some(ref cursor_str) = params.cursor {
+    let after = if let Some(ref cursor_str) = params.cursor {
         let payload = decode_cursor(cursor_str)?;
         let (primary, tie) = ensure_cursor_matches(
             &payload,
@@ -149,56 +117,32 @@ pub async fn list_keyset(
             &fingerprint,
             params.sort.key_kind(),
         )?;
-        let (clause, binds) =
-            keyset_and_clause(params.order, params.sort.sort_sql(), "a.id", &primary, tie);
-        keyset_clause = clause;
-        keyset_binds = binds;
-    }
+        Some(catalog::AlbumListCursor {
+            primary: album_sort_value_to_data(primary),
+            tie_id: tie,
+        })
+    } else {
+        None
+    };
 
-    let mut search_clause = String::new();
-    let mut search_binds: Vec<String> = Vec::new();
-    if let Some(ref q) = params.q
-        && !q.trim().is_empty()
-    {
-        search_clause = " AND (a.title LIKE ? OR COALESCE(ar.name, '') LIKE ?)".to_string();
-        let pattern = format!("%{}%", q.trim());
-        search_binds.push(pattern.clone());
-        search_binds.push(pattern);
-    }
-
-    let fetch_limit = (params.limit as i64) + 1;
-    let order_by = params.sort.order_sql(params.order);
-    let sql = format!(
-        r#"
-        SELECT
-            a.id,
-            a.title,
-            COALESCE(ar.name, '') AS artist_name,
-            a.year,
-            a.path,
-            a.cover_path,
-            (SELECT COUNT(*) FROM tracks t WHERE t.album_id = a.id) AS track_count
-        FROM albums a
-        LEFT JOIN artists ar ON a.artist_id = ar.id
-        WHERE 1=1
-        {search_clause}
-        {keyset_clause}
-        ORDER BY {order_by}
-        LIMIT ?
-        "#
-    );
-
-    let mut query = sqlx::query_as::<_, AlbumListRow>(&sql);
-    for p in &search_binds {
-        query = query.bind(p);
-    }
-    query = bind_sort_keys(query, &keyset_binds);
-    query = query.bind(fetch_limit);
-
-    let rows: Vec<AlbumListRow> = query.fetch_all(pool).await?;
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    let page = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: album_sort_to_data(params.sort),
+            order: sort_order_to_data(params.order),
+            limit: params.limit as usize + 1,
+            q: params.q.clone(),
+            after,
+        },
+    )
+    .await?;
     let sort = params.sort;
     Ok(finish_keyset_page(
-        rows,
+        page.items
+            .into_iter()
+            .map(album_list_row_from_data)
+            .collect(),
         params.limit as usize,
         sort.as_str(),
         params.order,
@@ -207,7 +151,7 @@ pub async fn list_keyset(
     ))
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct AlbumListRow {
     pub id: i64,
     pub title: String,
@@ -268,6 +212,41 @@ fn album_row_from_data(row: catalog::AlbumRow) -> AlbumRow {
         qobuz_album_id: row.qobuz_album_id,
         path: row.path,
         cover_path: row.cover_path,
+    }
+}
+
+fn album_list_row_from_data(row: catalog::AlbumListRow) -> AlbumListRow {
+    AlbumListRow {
+        id: row.id,
+        title: row.title,
+        artist_name: row.artist_name,
+        year: row.year,
+        path: row.path,
+        cover_path: row.cover_path,
+        track_count: row.track_count,
+    }
+}
+
+fn album_sort_to_data(sort: AlbumsSort) -> catalog::AlbumListSort {
+    match sort {
+        AlbumsSort::Title => catalog::AlbumListSort::Title,
+        AlbumsSort::Artist => catalog::AlbumListSort::Artist,
+        AlbumsSort::Year => catalog::AlbumListSort::Year,
+    }
+}
+
+fn sort_order_to_data(order: SortOrder) -> catalog::AlbumListOrder {
+    match order {
+        SortOrder::Asc => catalog::AlbumListOrder::Asc,
+        SortOrder::Desc => catalog::AlbumListOrder::Desc,
+    }
+}
+
+fn album_sort_value_to_data(value: SortKeyValue) -> catalog::AlbumListSortValue {
+    match value {
+        SortKeyValue::Text(value) => catalog::AlbumListSortValue::Text(value),
+        SortKeyValue::Int(value) => catalog::AlbumListSortValue::Int(value),
+        SortKeyValue::Bool(value) => catalog::AlbumListSortValue::Int(value as i64),
     }
 }
 

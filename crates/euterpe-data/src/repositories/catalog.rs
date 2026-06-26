@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::connection::DataHandle;
@@ -65,6 +67,58 @@ pub struct TrackMetadataUpdate<'a> {
     pub file_mtime: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlbumListSort {
+    Title,
+    Artist,
+    Year,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlbumListOrder {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AlbumListSortValue {
+    Text(String),
+    Int(i64),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlbumListCursor {
+    pub primary: AlbumListSortValue,
+    pub tie_id: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlbumListParams {
+    pub sort: AlbumListSort,
+    pub order: AlbumListOrder,
+    pub limit: usize,
+    pub q: Option<String>,
+    pub after: Option<AlbumListCursor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlbumListRow {
+    pub id: i64,
+    pub title: String,
+    pub artist_name: String,
+    pub year: Option<i32>,
+    pub path: Option<String>,
+    pub cover_path: Option<String>,
+    pub track_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlbumListPage {
+    pub items: Vec<AlbumListRow>,
+    pub next_after: Option<AlbumListCursor>,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackHashBackfillRow {
     pub id: i64,
@@ -118,6 +172,15 @@ struct Track {
     updated_at: String,
 }
 
+#[derive(Debug, WeldsModel)]
+#[welds(table = "scan_keep_paths")]
+struct ScanKeepPath {
+    #[welds(primary_key)]
+    scan_id: i64,
+    #[welds(primary_key)]
+    path: String,
+}
+
 pub async fn upsert_artist_by_name(
     handle: &DataHandle,
     name: &str,
@@ -152,6 +215,12 @@ pub async fn upsert_artist_by_name(
     artist.created_at = now;
     artist.save(handle.client()).await?;
     Ok(artist.id)
+}
+
+pub async fn get_artist_name_by_id(handle: &DataHandle, id: i64) -> Result<Option<String>> {
+    Ok(Artist::find_by_id(handle.client(), id)
+        .await?
+        .map(|artist| artist.name.clone()))
 }
 
 pub async fn upsert_album(handle: &DataHandle, album: AlbumUpsert<'_>) -> Result<i64> {
@@ -202,6 +271,78 @@ pub async fn get_album_by_id(handle: &DataHandle, id: i64) -> Result<Option<Albu
             path: album.path.clone(),
             cover_path: album.cover_path.clone(),
         }))
+}
+
+pub async fn list_albums_keyset(
+    handle: &DataHandle,
+    params: AlbumListParams,
+) -> Result<AlbumListPage> {
+    let artist_names = Artist::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .map(|artist| (artist.id, artist.name.clone()))
+        .collect::<HashMap<_, _>>();
+
+    let mut track_counts = HashMap::<i64, i64>::new();
+    for track in Track::all().run(handle.client()).await? {
+        *track_counts.entry(track.album_id).or_default() += 1;
+    }
+
+    let query = params
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .map(|q| q.to_lowercase());
+
+    let mut rows = Album::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .map(|album| {
+            let artist_name = album
+                .artist_id
+                .and_then(|id| artist_names.get(&id).cloned())
+                .unwrap_or_default();
+            AlbumListRow {
+                id: album.id,
+                title: album.title.clone(),
+                artist_name,
+                year: album.year,
+                path: album.path.clone(),
+                cover_path: album.cover_path.clone(),
+                track_count: track_counts.get(&album.id).copied().unwrap_or_default(),
+            }
+        })
+        .filter(|album| {
+            query.as_ref().is_none_or(|q| {
+                album.title.to_lowercase().contains(q)
+                    || album.artist_name.to_lowercase().contains(q)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    rows.sort_by(|left, right| compare_album_list_rows(left, right, params.sort, params.order));
+
+    if let Some(after) = params.after.as_ref() {
+        rows.retain(|row| album_row_is_after_cursor(row, params.sort, params.order, after));
+    }
+
+    let has_more = rows.len() > params.limit;
+    rows.truncate(params.limit);
+    let next_after = has_more
+        .then(|| {
+            rows.last()
+                .map(|row| album_cursor_for_row(row, params.sort))
+        })
+        .flatten();
+
+    Ok(AlbumListPage {
+        items: rows,
+        next_after,
+        has_more,
+    })
 }
 
 pub async fn set_album_cover_path(handle: &DataHandle, id: i64, cover_path: &str) -> Result<bool> {
@@ -390,6 +531,76 @@ pub async fn delete_tracks_by_path_or_prefix(handle: &DataHandle, path: &str) ->
     Ok(deleted)
 }
 
+pub async fn delete_absent_in_scope(
+    handle: &DataHandle,
+    scope_path: Option<&str>,
+    keep_paths: &[String],
+) -> Result<u64> {
+    let keep = keep_paths
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    delete_tracks_missing_from_scope_keep_set(handle, scope_path, &keep).await
+}
+
+pub async fn reset_scan_keep_paths(handle: &DataHandle, scan_id: i64) -> Result<()> {
+    for mut keep in ScanKeepPath::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter(|keep| keep.scan_id == scan_id)
+    {
+        keep.delete(handle.client()).await?;
+    }
+    Ok(())
+}
+
+pub async fn record_scan_keep_path(handle: &DataHandle, scan_id: i64, path: &str) -> Result<()> {
+    let exists = ScanKeepPath::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .any(|keep| keep.scan_id == scan_id && keep.path == path);
+    if exists {
+        return Ok(());
+    }
+
+    let mut keep = ScanKeepPath::new();
+    keep.scan_id = scan_id;
+    keep.path = path.to_string();
+    keep.save(handle.client()).await?;
+    Ok(())
+}
+
+pub async fn delete_absent_in_scope_for_scan(
+    handle: &DataHandle,
+    scope_path: Option<&str>,
+    scan_id: i64,
+) -> Result<u64> {
+    let keep = ScanKeepPath::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter(|keep| keep.scan_id == scan_id)
+        .map(|keep| keep.path.clone())
+        .collect::<HashSet<_>>();
+    let keep_refs = keep.iter().map(String::as_str).collect::<HashSet<_>>();
+    delete_tracks_missing_from_scope_keep_set(handle, scope_path, &keep_refs).await
+}
+
+pub async fn cleanup_scan_keep_paths(handle: &DataHandle, scan_id: i64) -> Result<()> {
+    reset_scan_keep_paths(handle, scan_id).await
+}
+
+pub async fn scan_keep_path_count(handle: &DataHandle, scan_id: i64) -> Result<usize> {
+    Ok(ScanKeepPath::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter(|keep| keep.scan_id == scan_id)
+        .count())
+}
+
 pub async fn list_tracks_needing_file_hash_batch(
     handle: &DataHandle,
     after_id: i64,
@@ -425,6 +636,30 @@ pub async fn set_track_file_hash(handle: &DataHandle, id: i64, file_hash: &str) 
     track.updated_at = sqlite_timestamp();
     track.save(handle.client()).await?;
     Ok(true)
+}
+
+pub async fn set_track_file_size(handle: &DataHandle, id: i64, file_size: i64) -> Result<bool> {
+    let Some(mut track) = Track::find_by_id(handle.client(), id).await? else {
+        return Ok(false);
+    };
+    track.file_size = Some(file_size);
+    track.updated_at = sqlite_timestamp();
+    track.save(handle.client()).await?;
+    Ok(true)
+}
+
+pub async fn count_tracks(handle: &DataHandle) -> Result<usize> {
+    Ok(Track::all().run(handle.client()).await?.len())
+}
+
+pub async fn count_distinct_track_paths(handle: &DataHandle) -> Result<usize> {
+    Ok(Track::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .map(|track| track.path.clone())
+        .collect::<HashSet<_>>()
+        .len())
 }
 
 pub async fn update_track_path_fingerprint(
@@ -495,6 +730,97 @@ fn track_row_from_model(track: welds::state::DbState<Track>) -> TrackRow {
         file_mtime: track.file_mtime.clone(),
         file_hash: track.file_hash.clone(),
         file_size: track.file_size,
+    }
+}
+
+async fn delete_tracks_missing_from_scope_keep_set(
+    handle: &DataHandle,
+    scope_path: Option<&str>,
+    keep_paths: &HashSet<&str>,
+) -> Result<u64> {
+    let scope = normalized_scope(scope_path);
+    let mut deleted = 0;
+    for mut track in Track::all().run(handle.client()).await? {
+        if path_in_scope(&track.path, &scope) && !keep_paths.contains(track.path.as_str()) {
+            track.delete(handle.client()).await?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
+fn compare_album_list_rows(
+    left: &AlbumListRow,
+    right: &AlbumListRow,
+    sort: AlbumListSort,
+    order: AlbumListOrder,
+) -> Ordering {
+    let primary = compare_album_primary(left, right, sort);
+    let ordered = match order {
+        AlbumListOrder::Asc => primary,
+        AlbumListOrder::Desc => primary.reverse(),
+    };
+    ordered.then_with(|| left.id.cmp(&right.id))
+}
+
+fn compare_album_primary(
+    left: &AlbumListRow,
+    right: &AlbumListRow,
+    sort: AlbumListSort,
+) -> Ordering {
+    match sort {
+        AlbumListSort::Title => left.title.to_lowercase().cmp(&right.title.to_lowercase()),
+        AlbumListSort::Artist => left
+            .artist_name
+            .to_lowercase()
+            .cmp(&right.artist_name.to_lowercase()),
+        AlbumListSort::Year => left.year.unwrap_or(-1).cmp(&right.year.unwrap_or(-1)),
+    }
+}
+
+fn album_row_is_after_cursor(
+    row: &AlbumListRow,
+    sort: AlbumListSort,
+    order: AlbumListOrder,
+    cursor: &AlbumListCursor,
+) -> bool {
+    let primary_cmp =
+        compare_album_sort_value(&album_sort_value_for_row(row, sort), &cursor.primary);
+    match order {
+        AlbumListOrder::Asc => {
+            primary_cmp == Ordering::Greater
+                || (primary_cmp == Ordering::Equal && row.id > cursor.tie_id)
+        }
+        AlbumListOrder::Desc => {
+            primary_cmp == Ordering::Less
+                || (primary_cmp == Ordering::Equal && row.id > cursor.tie_id)
+        }
+    }
+}
+
+fn album_cursor_for_row(row: &AlbumListRow, sort: AlbumListSort) -> AlbumListCursor {
+    AlbumListCursor {
+        primary: album_sort_value_for_row(row, sort),
+        tie_id: row.id,
+    }
+}
+
+fn album_sort_value_for_row(row: &AlbumListRow, sort: AlbumListSort) -> AlbumListSortValue {
+    match sort {
+        AlbumListSort::Title => AlbumListSortValue::Text(row.title.clone()),
+        AlbumListSort::Artist => AlbumListSortValue::Text(row.artist_name.clone()),
+        AlbumListSort::Year => AlbumListSortValue::Int(row.year.unwrap_or(-1) as i64),
+    }
+}
+
+fn compare_album_sort_value(left: &AlbumListSortValue, right: &AlbumListSortValue) -> Ordering {
+    match (left, right) {
+        (AlbumListSortValue::Text(left), AlbumListSortValue::Text(right)) => {
+            left.to_lowercase().cmp(&right.to_lowercase())
+        }
+        (AlbumListSortValue::Int(left), AlbumListSortValue::Int(right)) => left.cmp(right),
+        (AlbumListSortValue::Text(_), AlbumListSortValue::Int(_)) => Ordering::Less,
+        (AlbumListSortValue::Int(_), AlbumListSortValue::Text(_)) => Ordering::Greater,
     }
 }
 

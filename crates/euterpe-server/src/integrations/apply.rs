@@ -41,12 +41,7 @@ pub async fn build_lookup_context(
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let db_artist = if let Some(aid) = album.artist_id {
-        sqlx::query_as::<_, (String,)>("SELECT name FROM artists WHERE id = ?")
-            .bind(aid)
-            .fetch_optional(pool)
-            .await?
-            .map(|(n,)| n)
-            .unwrap_or_default()
+        artists::name_by_id(pool, aid).await?.unwrap_or_default()
     } else {
         String::new()
     };

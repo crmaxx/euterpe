@@ -2055,16 +2055,8 @@ mod tests {
         .unwrap();
         assert_eq!(page.items.len(), 2);
 
-        let track_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tracks")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(track_count.0, 2);
-        let distinct_paths: (i64,) = sqlx::query_as("SELECT COUNT(DISTINCT path) FROM tracks")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(distinct_paths.0, 2);
+        assert_eq!(tracks::count(&pool).await.unwrap(), 2);
+        assert_eq!(tracks::count_distinct_paths(&pool).await.unwrap(), 2);
     }
 
     #[tokio::test]

@@ -156,70 +156,13 @@ pub async fn delete_absent_in_scope(
     scope_path: Option<&str>,
     keep_paths: &[String],
 ) -> Result<u64, ApiError> {
-    let scope = normalized_scope(scope_path);
-    let mut conn = pool.acquire().await?;
-    sqlx::query(
-        r#"
-        CREATE TEMP TABLE IF NOT EXISTS euterpe_scan_keep_paths (
-            path TEXT PRIMARY KEY
-        )
-        "#,
-    )
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query("DELETE FROM euterpe_scan_keep_paths")
-        .execute(&mut *conn)
-        .await?;
-    for path in keep_paths {
-        sqlx::query("INSERT OR IGNORE INTO euterpe_scan_keep_paths (path) VALUES (?)")
-            .bind(path)
-            .execute(&mut *conn)
-            .await?;
-    }
-
-    let mut sql = String::from("DELETE FROM tracks WHERE ");
-    if scope.is_empty() {
-        sql.push_str("1=1");
-    } else {
-        sql.push_str("(path = ? OR (path >= ? AND path < ?))");
-    }
-    sql.push_str(
-        " AND NOT EXISTS (SELECT 1 FROM euterpe_scan_keep_paths keep WHERE keep.path = tracks.path)",
-    );
-
-    let mut query = sqlx::query(&sql);
-    if !scope.is_empty() {
-        let (lower, upper) = path_prefix_bounds(&scope);
-        query = query.bind(scope).bind(lower).bind(upper);
-    }
-    let affected = query.execute(&mut *conn).await?.rows_affected();
-    sqlx::query("DELETE FROM euterpe_scan_keep_paths")
-        .execute(&mut *conn)
-        .await?;
-    Ok(affected)
-}
-
-async fn ensure_scan_keep_paths_table(pool: &SqlitePool) -> Result<(), ApiError> {
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS scan_keep_paths (
-            scan_id INTEGER NOT NULL,
-            path TEXT NOT NULL,
-            PRIMARY KEY (scan_id, path)
-        )
-        "#,
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::delete_absent_in_scope(&handle, scope_path, keep_paths).await?)
 }
 
 pub async fn reset_scan_keep_paths(pool: &SqlitePool, scan_id: i64) -> Result<(), ApiError> {
-    ensure_scan_keep_paths_table(pool).await?;
-    sqlx::query("DELETE FROM scan_keep_paths WHERE scan_id = ?")
-        .bind(scan_id)
-        .execute(pool)
-        .await?;
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    catalog::reset_scan_keep_paths(&handle, scan_id).await?;
     Ok(())
 }
 
@@ -228,12 +171,8 @@ pub async fn record_scan_keep_path(
     scan_id: i64,
     path: &str,
 ) -> Result<(), ApiError> {
-    ensure_scan_keep_paths_table(pool).await?;
-    sqlx::query("INSERT OR IGNORE INTO scan_keep_paths (scan_id, path) VALUES (?, ?)")
-        .bind(scan_id)
-        .bind(path)
-        .execute(pool)
-        .await?;
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    catalog::record_scan_keep_path(&handle, scan_id, path).await?;
     Ok(())
 }
 
@@ -242,55 +181,14 @@ pub async fn delete_absent_in_scope_for_scan(
     scope_path: Option<&str>,
     scan_id: i64,
 ) -> Result<u64, ApiError> {
-    ensure_scan_keep_paths_table(pool).await?;
-    let scope = normalized_scope(scope_path);
-    let mut sql = String::from("DELETE FROM tracks WHERE ");
-    if scope.is_empty() {
-        sql.push_str("1=1");
-    } else {
-        sql.push_str("(path = ? OR (path >= ? AND path < ?))");
-    }
-    sql.push_str(
-        " AND NOT EXISTS (SELECT 1 FROM scan_keep_paths keep \
-         WHERE keep.scan_id = ? AND keep.path = tracks.path)",
-    );
-
-    let mut query = sqlx::query(&sql);
-    if !scope.is_empty() {
-        let (lower, upper) = path_prefix_bounds(&scope);
-        query = query.bind(scope).bind(lower).bind(upper);
-    }
-    let affected = query.bind(scan_id).execute(pool).await?.rows_affected();
-    Ok(affected)
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::delete_absent_in_scope_for_scan(&handle, scope_path, scan_id).await?)
 }
 
 pub async fn cleanup_scan_keep_paths(pool: &SqlitePool, scan_id: i64) -> Result<(), ApiError> {
-    ensure_scan_keep_paths_table(pool).await?;
-    sqlx::query("DELETE FROM scan_keep_paths WHERE scan_id = ?")
-        .bind(scan_id)
-        .execute(pool)
-        .await?;
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    catalog::cleanup_scan_keep_paths(&handle, scan_id).await?;
     Ok(())
-}
-
-fn normalized_scope(scope_path: Option<&str>) -> String {
-    scope_path
-        .unwrap_or_default()
-        .trim()
-        .trim_matches('/')
-        .to_string()
-}
-
-pub(crate) fn path_prefix_bounds(path: &str) -> (String, String) {
-    let lower = format!("{}/", path.trim_end_matches('/'));
-    let mut upper = lower.clone().into_bytes();
-    if let Some(last) = upper.last_mut() {
-        *last = last.saturating_add(1);
-    }
-    (
-        lower,
-        String::from_utf8(upper).expect("path prefix upper bound remains valid UTF-8"),
-    )
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -325,6 +223,24 @@ pub async fn set_file_hash(pool: &SqlitePool, id: i64, file_hash: &str) -> Resul
         return Err(ApiError::Message("track not found".into()));
     }
     Ok(())
+}
+
+pub async fn set_file_size(pool: &SqlitePool, id: i64, file_size: i64) -> Result<(), ApiError> {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    if !catalog::set_track_file_size(&handle, id, file_size).await? {
+        return Err(ApiError::Message("track not found".into()));
+    }
+    Ok(())
+}
+
+pub async fn count(pool: &SqlitePool) -> Result<usize, ApiError> {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::count_tracks(&handle).await?)
+}
+
+pub async fn count_distinct_paths(pool: &SqlitePool) -> Result<usize, ApiError> {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(catalog::count_distinct_track_paths(&handle).await?)
 }
 
 pub async fn update_path_fingerprint(
@@ -617,36 +533,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn path_prefix_delete_plan_uses_tracks_path_index() {
-        let pool = connect("sqlite::memory:").await.unwrap();
-        migrate(&pool).await.unwrap();
-        let (lower, upper) = path_prefix_bounds("Artist/Album");
-        let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
-            "EXPLAIN QUERY PLAN DELETE FROM tracks WHERE path = ? OR (path >= ? AND path < ?)",
-        )
-        .bind("Artist/Album")
-        .bind(lower)
-        .bind(upper)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        let details = plan
-            .into_iter()
-            .map(|(_, _, _, detail)| detail)
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(
-            details.contains("idx_tracks_path"),
-            "expected idx_tracks_path in query plan, got:\n{details}"
-        );
-        assert!(
-            !details.contains("SCAN tracks"),
-            "path prefix prune should not scan tracks, got:\n{details}"
-        );
-    }
-
-    #[tokio::test]
     async fn list_needing_file_hash_batch_pages_by_id() {
         let pool = connect("sqlite::memory:").await.unwrap();
         migrate(&pool).await.unwrap();
@@ -855,12 +741,8 @@ mod tests {
 
         assert_eq!(deleted, 1);
         cleanup_scan_keep_paths(&pool, 42).await.unwrap();
-        let remaining_keep_rows: (i64,) =
-            sqlx::query_as("SELECT COUNT(*) FROM scan_keep_paths WHERE scan_id = 42")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(remaining_keep_rows.0, 0);
+        let handle = DataHandle::from_sqlite_pool(pool.clone());
+        assert_eq!(catalog::scan_keep_path_count(&handle, 42).await.unwrap(), 0);
         let rows = list_by_album(&pool, album_id).await.unwrap();
         let paths: Vec<_> = rows.into_iter().map(|row| row.path).collect();
         assert_eq!(paths, vec!["A/Al/01.flac", "A/AlbumX/stale.flac"]);

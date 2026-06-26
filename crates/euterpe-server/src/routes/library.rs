@@ -193,11 +193,8 @@ pub async fn get_library_album(
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let artist_name = if let Some(aid) = album.artist_id {
-        sqlx::query_as::<_, (String,)>("SELECT name FROM artists WHERE id = ?")
-            .bind(aid)
-            .fetch_optional(&state.db)
+        artists::name_by_id(&state.db, aid)
             .await?
-            .map(|(n,)| n)
             .unwrap_or_default()
     } else {
         String::new()
@@ -302,11 +299,7 @@ pub async fn patch_library_album_tags(
         )
         .await?;
         if let Some(file_size) = file_size {
-            sqlx::query("UPDATE tracks SET file_size = ? WHERE id = ?")
-                .bind(file_size)
-                .bind(track.id)
-                .execute(&state.db)
-                .await?;
+            tracks::set_file_size(&state.db, track.id, file_size).await?;
         }
     }
 
@@ -523,11 +516,7 @@ pub async fn patch_library_track_tags(
     )
     .await?;
     if let Some(file_size) = file_size {
-        sqlx::query("UPDATE tracks SET file_size = ? WHERE id = ?")
-            .bind(file_size)
-            .bind(id)
-            .execute(&state.db)
-            .await?;
+        tracks::set_file_size(&state.db, id, file_size).await?;
     }
 
     let detail = track_detail(&state, id).await?;

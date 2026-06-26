@@ -9,6 +9,13 @@ async fn artist_album_and_track_upserts_return_stable_ids() {
     let artist_id = catalog::upsert_artist_by_name(&handle, "Artist A", None)
         .await
         .unwrap();
+    assert_eq!(
+        catalog::get_artist_name_by_id(&handle, artist_id)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("Artist A")
+    );
     let artist_again = catalog::upsert_artist_by_name(&handle, "artist a", None)
         .await
         .unwrap();
@@ -412,14 +419,21 @@ async fn track_helpers_update_fingerprint_metadata_path_and_hash_batches() {
             .await
             .unwrap()
     );
-    assert_eq!(
-        catalog::get_track_by_id(&handle, track_id)
+    assert!(
+        catalog::set_track_file_size(&handle, track_id, 300)
             .await
             .unwrap()
-            .unwrap()
-            .file_hash
-            .as_deref(),
-        Some("hash2")
+    );
+    let hashed = catalog::get_track_by_id(&handle, track_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(hashed.file_hash.as_deref(), Some("hash2"));
+    assert_eq!(hashed.file_size, Some(300));
+    assert_eq!(catalog::count_tracks(&handle).await.unwrap(), 1);
+    assert_eq!(
+        catalog::count_distinct_track_paths(&handle).await.unwrap(),
+        1
     );
 
     assert_eq!(
@@ -505,4 +519,214 @@ async fn track_album_or_path_prefix_listing_includes_moved_album_tracks() {
         .map(|track| track.path.as_str())
         .collect::<Vec<_>>();
     assert_eq!(paths, ["Artist/Album/01.flac", "Artist/Album/02.flac"]);
+}
+
+#[tokio::test]
+async fn album_keyset_listing_filters_sorts_and_counts_tracks() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    let alpha_artist = catalog::upsert_artist_by_name(&handle, "Alpha Artist", None)
+        .await
+        .unwrap();
+    let beta_artist = catalog::upsert_artist_by_name(&handle, "Beta Artist", None)
+        .await
+        .unwrap();
+
+    let alpha = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(alpha_artist),
+            title: "Zeta",
+            year: Some(2020),
+            qobuz_album_id: None,
+            path: Some("Alpha/Zeta"),
+            cover_path: Some("zeta.jpg"),
+        },
+    )
+    .await
+    .unwrap();
+    let beta = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(beta_artist),
+            title: "Beta",
+            year: Some(2021),
+            qobuz_album_id: None,
+            path: Some("Beta/Beta"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let gamma = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(alpha_artist),
+            title: "Gamma",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Alpha/Gamma"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    for (album_id, path) in [(alpha, "Alpha/Zeta/01.flac"), (beta, "Beta/Beta/01.flac")] {
+        catalog::upsert_track(
+            &handle,
+            TrackUpsert {
+                album_id,
+                title: path,
+                track_number: None,
+                year: None,
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path,
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    let first = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::Title,
+            order: catalog::AlbumListOrder::Asc,
+            limit: 2,
+            q: None,
+            after: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(first.has_more);
+    assert_eq!(
+        first
+            .items
+            .iter()
+            .map(|album| album.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Beta", "Gamma"]
+    );
+
+    let next = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::Title,
+            order: catalog::AlbumListOrder::Asc,
+            limit: 2,
+            q: None,
+            after: first.next_after,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!next.has_more);
+    assert_eq!(next.items[0].id, alpha);
+    assert_eq!(next.items[0].track_count, 1);
+    assert_eq!(next.items[0].cover_path.as_deref(), Some("zeta.jpg"));
+
+    let artist_filtered = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::Year,
+            order: catalog::AlbumListOrder::Desc,
+            limit: 10,
+            q: Some("alpha artist".to_string()),
+            after: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        artist_filtered
+            .items
+            .iter()
+            .map(|album| album.id)
+            .collect::<Vec<_>>(),
+        [alpha, gamma]
+    );
+}
+
+#[tokio::test]
+async fn scan_keep_paths_prune_absent_tracks_and_cleanup_records() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    let artist_id = catalog::upsert_artist_by_name(&handle, "Artist", None)
+        .await
+        .unwrap();
+    let album_id = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Album",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Artist/Album"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    for path in [
+        "Artist/Album/01.flac",
+        "Artist/Album/stale.flac",
+        "Artist/AlbumX/stale.flac",
+    ] {
+        catalog::upsert_track(
+            &handle,
+            TrackUpsert {
+                album_id,
+                title: path,
+                track_number: None,
+                year: None,
+                disc_number: None,
+                genre: None,
+                qobuz_track_id: None,
+                path,
+                duration_sec: None,
+                file_mtime: None,
+                file_hash: None,
+                file_size: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    catalog::reset_scan_keep_paths(&handle, 7).await.unwrap();
+    catalog::record_scan_keep_path(&handle, 7, "Artist/Album/01.flac")
+        .await
+        .unwrap();
+    catalog::record_scan_keep_path(&handle, 7, "Artist/Album/01.flac")
+        .await
+        .unwrap();
+
+    let deleted = catalog::delete_absent_in_scope_for_scan(&handle, Some("Artist/Album"), 7)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+    assert_eq!(catalog::scan_keep_path_count(&handle, 7).await.unwrap(), 1);
+
+    catalog::cleanup_scan_keep_paths(&handle, 7).await.unwrap();
+    assert_eq!(catalog::scan_keep_path_count(&handle, 7).await.unwrap(), 0);
+
+    let remaining = catalog::list_tracks_by_album(&handle, album_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining
+            .iter()
+            .map(|track| track.path.as_str())
+            .collect::<Vec<_>>(),
+        ["Artist/Album/01.flac", "Artist/AlbumX/stale.flac"]
+    );
 }
