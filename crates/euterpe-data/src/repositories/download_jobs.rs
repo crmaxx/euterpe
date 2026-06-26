@@ -1,7 +1,7 @@
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use welds::WeldsModel;
+use welds::prelude::*;
 
 use crate::connection::DataHandle;
 use crate::error::{DataError, Result};
@@ -276,12 +276,17 @@ pub async fn adjust_queue_priority(
     id: i64,
     direction: PriorityDirection,
 ) -> Result<()> {
-    let mut jobs = DownloadJob::all().run(handle.client()).await?;
+    let tx = handle
+        .client()
+        .begin()
+        .await
+        .map_err(welds::WeldsError::from)?;
+    let mut jobs = DownloadJob::all().run(&tx).await?;
     let Some(current_index) = jobs.iter().position(|job| job.id == id) else {
-        return Err(DataError::Config(format!("job {id} not found")));
+        return Err(DataError::InvalidOperation(format!("job {id} not found")));
     };
     if jobs[current_index].status != DownloadJobStatus::Queued.as_str() {
-        return Err(DataError::Config(
+        return Err(DataError::InvalidOperation(
             "only queued jobs can be reordered".to_string(),
         ));
     }
@@ -312,23 +317,24 @@ pub async fn adjust_queue_priority(
     let current_position = jobs[current_index].queue_position;
     let neighbor_position = jobs[neighbor_index].queue_position;
     jobs[current_index].queue_position = neighbor_position;
-    jobs[current_index].save(handle.client()).await?;
+    jobs[current_index].save(&tx).await?;
     jobs[neighbor_index].queue_position = current_position;
-    jobs[neighbor_index].save(handle.client()).await?;
+    jobs[neighbor_index].save(&tx).await?;
+    tx.commit().await.map_err(welds::WeldsError::from)?;
     Ok(())
 }
 
 pub async fn claim_running(handle: &DataHandle, id: i64) -> Result<bool> {
-    let Some(mut job) = DownloadJob::find_by_id(handle.client(), id).await? else {
-        return Ok(false);
-    };
-    if job.status != DownloadJobStatus::Queued.as_str() {
-        return Ok(false);
-    }
-    job.status = DownloadJobStatus::Running.as_str().to_string();
-    job.updated_at = sqlite_timestamp();
-    job.save(handle.client()).await?;
-    Ok(true)
+    let updated = DownloadJob::where_col(|job| job.id.equal(id))
+        .where_col(|job| job.status.equal(DownloadJobStatus::Queued.as_str()))
+        .set(
+            |job| job.status,
+            DownloadJobStatus::Running.as_str().to_string(),
+        )
+        .set(|job| job.updated_at, sqlite_timestamp())
+        .run(handle.client())
+        .await?;
+    Ok(updated == 1)
 }
 
 pub async fn is_cancelled(handle: &DataHandle, id: i64) -> Result<bool> {
@@ -354,7 +360,7 @@ pub async fn is_stopped(handle: &DataHandle, id: i64) -> Result<bool> {
 
 pub async fn pause(handle: &DataHandle, id: i64) -> Result<()> {
     let Some(mut job) = DownloadJob::find_by_id(handle.client(), id).await? else {
-        return Err(DataError::Config(
+        return Err(DataError::InvalidOperation(
             "only queued or running jobs can be paused".to_string(),
         ));
     };
@@ -362,7 +368,7 @@ pub async fn pause(handle: &DataHandle, id: i64) -> Result<()> {
         DownloadJobStatus::parse(&job.status),
         Some(DownloadJobStatus::Queued | DownloadJobStatus::Running)
     ) {
-        return Err(DataError::Config(
+        return Err(DataError::InvalidOperation(
             "only queued or running jobs can be paused".to_string(),
         ));
     }
@@ -375,12 +381,12 @@ pub async fn pause(handle: &DataHandle, id: i64) -> Result<()> {
 
 pub async fn resume_paused(handle: &DataHandle, id: i64) -> Result<()> {
     let Some(mut job) = DownloadJob::find_by_id(handle.client(), id).await? else {
-        return Err(DataError::Config(
+        return Err(DataError::InvalidOperation(
             "only paused jobs can be resumed".to_string(),
         ));
     };
     if job.status != DownloadJobStatus::Paused.as_str() {
-        return Err(DataError::Config(
+        return Err(DataError::InvalidOperation(
             "only paused jobs can be resumed".to_string(),
         ));
     }
@@ -479,10 +485,10 @@ pub async fn delete_by_id(handle: &DataHandle, id: i64) -> Result<bool> {
 
 pub async fn retry_failed(handle: &DataHandle, id: i64) -> Result<()> {
     let Some(mut job) = DownloadJob::find_by_id(handle.client(), id).await? else {
-        return Err(DataError::Config(format!("job {id} not found")));
+        return Err(DataError::InvalidOperation(format!("job {id} not found")));
     };
     if job.status != DownloadJobStatus::Failed.as_str() {
-        return Err(DataError::Config(
+        return Err(DataError::InvalidOperation(
             "only failed jobs can be retried".to_string(),
         ));
     }

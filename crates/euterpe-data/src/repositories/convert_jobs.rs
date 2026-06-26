@@ -1,4 +1,4 @@
-use welds::WeldsModel;
+use welds::prelude::*;
 
 use crate::connection::DataHandle;
 use crate::error::{DataError, Result};
@@ -112,7 +112,7 @@ pub async fn create(
     files_total: i64,
 ) -> Result<i64> {
     if album_has_active_job(handle, album_id).await? {
-        return Err(DataError::Config(
+        return Err(DataError::InvalidOperation(
             "active convert job already exists for album".to_string(),
         ));
     }
@@ -146,16 +146,16 @@ pub async fn enqueue_album_if_needed(
 }
 
 pub async fn claim_running(handle: &DataHandle, id: i64) -> Result<bool> {
-    let Some(mut job) = ConvertJob::find_by_id(handle.client(), id).await? else {
-        return Ok(false);
-    };
-    if job.status != ConvertJobStatus::Queued.as_str() {
-        return Ok(false);
-    }
-    job.status = ConvertJobStatus::Running.as_str().to_string();
-    job.updated_at = sqlite_timestamp();
-    job.save(handle.client()).await?;
-    Ok(true)
+    let updated = ConvertJob::where_col(|job| job.id.equal(id))
+        .where_col(|job| job.status.equal(ConvertJobStatus::Queued.as_str()))
+        .set(
+            |job| job.status,
+            ConvertJobStatus::Running.as_str().to_string(),
+        )
+        .set(|job| job.updated_at, sqlite_timestamp())
+        .run(handle.client())
+        .await?;
+    Ok(updated == 1)
 }
 
 pub async fn next_queued_id(handle: &DataHandle) -> Result<Option<i64>> {

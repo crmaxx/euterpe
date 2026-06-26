@@ -36,6 +36,7 @@ impl From<euterpe_data::DataError> for ApiError {
     fn from(value: euterpe_data::DataError) -> Self {
         match value {
             euterpe_data::DataError::Config(message) => ApiError::Config(message),
+            euterpe_data::DataError::InvalidOperation(message) => ApiError::Message(message),
             euterpe_data::DataError::Database(error) => ApiError::Db(error),
             euterpe_data::DataError::Json(error) => ApiError::Message(error.to_string()),
             euterpe_data::DataError::Welds(error) => ApiError::Message(error.to_string()),

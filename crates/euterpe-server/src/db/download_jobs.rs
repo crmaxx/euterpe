@@ -653,6 +653,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(next_torrent, Some(c));
+
+        let mut album_positions = Vec::new();
+        for id in [a, b] {
+            album_positions.push(get(&pool, id).await.unwrap().unwrap().queue_position);
+        }
+        album_positions.sort_unstable();
+        album_positions.dedup();
+        assert_eq!(album_positions.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn invalid_lifecycle_operations_are_bad_requests() {
+        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
+        crate::db::migrate(&pool).await.unwrap();
+
+        let queued = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resume_paused(&pool, queued).await.unwrap_err().status(),
+            axum::http::StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            retry_failed(&pool, queued).await.unwrap_err().status(),
+            axum::http::StatusCode::BAD_REQUEST
+        );
+
+        claim_running(&pool, queued).await.unwrap();
+        assert_eq!(
+            adjust_queue_priority(&pool, queued, PriorityDirection::Up)
+                .await
+                .unwrap_err()
+                .status(),
+            axum::http::StatusCode::BAD_REQUEST
+        );
+
+        finish_success(&pool, queued).await.unwrap();
+        assert_eq!(
+            pause(&pool, queued).await.unwrap_err().status(),
+            axum::http::StatusCode::BAD_REQUEST
+        );
     }
 
     #[tokio::test]

@@ -10,6 +10,63 @@ async fn migrated_handle() -> DataHandle {
     handle
 }
 
+async fn migrated_file_handle() -> (tempfile::TempDir, DataHandle) {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("jobs.sqlite");
+    let handle = connect_database(&format!("sqlite:{}", db_path.display()))
+        .await
+        .unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    (temp, handle)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn download_claim_running_has_one_winner_for_concurrent_claims() {
+    let (_temp, handle) = migrated_file_handle().await;
+    let id = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(1),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    let contender = handle.clone();
+
+    let (first, second) = tokio::join!(
+        download_jobs::claim_running(&handle, id),
+        download_jobs::claim_running(&contender, id)
+    );
+
+    let winners = [first.unwrap(), second.unwrap()]
+        .into_iter()
+        .filter(|claimed| *claimed)
+        .count();
+    assert_eq!(winners, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn convert_claim_running_has_one_winner_for_concurrent_claims() {
+    let (_temp, handle) = migrated_file_handle().await;
+    let album_id = seed_album(&handle).await.unwrap();
+    let id = convert_jobs::create(&handle, album_id, convert_jobs::ConvertTrigger::Manual, 1)
+        .await
+        .unwrap();
+    let contender = handle.clone();
+
+    let (first, second) = tokio::join!(
+        convert_jobs::claim_running(&handle, id),
+        convert_jobs::claim_running(&contender, id)
+    );
+
+    let winners = [first.unwrap(), second.unwrap()]
+        .into_iter()
+        .filter(|claimed| *claimed)
+        .count();
+    assert_eq!(winners, 1);
+}
+
 #[tokio::test]
 async fn download_queue_priority_swaps_within_job_type() {
     let handle = migrated_handle().await;
@@ -80,6 +137,69 @@ async fn download_queue_priority_swaps_within_job_type() {
             .await
             .unwrap(),
         Some(torrent)
+    );
+
+    let mut album_positions = Vec::new();
+    for id in [first, second] {
+        album_positions.push(
+            download_jobs::get_by_id(&handle, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .queue_position,
+        );
+    }
+    album_positions.sort_unstable();
+    album_positions.dedup();
+    assert_eq!(album_positions.len(), 2);
+}
+
+#[tokio::test]
+async fn download_lifecycle_validation_errors_are_not_configuration_errors() {
+    let handle = migrated_handle().await;
+    let queued = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(1),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+
+    let resume_error = download_jobs::resume_paused(&handle, queued)
+        .await
+        .unwrap_err();
+    assert!(
+        !resume_error.to_string().contains("configuration"),
+        "{resume_error}"
+    );
+
+    let retry_error = download_jobs::retry_failed(&handle, queued)
+        .await
+        .unwrap_err();
+    assert!(
+        !retry_error.to_string().contains("configuration"),
+        "{retry_error}"
+    );
+
+    assert!(download_jobs::claim_running(&handle, queued).await.unwrap());
+    let reorder_error =
+        download_jobs::adjust_queue_priority(&handle, queued, download_jobs::PriorityDirection::Up)
+            .await
+            .unwrap_err();
+    assert!(
+        !reorder_error.to_string().contains("configuration"),
+        "{reorder_error}"
+    );
+
+    download_jobs::finish_success(&handle, queued)
+        .await
+        .unwrap();
+    let pause_error = download_jobs::pause(&handle, queued).await.unwrap_err();
+    assert!(
+        !pause_error.to_string().contains("configuration"),
+        "{pause_error}"
     );
 }
 
