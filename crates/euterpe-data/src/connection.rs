@@ -11,6 +11,12 @@ pub struct DataHandle {
 }
 
 impl DataHandle {
+    pub fn from_sqlite_pool(pool: sqlx::SqlitePool) -> Self {
+        Self {
+            client: SqliteClient::from(pool),
+        }
+    }
+
     pub async fn connect(database_url: &str) -> Result<Self> {
         ensure_db_parent_dir(database_url)?;
         let url = database_url.strip_prefix("sqlite:").unwrap_or(database_url);
