@@ -208,17 +208,12 @@ pub async fn consume_sole_pending_oauth_state(handle: &DataHandle) -> Result<Opt
 }
 
 pub async fn consume_oauth_state(handle: &DataHandle, state: &str) -> Result<bool> {
-    let now = Utc::now();
-    let Some(mut row) = QobuzOauthState::all()
-        .run(handle.client())
-        .await?
-        .into_iter()
-        .find(|row| row.state == state && !oauth_state_is_expired(&row.expires_at, now))
-    else {
-        return Ok(false);
-    };
-    row.delete(handle.client()).await?;
-    Ok(true)
+    let affected = QobuzOauthState::all()
+        .where_col(|row| row.state.equal(state))
+        .where_manual(|row| row.expires_at, " >= ?", (Utc::now().to_rfc3339(),))
+        .delete(handle.client())
+        .await?;
+    Ok(affected > 0)
 }
 
 pub async fn get_sync_run_by_id(

@@ -1,11 +1,21 @@
 use chrono::{Duration, Utc};
 use euterpe_data::repositories::qobuz;
 use euterpe_data::{connect_database, migrations};
+use std::sync::{Arc, Barrier};
 
 async fn migrated_handle() -> euterpe_data::DataHandle {
     let handle = connect_database("sqlite::memory:").await.unwrap();
     migrations::migrate(&handle).await.unwrap();
     handle
+}
+
+async fn migrated_file_handle() -> (tempfile::TempDir, euterpe_data::DataHandle) {
+    let tempdir = tempfile::tempdir().unwrap();
+    let db_path = tempdir.path().join("qobuz.sqlite");
+    let database_url = format!("sqlite:{}", db_path.display());
+    let handle = connect_database(&database_url).await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    (tempdir, handle)
 }
 
 #[tokio::test]
@@ -111,6 +121,37 @@ async fn oauth_states_purge_and_consume_only_valid_pending_rows_once() {
             .await
             .unwrap()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn consume_oauth_state_allows_only_one_concurrent_success() {
+    let (_tempdir, handle) = migrated_file_handle().await;
+    let state = "concurrent-oauth-state";
+
+    qobuz::insert_oauth_state(&handle, state, Utc::now() + Duration::minutes(5))
+        .await
+        .unwrap();
+
+    let barrier = Arc::new(Barrier::new(8));
+    let tasks = (0..8)
+        .map(|_| {
+            let barrier = Arc::clone(&barrier);
+            let handle = handle.clone();
+            tokio::spawn(async move {
+                barrier.wait();
+                qobuz::consume_oauth_state(&handle, state).await.unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut successes = 0;
+    for task in tasks {
+        if task.await.unwrap() {
+            successes += 1;
+        }
+    }
+
+    assert_eq!(successes, 1);
 }
 
 #[tokio::test]
