@@ -361,7 +361,7 @@ pub async fn put_library_album_cover(
         .map(str::to_string);
     let storage = state.library_storage().await?;
     let result = covers::write_album_cover_from_bytes_storage(
-        &state.data.sqlx_pool(),
+        &state.data,
         storage.as_ref(),
         id,
         album_rel,

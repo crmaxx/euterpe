@@ -1,6 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use euterpe_data::repositories::integrations as data_integrations;
 use serde::Deserialize;
 
 use crate::api::{
@@ -74,14 +75,14 @@ pub async fn album_metadata_lookup(
     Path(album_id): Path<i64>,
     Json(body): Json<AlbumMetadataLookupRequest>,
 ) -> Result<Json<AlbumMetadataLookupResponse>, ApiError> {
-    let row = crate::db::integrations::get_by_id(&state.data.sqlx_pool(), body.integration_id)
+    let row = data_integrations::get_by_id(&state.data, body.integration_id)
         .await?
         .ok_or_else(|| ApiError::Message("integration not found".into()))?;
     if row.enabled == 0 {
         return Err(ApiError::bad_request("integration is disabled"));
     }
     let provider = build_tag_source(&row, state.config.master_key.as_ref())?;
-    let ctx = build_lookup_context(&state.data.sqlx_pool(), album_id).await?;
+    let ctx = build_lookup_context(&state.data, album_id).await?;
     let page = body.page.max(1);
     let result = provider.lookup_album(&ctx, page).await?;
     Ok(Json(AlbumMetadataLookupResponse {
@@ -96,7 +97,7 @@ pub async fn album_metadata_apply(
     Path(album_id): Path<i64>,
     Json(body): Json<AlbumMetadataApplyRequest>,
 ) -> Result<Json<AlbumMetadataApplyResponse>, ApiError> {
-    let row = crate::db::integrations::get_by_id(&state.data.sqlx_pool(), body.integration_id)
+    let row = data_integrations::get_by_id(&state.data, body.integration_id)
         .await?
         .ok_or_else(|| ApiError::Message("integration not found".into()))?;
     if row.enabled == 0 {
@@ -107,7 +108,7 @@ pub async fn album_metadata_apply(
     let release = provider.load_release(&body.candidate_id).await?;
     let result = apply::apply_release_to_album(
         &apply::ApplyStorageDeps { storage },
-        &state.data.sqlx_pool(),
+        &state.data,
         &state.http,
         album_id,
         &release,

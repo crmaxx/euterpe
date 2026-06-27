@@ -3,6 +3,8 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use bytes::Bytes;
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::catalog;
 use euterpe_qobuz::Image;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
@@ -322,7 +324,7 @@ pub async fn write_album_cover_file_storage(
 }
 
 pub async fn write_album_cover_from_bytes_storage(
-    pool: &sqlx::SqlitePool,
+    data: &DataHandle,
     storage: &dyn LibraryStorage,
     album_id: i64,
     album_rel: &str,
@@ -338,10 +340,10 @@ pub async fn write_album_cover_from_bytes_storage(
         },
     )
     .await?;
-    albums::set_cover_path(pool, album_id, &result.cover_path).await?;
+    catalog::set_album_cover_path(data, album_id, &result.cover_path).await?;
 
     let mut tracks_embedded = 0u32;
-    let track_rows = tracks::list_by_album(pool, album_id).await?;
+    let track_rows = catalog::list_tracks_by_album(data, album_id).await?;
     for t in track_rows {
         let rel = StoragePath::parse(&t.path)?;
         if storage.metadata(&rel).await.is_ok() {

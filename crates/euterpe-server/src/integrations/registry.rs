@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use euterpe_data::repositories::integrations::IntegrationRow;
 use serde_json::Value;
 
 use crate::crypto::MasterKey;
-use crate::db::integrations::IntegrationRow;
 use crate::error::ApiError;
 use crate::integrations::catalog::{IntegrationProvider, IntegrationType};
 use crate::integrations::discogs::DiscogsProvider;

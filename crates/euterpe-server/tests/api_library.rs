@@ -12,7 +12,7 @@ async fn use_settings_local_storage(
     root: &std::path::Path,
 ) {
     app_settings::save_storage(
-        &state.data.sqlx_pool(),
+        &state.data,
         &StorageSettings::local(root.display().to_string()),
     )
     .await

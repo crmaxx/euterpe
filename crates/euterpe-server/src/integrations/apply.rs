@@ -1,10 +1,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::catalog;
 use reqwest::Client;
-use sqlx::SqlitePool;
 
-use crate::db::{albums, artists, tracks};
 use crate::error::ApiError;
 use crate::integrations::types::{AlbumLookupContext, AlbumLookupTrack, AlbumMetadataRelease};
 use crate::library::covers;
@@ -34,18 +34,20 @@ fn path_hints_for_album(
 }
 
 pub async fn build_lookup_context(
-    pool: &SqlitePool,
+    data: &DataHandle,
     album_id: i64,
 ) -> Result<AlbumLookupContext, ApiError> {
-    let album = albums::get_by_id(pool, album_id)
+    let album = catalog::get_album_by_id(data, album_id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let db_artist = if let Some(aid) = album.artist_id {
-        artists::name_by_id(pool, aid).await?.unwrap_or_default()
+        catalog::get_artist_name_by_id(data, aid)
+            .await?
+            .unwrap_or_default()
     } else {
         String::new()
     };
-    let track_rows = tracks::list_by_album(pool, album_id).await?;
+    let track_rows = catalog::list_tracks_by_album(data, album_id).await?;
     let track_paths: Vec<String> = track_rows.iter().map(|t| t.path.clone()).collect();
     let path_hints = path_hints_for_album(album.path.as_deref(), &track_paths);
 
@@ -93,12 +95,12 @@ pub struct ApplyStorageDeps {
 
 pub async fn apply_release_to_album(
     deps: &ApplyStorageDeps,
-    pool: &SqlitePool,
+    data: &DataHandle,
     http: &Client,
     album_id: i64,
     release: &AlbumMetadataRelease,
 ) -> Result<ApplyAlbumMetadataResult, ApiError> {
-    let album = albums::get_by_id(pool, album_id)
+    let album = catalog::get_album_by_id(data, album_id)
         .await?
         .ok_or_else(|| ApiError::Message("album not found".into()))?;
     let album_rel = album
@@ -117,7 +119,7 @@ pub async fn apply_release_to_album(
         return Err(ApiError::bad_request("album directory not found on disk"));
     }
 
-    let track_rows = tracks::list_by_album(pool, album_id).await?;
+    let track_rows = catalog::list_tracks_by_album(data, album_id).await?;
     let mut tracks_updated = 0u32;
     let mut warnings = Vec::new();
 
@@ -156,10 +158,10 @@ pub async fn apply_release_to_album(
         };
         let updated = apply_patch(&current, &patch);
         tags::write_tags_storage(deps.storage.as_ref(), &track_path, &updated).await?;
-        tracks::update_metadata(
-            pool,
+        catalog::update_track_metadata(
+            data,
             db_track.id,
-            tracks::TrackMetadataUpdate {
+            catalog::TrackMetadataUpdate {
                 title: &meta.title,
                 track_number: meta.track_number.map(|n| n as i32),
                 year: meta.year.map(|y| y as i32).or(release.year),
@@ -174,17 +176,17 @@ pub async fn apply_release_to_album(
 
     let mut cover_applied = false;
     if let Some(ref url) = release.cover_url {
-        match apply_cover(http, pool, deps.storage.as_ref(), album_rel, album_id, url).await {
+        match apply_cover(http, data, deps.storage.as_ref(), album_rel, album_id, url).await {
             Ok(()) => cover_applied = true,
             Err(e) => warnings.push(format!("cover: {e}")),
         }
     }
 
     if release.artist_name != "unknown" && !release.artist_name.is_empty() {
-        let artist_id = artists::upsert_by_name(pool, &release.artist_name, None).await?;
-        let _ = albums::upsert(
-            pool,
-            albums::AlbumUpsert {
+        let artist_id = catalog::upsert_artist_by_name(data, &release.artist_name, None).await?;
+        let _ = catalog::upsert_album(
+            data,
+            catalog::AlbumUpsert {
                 artist_id: Some(artist_id),
                 title: &release.title,
                 year: release.year,
@@ -261,7 +263,7 @@ fn match_track<'a>(
 
 async fn apply_cover(
     http: &Client,
-    pool: &SqlitePool,
+    data: &DataHandle,
     storage: &dyn LibraryStorage,
     album_rel: &str,
     album_id: i64,
@@ -284,7 +286,7 @@ async fn apply_cover(
         .await
         .map_err(|e| ApiError::Message(e.to_string()))?;
     covers::write_album_cover_from_bytes_storage(
-        pool,
+        data,
         storage,
         album_id,
         album_rel,
@@ -303,10 +305,11 @@ mod tests {
         ApplyStorageDeps, apply_release_to_album, existing_track_storage_path, match_track,
         path_hints_for_album,
     };
-    use crate::db::{albums, tracks};
     use crate::integrations::types::{AlbumMetadataRelease, AlbumMetadataTrack};
     use crate::library::storage::{LocalStorage, StoragePath};
     use crate::library::tags::{self, TrackTags};
+    use euterpe_data::repositories::catalog;
+    use euterpe_data::{connect_database, migrations};
 
     fn meta_tracks() -> Vec<AlbumMetadataTrack> {
         vec![
@@ -434,8 +437,8 @@ mod tests {
 
     #[tokio::test]
     async fn apply_release_writes_track_tags_through_storage() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         let storage = Arc::new(LocalStorage::new(dir.path()));
         let track_rel = "Apply Artist/Apply Album/01 - Old.wav";
@@ -461,9 +464,9 @@ mod tests {
             },
         )
         .unwrap();
-        let album_id = albums::upsert(
-            &pool,
-            albums::AlbumUpsert {
+        let album_id = catalog::upsert_album(
+            &data,
+            catalog::AlbumUpsert {
                 artist_id: None,
                 title: "Apply Album",
                 year: None,
@@ -474,9 +477,9 @@ mod tests {
         )
         .await
         .unwrap();
-        let track_id = tracks::upsert(
-            &pool,
-            tracks::TrackUpsert {
+        let track_id = catalog::upsert_track(
+            &data,
+            catalog::TrackUpsert {
                 album_id,
                 title: "Old",
                 track_number: Some(1),
@@ -512,7 +515,7 @@ mod tests {
             &ApplyStorageDeps {
                 storage: storage.clone(),
             },
-            &pool,
+            &data,
             &reqwest::Client::new(),
             album_id,
             &release,
@@ -529,7 +532,10 @@ mod tests {
         assert_eq!(updated.title, "New Title");
         assert_eq!(updated.album, "Apply Album Remastered");
         assert_eq!(updated.genre.as_deref(), Some("Post Rock"));
-        let row = tracks::get_by_id(&pool, track_id).await.unwrap().unwrap();
+        let row = catalog::get_track_by_id(&data, track_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(row.title, "New Title");
         assert_eq!(row.year, Some(2024));
     }
