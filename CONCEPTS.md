@@ -31,7 +31,29 @@ Storage Watch is allowed to degrade when a backend cannot provide reliable notif
 
 ## Library Ingestion
 
+### Library Scan
+The process that reconciles Library Storage with the catalog of known artists, albums, tracks, covers, and media metadata.
+
+Library Scan may run against the whole library or a subtree. Its outcome depends on persisted catalog effects, not only on discovering files or advancing progress counters.
+
+### Scan Run
+A persisted execution record for a Library Scan, including its lifecycle state and progress counters.
+
+Scan Run terminal states are monotonic from the caller's point of view: once a run is cancelled or otherwise terminal, later worker progress or completion attempts should not make it running or successful again.
+
 ### Torrent Import
 The process that moves completed torrent payloads from the local incoming area into Library Storage and then schedules the library work required to index the imported media.
 
 Torrent Import is not complete just because files were copied. When it requires a follow-up scan, that scan's terminal state is part of the import outcome.
+
+## Data Layer
+
+### First-Party Data Layer
+The project-owned boundary for application database access, migrations, and typed test fixtures.
+
+First-party code should call this layer for persisted application data instead of constructing database operations directly in routes, workers, services, or tests.
+
+### Welds Data Layer
+The First-Party Data Layer implementation backed by Welds ORM in crate `euterpe-data`.
+
+The Welds Data Layer keeps existing SQLite data compatible while project-owned database behavior lives behind typed models, repositories, migrations, and fixtures.

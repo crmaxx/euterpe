@@ -5,14 +5,13 @@ use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
 use bytes::Bytes;
 
+use euterpe_data::repositories::download_jobs::{self, DownloadJobType};
 use euterpe_torrent::TorrentEngine;
 
-use crate::api::DownloadJobType;
 use crate::api::{
     CreateDownloadResponse, TorrentConfirmRequest, TorrentInspectMagnetRequest,
     TorrentInspectResponse,
 };
-use crate::db::download_jobs;
 use crate::error::ApiError;
 use crate::services::download::payload::{DownloadJobPayload, TorrentJobPayload};
 use crate::services::torrent_staging::StagingEntry;
@@ -293,9 +292,9 @@ pub async fn confirm_torrent(
     };
 
     let job_id = download_jobs::insert_queued(
-        &state.db,
+        &state.data,
         DownloadJobType::Torrent,
-        0,
+        None,
         0,
         Some(&DownloadJobPayload {
             torrent: Some(payload),
@@ -316,13 +315,13 @@ pub async fn confirm_torrent(
             .map_err(|e| ApiError::Message(e.to_string()))?;
     }
 
-    let mut payload = download_jobs::get_payload(&state.db, job_id)
+    let mut payload = download_jobs::get_payload::<DownloadJobPayload>(&state.data, job_id)
         .await?
         .and_then(|p| p.torrent)
         .ok_or_else(|| ApiError::Message("torrent payload missing after insert".into()))?;
     payload.save_dir_incoming = job_dir.display().to_string();
     download_jobs::set_payload(
-        &state.db,
+        &state.data,
         job_id,
         &DownloadJobPayload {
             torrent: Some(payload),

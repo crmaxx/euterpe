@@ -9,6 +9,10 @@ use axum::http::Request;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use euterpe_data::{
+    connect_database, migrations as data_migrations,
+    repositories::{favorites, qobuz as qobuz_runs},
+};
 use reqwest::Client;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
@@ -19,13 +23,13 @@ use crate::library::covers::MAX_ALBUM_COVER_BYTES;
 use tracing::Level;
 
 use crate::api::{
-    HealthResponse, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest,
-    QobuzSyncLatestResponse, QobuzSyncResponse, QobuzTestLoginRequest, QobuzTestLoginResponse,
-    ServerInfoResponse, StorageLocationView, StorageSettingsView,
+    HealthResponse, QobuzFavoriteItem, QobuzFavoritesListResponse, QobuzFavoritesMutateRequest,
+    QobuzSyncLatestResponse, QobuzSyncResponse, QobuzSyncRunSummary, QobuzTestLoginRequest,
+    QobuzTestLoginResponse, ServerInfoResponse, SortKeyKind, SortKeyValue, SortOrder,
+    StorageLocationView, StorageSettingsView,
 };
 use crate::config::AppConfig;
 use crate::credentials;
-use crate::db::{self, favorites, sync_runs};
 use crate::error::ApiError;
 use crate::middleware;
 use crate::openapi;
@@ -285,8 +289,8 @@ pub async fn serve(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.ensure_torrent_incoming_dir()?;
 
-    let pool = db::connect(&config.database_url).await?;
-    db::migrate(&pool).await?;
+    let data = connect_database(&config.database_url).await?;
+    data_migrations::migrate(&data).await?;
 
     let (job_tx, job_rx) = mpsc::channel(32);
     let (convert_job_tx, convert_job_rx) = mpsc::channel(32);
@@ -298,7 +302,7 @@ pub async fn serve(
     let config = Arc::new(config);
     let state = AppState::new(
         (*config).clone(),
-        pool.clone(),
+        data.clone(),
         AppChannels {
             job_tx: job_tx.clone(),
             convert_job_tx: convert_job_tx.clone(),
@@ -312,7 +316,7 @@ pub async fn serve(
     state.storage_watch.restart().await;
 
     let worker_deps = WorkerDeps {
-        pool: pool.clone(),
+        data: data.clone(),
         qobuz: Arc::clone(&state.qobuz),
         config: Arc::clone(&state.config),
         runtime: state.runtime.clone(),
@@ -333,7 +337,7 @@ pub async fn serve(
     spawn_worker(job_rx, worker_deps);
 
     let convert_deps = ConvertWorkerDeps {
-        pool: pool.clone(),
+        data: data.clone(),
         config: Arc::clone(&state.config),
         runtime: state.runtime.clone(),
         events: convert_events,
@@ -367,7 +371,7 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn server_info(State(state): State<AppState>) -> Result<Json<ServerInfoResponse>, ApiError> {
-    let credentials_configured = credentials::load_active(&state.config, &state.db)
+    let credentials_configured = credentials::load_active(&state.config, &state.data)
         .await?
         .is_some();
     let runtime = state.runtime.read().await;
@@ -418,7 +422,9 @@ fn public_server_storage_view(location: StorageLocationView) -> StorageLocationV
 async fn qobuz_sync_latest(
     State(state): State<AppState>,
 ) -> Result<Json<QobuzSyncLatestResponse>, ApiError> {
-    let run = sync_runs::latest(&state.db).await?;
+    let run = qobuz_runs::sync_latest(&state.data)
+        .await?
+        .map(qobuz_sync_run_from_data);
     Ok(Json(QobuzSyncLatestResponse { run }))
 }
 
@@ -445,7 +451,7 @@ async fn qobuz_sync_handler(
 ) -> Result<Json<QobuzSyncResponse>, ApiError> {
     tracing::debug!("POST /api/v1/qobuz/sync");
     state.require_credentials().await?;
-    let resp = qobuz_sync::run(&state.db, Arc::clone(&state.qobuz)).await?;
+    let resp = qobuz_sync::run(&state.data, Arc::clone(&state.qobuz)).await?;
     tracing::debug!(
         run_id = resp.run_id,
         albums_total = resp.albums_total,
@@ -486,31 +492,41 @@ async fn list_favorites(
     if q.entity_type != "album" {
         return Err(ApiError::bad_request("only type=album is supported"));
     }
-    use crate::api::SortOrder;
     use crate::api::keyset::parse_limit;
-    use crate::db::favorites::{FavoritesListParams, FavoritesSort};
 
     let limit = parse_limit(q.limit, 50, 500)?;
-    let sort = FavoritesSort::parse(&q.sort)?;
+    let sort = favorites::FavoritesSort::parse(&q.sort)?;
     let order = match q.order.as_deref() {
-        None => SortOrder::Asc,
-        Some(s) => SortOrder::parse(s)?,
+        None => favorites::SortOrder::Asc,
+        Some("asc") => favorites::SortOrder::Asc,
+        Some("desc") => favorites::SortOrder::Desc,
+        Some(_) => return Err(ApiError::bad_request("order must be asc or desc")),
     };
+    let fingerprint = qobuz_favorites_fingerprint(q.q.as_ref(), q.in_library);
+    let after = decode_qobuz_favorites_cursor(&q, sort, order, &fingerprint)?;
     let page = favorites::list_albums_keyset(
-        &state.db,
-        FavoritesListParams {
+        &state.data,
+        favorites::FavoritesListParams {
             sort,
             order,
-            limit,
+            limit: limit as usize,
             q: q.q,
             in_library: q.in_library,
-            cursor: q.cursor,
+            after,
         },
     )
     .await?;
+    let next_cursor = page
+        .next_after
+        .as_ref()
+        .map(|cursor| encode_qobuz_favorites_cursor(sort, order, &fingerprint, cursor));
     Ok(Json(QobuzFavoritesListResponse {
-        items: page.items,
-        next_cursor: page.next_cursor,
+        items: page
+            .items
+            .into_iter()
+            .map(qobuz_favorite_item_from_data)
+            .collect(),
+        next_cursor,
         has_more: page.has_more,
     }))
 }
@@ -528,7 +544,7 @@ async fn add_favorites(
         guard.favorite_add_albums(&body.album_ids).await?;
     }
     for &id in &body.album_ids {
-        favorites::upsert_album(&state.db, id, "", "", None, None).await?;
+        favorites::upsert_album(&state.data, id, "", "", None, None).await?;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -545,18 +561,132 @@ async fn remove_favorites(
         let guard = state.qobuz.lock().await;
         guard.favorite_remove_albums(&body.album_ids).await?;
     }
-    favorites::mark_albums_removed(&state.db, &body.album_ids).await?;
+    favorites::mark_albums_removed(&state.data, &body.album_ids).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn qobuz_favorites_fingerprint(q: Option<&String>, in_library: Option<bool>) -> String {
+    crate::api::keyset::fingerprint_json(&serde_json::json!({
+        "q": q,
+        "in_library": in_library,
+    }))
+}
+
+fn decode_qobuz_favorites_cursor(
+    query: &FavoritesQuery,
+    sort: favorites::FavoritesSort,
+    order: favorites::SortOrder,
+    fingerprint: &str,
+) -> Result<Option<favorites::FavoriteListCursor>, ApiError> {
+    let Some(cursor_str) = query.cursor.as_deref() else {
+        return Ok(None);
+    };
+    let api_order = api_sort_order(order);
+    let payload = crate::api::keyset::decode_cursor(cursor_str)?;
+    let (primary, tie_qobuz_id) = crate::api::keyset::ensure_cursor_matches(
+        &payload,
+        data_favorite_sort_str(sort),
+        api_order,
+        fingerprint,
+        favorite_sort_key_kind(sort),
+    )?;
+    Ok(Some(favorites::FavoriteListCursor {
+        primary: data_favorite_sort_value(primary),
+        tie_qobuz_id,
+    }))
+}
+
+fn encode_qobuz_favorites_cursor(
+    sort: favorites::FavoritesSort,
+    order: favorites::SortOrder,
+    fingerprint: &str,
+    cursor: &favorites::FavoriteListCursor,
+) -> String {
+    crate::api::keyset::encode_cursor(
+        data_favorite_sort_str(sort),
+        api_sort_order(order),
+        fingerprint,
+        &api_favorite_sort_value(&cursor.primary),
+        cursor.tie_qobuz_id,
+    )
+}
+
+fn data_favorite_sort_str(sort: favorites::FavoritesSort) -> &'static str {
+    match sort {
+        favorites::FavoritesSort::Title => "title",
+        favorites::FavoritesSort::Artist => "artist",
+        favorites::FavoritesSort::InLibrary => "in_library",
+    }
+}
+
+fn favorite_sort_key_kind(sort: favorites::FavoritesSort) -> SortKeyKind {
+    match sort {
+        favorites::FavoritesSort::InLibrary => SortKeyKind::Bool,
+        favorites::FavoritesSort::Title | favorites::FavoritesSort::Artist => SortKeyKind::Text,
+    }
+}
+
+fn api_sort_order(order: favorites::SortOrder) -> SortOrder {
+    match order {
+        favorites::SortOrder::Asc => SortOrder::Asc,
+        favorites::SortOrder::Desc => SortOrder::Desc,
+    }
+}
+
+fn data_favorite_sort_value(value: SortKeyValue) -> favorites::FavoriteSortValue {
+    match value {
+        SortKeyValue::Text(text) => favorites::FavoriteSortValue::Text(text),
+        SortKeyValue::Bool(value) => favorites::FavoriteSortValue::Bool(value),
+        SortKeyValue::Int(value) => favorites::FavoriteSortValue::Text(value.to_string()),
+    }
+}
+
+fn api_favorite_sort_value(value: &favorites::FavoriteSortValue) -> SortKeyValue {
+    match value {
+        favorites::FavoriteSortValue::Text(text) => SortKeyValue::Text(text.clone()),
+        favorites::FavoriteSortValue::Bool(value) => SortKeyValue::Bool(*value),
+    }
+}
+
+fn qobuz_favorite_item_from_data(row: favorites::QobuzFavoriteAlbum) -> QobuzFavoriteItem {
+    QobuzFavoriteItem {
+        album_api_id: row.album_api_id,
+        qobuz_id: row.qobuz_id,
+        title: row.title,
+        artist_name: row.artist_name,
+        in_library: row.in_library,
+        local_album_id: row.local_album_id,
+        local_cover_path: row.local_cover_path,
+        cover_url: row.cover_url,
+    }
+}
+
+fn qobuz_sync_run_from_data(row: qobuz_runs::QobuzSyncRunSummary) -> QobuzSyncRunSummary {
+    QobuzSyncRunSummary {
+        id: row.id,
+        status: row.status,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        albums_total: row.albums_total,
+        albums_added: row.albums_added,
+        albums_removed: row.albums_removed,
+        error_message: row.error_message,
+    }
 }
 
 pub mod test_support {
     use super::*;
-    use crate::db;
     use crate::services::download::{WorkerDeps, spawn_worker};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_CONFIG_ID: AtomicU64 = AtomicU64::new(0);
 
     fn test_config() -> AppConfig {
-        let library_path =
-            std::env::temp_dir().join(format!("euterpe-server-test-{}", std::process::id()));
+        let id = TEST_CONFIG_ID.fetch_add(1, Ordering::Relaxed);
+        let library_path = std::env::temp_dir().join(format!(
+            "euterpe-server-test-{}-{id}",
+            std::process::id()
+        ));
         AppConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             database_url: "sqlite::memory:".into(),
@@ -579,10 +709,10 @@ pub mod test_support {
 
     async fn test_state_inner(with_worker: bool) -> AppState {
         let config = test_config();
-        let pool = db::connect(&config.database_url).await.unwrap();
-        db::migrate(&pool).await.unwrap();
+        let data = connect_database(&config.database_url).await.unwrap();
+        data_migrations::migrate(&data).await.unwrap();
         crate::services::app_settings::save_storage(
-            &pool,
+            &data,
             &crate::services::app_settings::StorageSettings::local(
                 config.library_path.display().to_string(),
             ),
@@ -598,7 +728,7 @@ pub mod test_support {
 
         let state = AppState::new(
             config.clone(),
-            pool.clone(),
+            data.clone(),
             AppChannels {
                 job_tx,
                 convert_job_tx: convert_job_tx.clone(),
@@ -616,7 +746,7 @@ pub mod test_support {
             spawn_worker(
                 job_rx,
                 WorkerDeps {
-                    pool,
+                    data: data.clone(),
                     qobuz: Arc::clone(&state.qobuz),
                     config: Arc::new(config),
                     runtime: state.runtime.clone(),
@@ -642,5 +772,18 @@ pub mod test_support {
     /// App state for API tests that seed `download_jobs` directly (no background scheduler).
     pub async fn test_state_without_worker() -> AppState {
         test_state_inner(false).await
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_config_uses_unique_library_paths() {
+            let first = test_config();
+            let second = test_config();
+
+            assert_ne!(first.library_path, second.library_path);
+        }
     }
 }

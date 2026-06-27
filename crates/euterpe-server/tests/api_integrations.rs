@@ -1,9 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use euterpe_data::fixtures::{catalog, integrations};
 use euterpe_server::app;
-use euterpe_server::db::integrations::{IntegrationInsert, insert as insert_integration};
-use euterpe_server::db::{albums, tracks};
-use euterpe_server::integrations::{IntegrationProvider, IntegrationType};
 use euterpe_server::library::tags::{self, TrackTags};
 use euterpe_server::services::app_settings::{self, StorageSettings};
 use http_body_util::BodyExt;
@@ -107,7 +105,7 @@ async fn create_list_delete_musicbrainz_integration() {
 async fn metadata_apply_requires_configured_library_storage_before_provider_call() {
     let state = app::test_support::test_state().await;
     app_settings::save_storage(
-        &state.db,
+        &state.data,
         &StorageSettings {
             library: None,
             presets: Vec::new(),
@@ -115,15 +113,15 @@ async fn metadata_apply_requires_configured_library_storage_before_provider_call
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.db, &state.config).await;
-    let integration_id = insert_integration(
-        &state.db,
-        IntegrationInsert {
-            type_: IntegrationType::TagSource,
-            provider: IntegrationProvider::Tracktype,
-            display_name: "TrackType",
+    app_settings::refresh_runtime(&state.runtime, &state.data, &state.config).await;
+    let integration_id = integrations::seed_integration(
+        &state.data,
+        integrations::IntegrationFixture {
+            type_: "tag_source".to_string(),
+            provider: "tracktype".to_string(),
+            display_name: "TrackType".to_string(),
             enabled: true,
-            config_json: "{}",
+            config_json: "{}".to_string(),
             config_secrets_enc: None,
             sort_order: 0,
         },
@@ -181,12 +179,12 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
     let config_library_path = state.config.library_path.clone();
     let storage_root = tempfile::tempdir().unwrap();
     app_settings::save_storage(
-        &state.db,
+        &state.data,
         &StorageSettings::local(storage_root.path().display().to_string()),
     )
     .await
     .unwrap();
-    app_settings::refresh_runtime(&state.runtime, &state.db, &state.config).await;
+    app_settings::refresh_runtime(&state.runtime, &state.data, &state.config).await;
 
     let track_rel = "Api Artist/Api Album/01 - Old.wav";
     let track_path = storage_root.path().join(track_rel);
@@ -213,30 +211,33 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
     )
     .unwrap();
 
-    let album_id = albums::upsert(
-        &state.db,
-        albums::AlbumUpsert {
-            artist_id: None,
-            title: "Api Album",
+    let album_id = catalog::seed_album(
+        &state.data,
+        catalog::AlbumFixture {
+            artist: catalog::ArtistFixture {
+                name: "Api Artist".to_string(),
+                qobuz_artist_id: None,
+            },
+            title: "Api Album".to_string(),
             year: None,
             qobuz_album_id: None,
-            path: Some("Api Artist/Api Album"),
+            path: Some("Api Artist/Api Album".to_string()),
             cover_path: None,
         },
     )
     .await
     .unwrap();
-    tracks::upsert(
-        &state.db,
-        tracks::TrackUpsert {
+    catalog::seed_track(
+        &state.data,
+        catalog::TrackFixture {
             album_id,
-            title: "Old",
+            title: "Old".to_string(),
             track_number: Some(1),
             year: None,
             disc_number: None,
             genre: None,
             qobuz_track_id: None,
-            path: track_rel,
+            path: track_rel.to_string(),
             duration_sec: None,
             file_mtime: None,
             file_hash: None,
@@ -264,14 +265,14 @@ async fn metadata_apply_uses_settings_storage_not_config_library_path() {
         .create_async()
         .await;
     let config_json = json!({ "api_base": server.url() }).to_string();
-    let integration_id = insert_integration(
-        &state.db,
-        IntegrationInsert {
-            type_: IntegrationType::TagSource,
-            provider: IntegrationProvider::Tracktype,
-            display_name: "TrackType",
+    let integration_id = integrations::seed_integration(
+        &state.data,
+        integrations::IntegrationFixture {
+            type_: "tag_source".to_string(),
+            provider: "tracktype".to_string(),
+            display_name: "TrackType".to_string(),
             enabled: true,
-            config_json: &config_json,
+            config_json,
             config_secrets_enc: None,
             sort_order: 0,
         },

@@ -1,15 +1,18 @@
 use std::path::{Component, Path, PathBuf};
 
-use crate::db::download_jobs;
 use crate::error::ApiError;
+use crate::services::download::payload::DownloadJobPayload;
 use crate::state::AppState;
+use euterpe_data::repositories::download_jobs;
 
 /// Remove a job's directory under `torrent-incoming` (cancel / purge).
 pub async fn remove_job_incoming_dir(state: &AppState, job_id: i64) -> Result<(), ApiError> {
     let Some(incoming) = state.config.torrent_incoming_dir.as_ref() else {
         return Ok(());
     };
-    let Some(payload) = download_jobs::get_payload(&state.db, job_id).await? else {
+    let Some(payload) =
+        download_jobs::get_payload::<DownloadJobPayload>(&state.data, job_id).await?
+    else {
         return Ok(());
     };
     let Some(torrent) = payload.torrent else {

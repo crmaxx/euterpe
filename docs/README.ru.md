@@ -33,8 +33,8 @@
 ### 02 — Backend
 
 - [axum-server.ru.md](02-backend/axum-server.ru.md)
-- [sqlite-schema.ru.md](02-backend/sqlite-schema.ru.md)
-- [migrations.ru.md](02-backend/migrations.ru.md)
+- [sqlite-schema.ru.md](02-backend/sqlite-schema.ru.md) — схема, которой владеет `euterpe-data`
+- [migrations.ru.md](02-backend/migrations.ru.md) — Welds migrations через `euterpe-data`
 - [job-queue.ru.md](02-backend/job-queue.ru.md)
 
 ### 03 — Frontend

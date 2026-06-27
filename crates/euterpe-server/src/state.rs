@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
+use euterpe_data::DataHandle;
 use euterpe_qobuz::QobuzApi;
 use euterpe_torrent::TorrentEngine;
 use reqwest::Client;
-use sqlx::SqlitePool;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc};
 
 use crate::api::{ConvertProgressEvent, JobProgressEvent, ScanProgressEvent};
@@ -29,7 +29,7 @@ pub struct AppChannels {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: SqlitePool,
+    pub data: DataHandle,
     pub config: Arc<AppConfig>,
     pub http: Client,
     pub qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
@@ -51,16 +51,16 @@ pub struct AppState {
 impl AppState {
     pub async fn new(
         config: AppConfig,
-        db: SqlitePool,
+        data: DataHandle,
         channels: AppChannels,
         hawk: Option<Arc<euterpe_hawk::Hawk>>,
     ) -> Result<Self, ApiError> {
         let config = Arc::new(config);
         let runtime = Arc::new(RwLock::new(
-            app_settings::load_runtime_settings(&db, &config).await,
+            app_settings::load_runtime_settings(&data, &config).await,
         ));
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
-            if let Some(creds) = credentials::load_active(&config, &db).await? {
+            if let Some(creds) = credentials::load_active(&config, &data).await? {
                 let client = credentials::build_client(&creds, &config).await?;
                 Arc::new(Mutex::new(Box::new(client)))
             } else {
@@ -73,7 +73,7 @@ impl AppState {
             .map_err(|e| ApiError::Config(e.to_string()))?;
 
         let torrent = if let Some(ref dir) = config.torrent_incoming_dir {
-            let settings = crate::services::torrent_settings::load(&db).await?;
+            let settings = crate::services::torrent_settings::load(&data).await?;
             let mut session_settings =
                 crate::services::torrent_settings::to_session_settings(&settings);
             session_settings.enable_upnp_port_forwarding = config.torrent_enable_upnp;
@@ -91,7 +91,7 @@ impl AppState {
 
         let storage_watch = crate::services::storage_watch::StorageWatchHandle::new(
             crate::services::storage_watch::StorageWatchDeps {
-                pool: db.clone(),
+                data: data.clone(),
                 config: config.clone(),
                 runtime: runtime.clone(),
                 scan_events: channels.scan_events.clone(),
@@ -100,7 +100,7 @@ impl AppState {
         );
 
         Ok(Self {
-            db,
+            data,
             config,
             http,
             qobuz,
@@ -123,7 +123,7 @@ impl AppState {
     }
 
     pub async fn require_credentials(&self) -> Result<QobuzCredentials, ApiError> {
-        credentials::load_active(&self.config, &self.db)
+        credentials::load_active(&self.config, &self.data)
             .await?
             .ok_or_else(|| {
                 ApiError::Message("Qobuz not connected — complete OAuth in Settings".into())
@@ -132,7 +132,7 @@ impl AppState {
 
     pub async fn reload_qobuz_from_db(&self) -> Result<(), ApiError> {
         let new_client: Box<dyn QobuzApi + Send + Sync> =
-            if let Some(creds) = credentials::load_active(&self.config, &self.db).await? {
+            if let Some(creds) = credentials::load_active(&self.config, &self.data).await? {
                 Box::new(credentials::build_client(&creds, &self.config).await?)
             } else {
                 Box::new(NoopQobuz)

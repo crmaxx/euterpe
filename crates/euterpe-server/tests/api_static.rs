@@ -18,7 +18,7 @@ async fn static_spa_fallback_serves_index() {
     config.static_dir = dir.path().to_path_buf();
     let state = euterpe_server::AppState::new(
         config,
-        state.db.clone(),
+        state.data.clone(),
         euterpe_server::AppChannels {
             job_tx: state.job_tx.clone(),
             convert_job_tx: state.convert_job_tx.clone(),

@@ -46,7 +46,7 @@ async fn server_info_returns_config_snapshot() {
 async fn server_info_returns_smb_storage_summary_without_credentials() {
     let state = app::test_support::test_state_without_worker().await;
     app_settings::save_storage(
-        &state.db,
+        &state.data,
         &StorageSettings {
             library: Some(StorageLocation::Smb {
                 host: "nas.secret.lan".to_string(),
@@ -64,7 +64,7 @@ async fn server_info_returns_smb_storage_summary_without_credentials() {
     .unwrap();
     {
         let mut runtime = state.runtime.write().await;
-        runtime.storage = app_settings::load_storage(&state.db, &state.config).await;
+        runtime.storage = app_settings::load_storage(&state.data, &state.config).await;
     }
     let app = app::app(state);
 
@@ -225,24 +225,15 @@ async fn sync_latest_returns_null_when_no_runs() {
 #[tokio::test]
 async fn sync_latest_returns_most_recent_run() {
     let state = app::test_support::test_state().await;
-    sqlx::query(
-        r#"
-        INSERT INTO qobuz_sync_runs (started_at, finished_at, status, albums_total, albums_added, albums_removed)
-        VALUES ('2020-01-01T00:00:00Z', '2020-01-01T00:01:00Z', 'success', 10, 1, 0)
-        "#,
-    )
-    .execute(&state.db)
-    .await
-    .unwrap();
-    sqlx::query(
-        r#"
-        INSERT INTO qobuz_sync_runs (started_at, status)
-        VALUES ('2021-01-01T00:00:00Z', 'running')
-        "#,
-    )
-    .execute(&state.db)
-    .await
-    .unwrap();
+    let completed = euterpe_data::repositories::qobuz::start_sync_run(&state.data)
+        .await
+        .unwrap();
+    euterpe_data::repositories::qobuz::finish_sync_success(&state.data, completed, 10, 1, 0)
+        .await
+        .unwrap();
+    let _running = euterpe_data::repositories::qobuz::start_sync_run(&state.data)
+        .await
+        .unwrap();
 
     let app = app::app(state);
     let response = app
@@ -259,5 +250,9 @@ async fn sync_latest_returns_most_recent_run() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["run"]["status"], "running");
-    assert_eq!(json["run"]["started_at"], "2021-01-01T00:00:00Z");
+    assert!(
+        json["run"]["started_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }

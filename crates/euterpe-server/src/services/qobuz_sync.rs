@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use euterpe_data::{
+    DataHandle,
+    repositories::{favorites, qobuz as sync_runs},
+};
 use euterpe_qobuz::{AlbumSummary, QobuzApi};
-use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 
 use crate::api::QobuzSyncResponse;
-use crate::db::{favorites, sync_runs};
 use crate::error::ApiError;
 
 fn album_fields(album: &AlbumSummary) -> (u64, String, String, Option<String>, Option<String>) {
@@ -39,10 +41,10 @@ fn album_fields(album: &AlbumSummary) -> (u64, String, String, Option<String>, O
 }
 
 pub async fn run(
-    pool: &SqlitePool,
+    data: &DataHandle,
     qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
 ) -> Result<QobuzSyncResponse, ApiError> {
-    let run_id = sync_runs::start(pool).await?;
+    let run_id = sync_runs::start_sync_run(data).await?;
 
     let sync_result: Result<QobuzSyncResponse, ApiError> = async {
         let albums = {
@@ -50,7 +52,7 @@ pub async fn run(
             guard.favorites_all_albums().await?
         };
 
-        let before = favorites::active_album_ids(pool).await?;
+        let before = favorites::active_album_ids(data).await?;
         let before_set: HashSet<u64> = before.iter().copied().collect();
 
         let mut added = 0u64;
@@ -58,7 +60,7 @@ pub async fn run(
             let (qobuz_id, title, artist, album_api_id, cover_url) = album_fields(album);
             let existed = before_set.contains(&qobuz_id);
             favorites::upsert_album(
-                pool,
+                data,
                 qobuz_id,
                 &title,
                 &artist,
@@ -72,10 +74,11 @@ pub async fn run(
         }
 
         let keep_ids: Vec<u64> = albums.iter().map(|a| album_fields(a).0).collect();
-        let removed = favorites::mark_removed_except(pool, &keep_ids).await?;
+        let removed = favorites::mark_removed_except(data, &keep_ids).await?;
 
         let albums_total = albums.len() as i64;
-        sync_runs::finish_success(pool, run_id, albums_total, added as i64, removed as i64).await?;
+        sync_runs::finish_sync_success(data, run_id, albums_total, added as i64, removed as i64)
+            .await?;
 
         Ok(QobuzSyncResponse {
             run_id,
@@ -89,7 +92,7 @@ pub async fn run(
     match sync_result {
         Ok(resp) => Ok(resp),
         Err(e) => {
-            let _ = sync_runs::finish_failed(pool, run_id, &e.to_string()).await;
+            let _ = sync_runs::finish_sync_failed(data, run_id, &e.to_string()).await;
             Err(e)
         }
     }
@@ -102,9 +105,10 @@ mod tests {
     use async_trait::async_trait;
     use euterpe_qobuz::Quality;
     use euterpe_qobuz::{AlbumSummary, Page, PageRequest, QobuzApi, QobuzError, StreamUrl};
+    use sqlx::SqlitePool;
 
     use super::*;
-    use crate::db;
+    use crate::test_db as db;
 
     struct MockQobuz {
         albums: Arc<tokio::sync::Mutex<Vec<AlbumSummary>>>,
@@ -209,6 +213,7 @@ mod tests {
     #[tokio::test]
     async fn sync_persists_album_api_id_for_album_get() {
         let pool = test_pool().await;
+        let data = DataHandle::from_sqlite_pool(pool.clone());
         let album = AlbumSummary {
             id: 393908828,
             qobuz_id: Some(393908828),
@@ -233,9 +238,9 @@ mod tests {
         )
             as Box<dyn QobuzApi + Send + Sync>));
 
-        run(&pool, mock).await.unwrap();
+        run(&data, mock).await.unwrap();
 
-        let meta = favorites::album_meta(&pool, 393908828)
+        let meta = favorites::album_meta(&data, 393908828)
             .await
             .unwrap()
             .expect("album in db");
@@ -245,32 +250,34 @@ mod tests {
     #[tokio::test]
     async fn sync_diff_marks_removed() {
         let pool = test_pool().await;
+        let data = DataHandle::from_sqlite_pool(pool);
         let inner = MockQobuz::new(vec![album(1, "A"), album(2, "B")]);
         let albums = Arc::clone(&inner.albums);
         let mock: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = Arc::new(Mutex::new(
             Box::new(inner) as Box<dyn QobuzApi + Send + Sync>,
         ));
 
-        let r1 = run(&pool, Arc::clone(&mock)).await.unwrap();
+        let r1 = run(&data, Arc::clone(&mock)).await.unwrap();
         assert_eq!(r1.albums_total, 2);
         assert_eq!(r1.added, 2);
 
         *albums.lock().await = vec![album(1, "A")];
-        let r2 = run(&pool, mock).await.unwrap();
+        let r2 = run(&data, mock).await.unwrap();
         assert_eq!(r2.removed, 1);
         assert_eq!(r2.added, 0);
 
-        use crate::api::SortOrder;
-        use crate::db::favorites::{FavoritesListParams, FavoritesSort};
+        use euterpe_data::repositories::favorites::{
+            FavoritesListParams, FavoritesSort, SortOrder,
+        };
         let page = favorites::list_albums_keyset(
-            &pool,
+            &data,
             FavoritesListParams {
                 sort: FavoritesSort::Title,
                 order: SortOrder::Asc,
                 limit: 50,
                 q: None,
                 in_library: None,
-                cursor: None,
+                after: None,
             },
         )
         .await

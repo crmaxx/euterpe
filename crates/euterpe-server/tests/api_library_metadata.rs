@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use euterpe_data::fixtures::{catalog, integrations};
 use euterpe_server::app;
 use serde_json::json;
 use tower::ServiceExt;
@@ -10,7 +11,6 @@ const SILENT_FLAC: &[u8] = include_bytes!("fixtures/silent.flac");
 
 async fn setup_album_with_integration() -> (euterpe_server::AppState, i64, i64) {
     let state = app::test_support::test_state().await;
-    let pool = state.db.clone();
     let library = state.config.library_path.clone();
 
     let album_dir = library.join("Test Artist/Test Album");
@@ -18,34 +18,34 @@ async fn setup_album_with_integration() -> (euterpe_server::AppState, i64, i64) 
     let track_path = album_dir.join("01-track.flac");
     std::fs::write(&track_path, SILENT_FLAC).unwrap();
 
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&pool, "Test Artist", None)
-        .await
-        .unwrap();
-    let album_id = euterpe_server::db::albums::upsert(
-        &pool,
-        euterpe_server::db::albums::AlbumUpsert {
-            artist_id: Some(artist_id),
-            title: "Test Album",
+    let album_id = catalog::seed_album(
+        &state.data,
+        catalog::AlbumFixture {
+            artist: catalog::ArtistFixture {
+                name: "Test Artist".to_string(),
+                qobuz_artist_id: None,
+            },
+            title: "Test Album".to_string(),
             year: Some(2020),
             qobuz_album_id: None,
-            path: Some("Test Artist/Test Album"),
+            path: Some("Test Artist/Test Album".to_string()),
             cover_path: None,
         },
     )
     .await
     .unwrap();
     let rel = PathBuf::from("Test Artist/Test Album/01-track.flac");
-    let _track_id = euterpe_server::db::tracks::upsert(
-        &pool,
-        euterpe_server::db::tracks::TrackUpsert {
+    let _track_id = catalog::seed_track(
+        &state.data,
+        catalog::TrackFixture {
             album_id,
-            title: "Track One",
+            title: "Track One".to_string(),
             track_number: Some(1),
             year: Some(2020),
             disc_number: Some(1),
             genre: None,
             qobuz_track_id: None,
-            path: rel.to_str().unwrap(),
+            path: rel.to_str().unwrap().to_string(),
             duration_sec: Some(180),
             file_mtime: None,
             file_hash: None,
@@ -55,14 +55,14 @@ async fn setup_album_with_integration() -> (euterpe_server::AppState, i64, i64) 
     .await
     .unwrap();
 
-    let integration_id = euterpe_server::db::integrations::insert(
-        &pool,
-        euterpe_server::db::integrations::IntegrationInsert {
-            type_: euterpe_server::integrations::IntegrationType::TagSource,
-            provider: euterpe_server::integrations::IntegrationProvider::MusicBrainz,
-            display_name: "MusicBrainz",
+    let integration_id = integrations::seed_integration(
+        &state.data,
+        integrations::IntegrationFixture {
+            type_: "tag_source".to_string(),
+            provider: "musicbrainz".to_string(),
+            display_name: "MusicBrainz".to_string(),
             enabled: true,
-            config_json: r#"{"contact":"test@example.com"}"#,
+            config_json: r#"{"contact":"test@example.com"}"#.to_string(),
             config_secrets_enc: None,
             sort_order: 0,
         },

@@ -2,12 +2,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytes::Bytes;
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::cue_jobs as data_cue_jobs;
 
 use crate::api::{
     CueAlbumResponse, CueDocument, CueExtraField, CueFileChoice, CueIssue, CueJobSummary,
     CueSplitRequest, CueValidationResponse,
 };
-use crate::db::cue_jobs::{self, CueJobRow};
 use crate::error::ApiError;
 use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 
@@ -174,12 +175,11 @@ pub fn document_to_core(document: &CueDocument) -> euterpe_cue::CueDocument {
     }
 }
 
-pub fn cue_job_to_api(row: CueJobRow) -> CueJobSummary {
-    let row = crate::db::cue_jobs::row_to_summary(row);
+pub fn cue_job_to_api(row: data_cue_jobs::CueJobRow) -> CueJobSummary {
     CueJobSummary {
         id: row.id,
         album_id: row.album_id,
-        status: row.status,
+        status: row.status.as_str().to_string(),
         tracks_total: row.tracks_total,
         tracks_done: row.tracks_done,
         progress_pct: row.progress_pct,
@@ -190,19 +190,19 @@ pub fn cue_job_to_api(row: CueJobRow) -> CueJobSummary {
 }
 
 pub async fn run_storage_cue_split_job(
-    pool: &sqlx::SqlitePool,
+    data: &DataHandle,
     storage: Arc<dyn LibraryStorage>,
     job_id: i64,
     body: CueSplitRequest,
     cancellation: Option<CueSplitCancellation>,
 ) -> Result<(), ApiError> {
-    cue_jobs::mark_running(pool, job_id).await?;
+    data_cue_jobs::mark_running(data, job_id).await?;
     if cancellation
         .as_ref()
         .is_some_and(|is_cancelled| is_cancelled())
     {
         let message = "CUE split cancelled before output writes";
-        cue_jobs::finish_failed(pool, job_id, message).await?;
+        data_cue_jobs::finish_failed(data, job_id, message).await?;
         return Err(ApiError::Message(message.into()));
     }
 
@@ -213,14 +213,14 @@ pub async fn run_storage_cue_split_job(
     } else {
         euterpe_cue::SourceFilePolicy::Keep
     };
-    let progress_pool = pool.clone();
+    let progress_data = data.clone();
     let progress_handle = tokio::runtime::Handle::current();
     let on_progress = std::sync::Arc::new(move |p: euterpe_cue::SplitProgress| {
-        let pool = progress_pool.clone();
+        let data = progress_data.clone();
         let tracks_done = p.tracks_done as i64;
         let tracks_total = p.tracks_total as i64;
-        let _ = progress_handle.block_on(cue_jobs::update_progress(
-            &pool,
+        let _ = progress_handle.block_on(data_cue_jobs::update_progress(
+            &data,
             job_id,
             tracks_done,
             tracks_total,
@@ -249,8 +249,8 @@ pub async fn run_storage_cue_split_job(
 
     match split {
         Ok(result) => {
-            cue_jobs::finish_success(
-                pool,
+            data_cue_jobs::finish_success(
+                data,
                 job_id,
                 selected_total.min(result.output_paths.len() as i64),
             )
@@ -262,7 +262,7 @@ pub async fn run_storage_cue_split_job(
         }
         Err(e) => {
             let message = e.to_string();
-            cue_jobs::finish_failed(pool, job_id, &message).await?;
+            data_cue_jobs::finish_failed(data, job_id, &message).await?;
             Err(ApiError::Message(message))
         }
     }

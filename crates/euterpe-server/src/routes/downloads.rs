@@ -1,17 +1,26 @@
+use std::cmp::Ordering;
+
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
+use serde_json::json;
 
-use crate::db::download_jobs::PriorityDirection;
+use euterpe_data::repositories::download_jobs::{
+    self as data_download_jobs, DownloadJobRow, PriorityDirection,
+};
+use euterpe_data::repositories::favorites;
 
 use euterpe_qobuz::parse_album_url;
 
-use crate::api::{
-    CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse,
-    DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
+use crate::api::keyset::{
+    decode_cursor, ensure_cursor_matches, fingerprint_json, finish_keyset_page,
 };
-use crate::db::{download_jobs, favorites};
+use crate::api::{
+    CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse, DownloadJob,
+    DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
+    SortKeyKind, SortKeyValue,
+};
 use crate::error::ApiError;
 use crate::services::download::{
     DownloadJobPayload, format_album_display_title, quality_from_format_id,
@@ -51,8 +60,172 @@ fn purge_requested(q: &DeleteDownloadQuery) -> bool {
         .is_some_and(|s| s == "1" || s.eq_ignore_ascii_case("true"))
 }
 
+/// Tolerate corrupt or legacy `payload_json` so one bad row does not break `GET /downloads`.
+fn parse_job_payload(job_id: i64, raw: Option<&str>) -> DownloadJobPayload {
+    let Some(raw) = raw else {
+        return DownloadJobPayload::default();
+    };
+    match serde_json::from_str(raw) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(
+                job_id,
+                error = %e,
+                "download job payload JSON invalid; listing job with empty payload"
+            );
+            DownloadJobPayload::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DownloadsSort {
+    Id,
+    CreatedAt,
+    Status,
+    QueuePosition,
+}
+
+impl DownloadsSort {
+    fn parse(s: &str) -> Result<Self, ApiError> {
+        match s {
+            "id" => Ok(Self::Id),
+            "created_at" => Ok(Self::CreatedAt),
+            "status" => Ok(Self::Status),
+            "queue_position" => Ok(Self::QueuePosition),
+            _ => Err(ApiError::bad_request(
+                "sort must be id, created_at, status, or queue_position",
+            )),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::CreatedAt => "created_at",
+            Self::Status => "status",
+            Self::QueuePosition => "queue_position",
+        }
+    }
+
+    fn key_kind(self) -> SortKeyKind {
+        match self {
+            Self::Id | Self::QueuePosition => SortKeyKind::Int,
+            _ => SortKeyKind::Text,
+        }
+    }
+
+    fn primary_key(self, row: &DownloadJobRow) -> SortKeyValue {
+        match self {
+            Self::Id => SortKeyValue::Int(row.id),
+            Self::CreatedAt => SortKeyValue::Text(row.created_at.clone()),
+            Self::Status => SortKeyValue::Text(row.status.as_str().to_string()),
+            Self::QueuePosition => SortKeyValue::Int(row.queue_position),
+        }
+    }
+}
+
+fn api_status_to_data(
+    status: DownloadJobStatus,
+) -> euterpe_data::repositories::download_jobs::DownloadJobStatus {
+    match status {
+        DownloadJobStatus::Queued => data_download_jobs::DownloadJobStatus::Queued,
+        DownloadJobStatus::Running => data_download_jobs::DownloadJobStatus::Running,
+        DownloadJobStatus::Paused => data_download_jobs::DownloadJobStatus::Paused,
+        DownloadJobStatus::Completed => data_download_jobs::DownloadJobStatus::Completed,
+        DownloadJobStatus::Failed => data_download_jobs::DownloadJobStatus::Failed,
+        DownloadJobStatus::Cancelled => data_download_jobs::DownloadJobStatus::Cancelled,
+    }
+}
+
+fn data_status_to_api(
+    status: euterpe_data::repositories::download_jobs::DownloadJobStatus,
+) -> DownloadJobStatus {
+    match status {
+        data_download_jobs::DownloadJobStatus::Queued => DownloadJobStatus::Queued,
+        data_download_jobs::DownloadJobStatus::Running => DownloadJobStatus::Running,
+        data_download_jobs::DownloadJobStatus::Paused => DownloadJobStatus::Paused,
+        data_download_jobs::DownloadJobStatus::Completed => DownloadJobStatus::Completed,
+        data_download_jobs::DownloadJobStatus::Failed => DownloadJobStatus::Failed,
+        data_download_jobs::DownloadJobStatus::Cancelled => DownloadJobStatus::Cancelled,
+    }
+}
+
+fn data_type_to_api(
+    job_type: euterpe_data::repositories::download_jobs::DownloadJobType,
+) -> DownloadJobType {
+    match job_type {
+        data_download_jobs::DownloadJobType::Album => DownloadJobType::Album,
+        data_download_jobs::DownloadJobType::Track => DownloadJobType::Track,
+        data_download_jobs::DownloadJobType::Artist => DownloadJobType::Artist,
+        data_download_jobs::DownloadJobType::Playlist => DownloadJobType::Playlist,
+        data_download_jobs::DownloadJobType::Torrent => DownloadJobType::Torrent,
+    }
+}
+
+fn row_into_api_job(row: DownloadJobRow) -> DownloadJob {
+    let job_type = data_type_to_api(row.job_type);
+    let payload = parse_job_payload(row.id, row.payload_json.as_deref());
+    DownloadJob {
+        id: row.id,
+        status: data_status_to_api(row.status),
+        job_type,
+        source: payload.source(job_type),
+        display_title: payload.display_title(job_type),
+        qobuz_id: row.qobuz_id.unwrap_or(0),
+        quality: row.quality,
+        progress_pct: row.progress_pct,
+        download_speed_bps: row.download_speed_bps.max(0) as u64,
+        queue_position: row.queue_position,
+        torrent_detail: payload.torrent_detail_for_api(),
+        error_message: row.error_message,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    }
+}
+
+fn compare_job_rows(
+    left: &DownloadJobRow,
+    right: &DownloadJobRow,
+    sort: DownloadsSort,
+    order: crate::api::SortOrder,
+) -> Ordering {
+    let primary = compare_sort_values(&sort.primary_key(left), &sort.primary_key(right));
+    let ordered = match order {
+        crate::api::SortOrder::Asc => primary,
+        crate::api::SortOrder::Desc => primary.reverse(),
+    };
+    ordered.then_with(|| left.id.cmp(&right.id))
+}
+
+fn row_is_after_cursor(
+    row: &DownloadJobRow,
+    sort: DownloadsSort,
+    order: crate::api::SortOrder,
+    primary: &SortKeyValue,
+    tie_id: i64,
+) -> bool {
+    let row_primary = sort.primary_key(row);
+    match compare_sort_values(&row_primary, primary) {
+        Ordering::Greater => order == crate::api::SortOrder::Asc,
+        Ordering::Less => order == crate::api::SortOrder::Desc,
+        Ordering::Equal => row.id > tie_id,
+    }
+}
+
+fn compare_sort_values(left: &SortKeyValue, right: &SortKeyValue) -> Ordering {
+    match (left, right) {
+        (SortKeyValue::Text(left), SortKeyValue::Text(right)) => left.cmp(right),
+        (SortKeyValue::Int(left), SortKeyValue::Int(right)) => left.cmp(right),
+        (SortKeyValue::Bool(left), SortKeyValue::Bool(right)) => left.cmp(right),
+        _ => Ordering::Equal,
+    }
+}
+
 async fn cancel_torrent_for_job(state: &AppState, id: i64) -> Result<(), ApiError> {
-    let Some(payload) = download_jobs::get_payload(&state.db, id).await? else {
+    let Some(payload) =
+        data_download_jobs::get_payload::<DownloadJobPayload>(&state.data, id).await?
+    else {
         return Ok(());
     };
     let Some(t) = payload.torrent else {
@@ -77,7 +250,9 @@ async fn queue_album_download(
     display_title: Option<String>,
 ) -> Result<i64, ApiError> {
     let qobuz_for_dedup = qobuz_id.filter(|id| *id > 0);
-    if download_jobs::has_running_album(&state.db, album_api_id, qobuz_for_dedup, quality).await? {
+    if data_download_jobs::has_running_album(&state.data, album_api_id, qobuz_for_dedup, quality)
+        .await?
+    {
         return Err(ApiError::Message(
             "JOB_ALREADY_RUNNING: album download in progress".into(),
         ));
@@ -88,11 +263,10 @@ async fn queue_album_download(
         display_title: display_title.filter(|s| !s.trim().is_empty()),
         torrent: None,
     };
-    let catalog_id = qobuz_id.unwrap_or(0);
-    let job_id = download_jobs::insert_queued(
-        &state.db,
-        DownloadJobType::Album,
-        catalog_id,
+    let job_id = data_download_jobs::insert_queued(
+        &state.data,
+        data_download_jobs::DownloadJobType::Album,
+        qobuz_id.filter(|id| *id > 0).map(|id| id as i64),
         quality,
         Some(&payload),
     )
@@ -144,7 +318,7 @@ pub async fn create_download(
     };
 
     let display_title = if let Some(catalog_id) = body.qobuz_id.filter(|id| *id > 0) {
-        favorites::album_meta(&state.db, catalog_id)
+        favorites::album_meta(&state.data, catalog_id)
             .await?
             .map(|m| format_album_display_title(&m.artist_name, &m.title))
     } else {
@@ -214,7 +388,6 @@ pub async fn list_downloads(
 ) -> Result<Json<DownloadJobListResponse>, ApiError> {
     use crate::api::SortOrder;
     use crate::api::keyset::parse_limit;
-    use crate::db::download_jobs::{DownloadsListParams, DownloadsSort};
 
     let limit = parse_limit(q.limit, 100, 500)?;
     let sort = DownloadsSort::parse(&q.sort)?;
@@ -228,19 +401,44 @@ pub async fn list_downloads(
         }
         Some(s) => SortOrder::parse(s)?,
     };
-    let page = download_jobs::list_keyset(
-        &state.db,
-        DownloadsListParams {
-            sort,
+    let fingerprint = fingerprint_json(&json!({
+        "status": q.status.map(|s| s.as_str()),
+    }));
+
+    let mut after: Option<(SortKeyValue, i64)> = None;
+    if let Some(ref cursor_str) = q.cursor {
+        let payload = decode_cursor(cursor_str)?;
+        let (primary, tie) = ensure_cursor_matches(
+            &payload,
+            sort.as_str(),
             order,
-            limit,
-            status: q.status,
-            cursor: q.cursor,
-        },
-    )
-    .await?;
+            &fingerprint,
+            sort.key_kind(),
+        )?;
+        after = Some((primary, tie));
+    }
+
+    let status = q.status.map(api_status_to_data);
+    let mut rows: Vec<DownloadJobRow> = data_download_jobs::list(&state.data)
+        .await?
+        .into_iter()
+        .filter(|row| status.is_none_or(|status| row.status == status))
+        .collect();
+    rows.sort_by(|left, right| compare_job_rows(left, right, sort, order));
+    if let Some((primary, tie)) = after.as_ref() {
+        rows.retain(|row| row_is_after_cursor(row, sort, order, primary, *tie));
+    }
+    rows.truncate(limit as usize + 1);
+    let page = finish_keyset_page(
+        rows,
+        limit as usize,
+        sort.as_str(),
+        order,
+        &fingerprint,
+        |row| (sort.primary_key(row), row.id),
+    );
     Ok(Json(DownloadJobListResponse {
-        items: page.items,
+        items: page.items.into_iter().map(row_into_api_job).collect(),
         next_cursor: page.next_cursor,
         has_more: page.has_more,
     }))
@@ -250,8 +448,9 @@ pub async fn get_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<crate::api::DownloadJob>, ApiError> {
-    download_jobs::get(&state.db, id)
+    data_download_jobs::get_by_id(&state.data, id)
         .await?
+        .map(row_into_api_job)
         .map(Json)
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))
 }
@@ -259,11 +458,11 @@ pub async fn get_download(
 pub async fn purge_finished_downloads(
     State(state): State<AppState>,
 ) -> Result<Json<DownloadPurgeResponse>, ApiError> {
-    let torrent_ids = download_jobs::list_terminal_torrent_job_ids(&state.db).await?;
+    let torrent_ids = data_download_jobs::list_terminal_torrent_job_ids(&state.data).await?;
     for id in torrent_ids {
         torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
     }
-    let deleted = download_jobs::purge_finished(&state.db).await? as i64;
+    let deleted = data_download_jobs::purge_finished(&state.data).await? as i64;
     Ok(Json(DownloadPurgeResponse { deleted }))
 }
 
@@ -272,27 +471,27 @@ pub async fn delete_download(
     Path(id): Path<i64>,
     Query(q): Query<DeleteDownloadQuery>,
 ) -> Result<StatusCode, ApiError> {
-    let job = download_jobs::get(&state.db, id)
+    let job = data_download_jobs::get_by_id(&state.data, id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))?;
 
     if purge_requested(&q) {
-        if !download_jobs::is_terminal_status(job.status) {
+        if !data_download_jobs::is_terminal_status(job.status) {
             return Err(ApiError::Message(
                 "cannot purge active job; cancel it first".into(),
             ));
         }
-        if job.job_type == DownloadJobType::Torrent {
+        if job.job_type == data_download_jobs::DownloadJobType::Torrent {
             torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
         }
-        if !download_jobs::delete_by_id(&state.db, id).await? {
+        if !data_download_jobs::delete_by_id(&state.data, id).await? {
             return Err(ApiError::Message(format!("job {id} not found")));
         }
         return Ok(StatusCode::NO_CONTENT);
     }
 
     if matches!(
-        job.status,
+        data_status_to_api(job.status),
         DownloadJobStatus::Completed | DownloadJobStatus::Failed
     ) {
         return Err(ApiError::Message(
@@ -302,11 +501,11 @@ pub async fn delete_download(
 
     cancel_torrent_for_job(&state, id).await?;
 
-    if !download_jobs::cancel(&state.db, id).await? {
+    if !data_download_jobs::cancel(&state.data, id).await? {
         return Err(ApiError::Message(format!("job {id} not found")));
     }
 
-    if job.job_type == DownloadJobType::Torrent {
+    if job.job_type == data_download_jobs::DownloadJobType::Torrent {
         torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
     }
 
@@ -328,7 +527,7 @@ pub async fn patch_download_priority(
         }
     };
 
-    download_jobs::adjust_queue_priority(&state.db, id, direction).await?;
+    data_download_jobs::adjust_queue_priority(&state.data, id, direction).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -337,7 +536,7 @@ pub async fn retry_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    download_jobs::retry_failed(&state.db, id).await?;
+    data_download_jobs::retry_failed(&state.data, id).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -346,13 +545,13 @@ pub async fn pause_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let job = download_jobs::get(&state.db, id)
+    let job = data_download_jobs::get_by_id(&state.data, id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))?;
 
-    download_jobs::pause(&state.db, id).await?;
+    data_download_jobs::pause(&state.data, id).await?;
 
-    if job.job_type == DownloadJobType::Torrent {
+    if job.job_type == data_download_jobs::DownloadJobType::Torrent {
         cancel_torrent_for_job(&state, id).await?;
     }
 
@@ -364,7 +563,7 @@ pub async fn resume_download(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    download_jobs::resume_paused(&state.db, id).await?;
+    data_download_jobs::resume_paused(&state.data, id).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -4,6 +4,7 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+use euterpe_data::fixtures::catalog;
 use euterpe_server::app;
 
 fn write_test_wav(path: &std::path::Path) {
@@ -61,17 +62,17 @@ FILE "album.flac" FLAC
 "#,
     )
     .unwrap();
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Cue Artist", None)
-        .await
-        .unwrap();
-    let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
-        euterpe_server::db::albums::AlbumUpsert {
-            artist_id: Some(artist_id),
-            title: "Cue Album",
+    let album_id = catalog::seed_album(
+        &state.data,
+        catalog::AlbumFixture {
+            artist: catalog::ArtistFixture {
+                name: "Cue Artist".to_string(),
+                qobuz_artist_id: None,
+            },
+            title: "Cue Album".to_string(),
             year: Some(2007),
             qobuz_album_id: None,
-            path: Some(album_rel),
+            path: Some(album_rel.to_string()),
             cover_path: None,
         },
     )
@@ -104,17 +105,17 @@ FILE "album.flac" FLAC
 "#,
     )
     .unwrap();
-    let artist_id = euterpe_server::db::artists::upsert_by_name(&state.db, "Cue Artist", None)
-        .await
-        .unwrap();
-    let album_id = euterpe_server::db::albums::upsert(
-        &state.db,
-        euterpe_server::db::albums::AlbumUpsert {
-            artist_id: Some(artist_id),
-            title: "Real Album",
+    let album_id = catalog::seed_album(
+        &state.data,
+        catalog::AlbumFixture {
+            artist: catalog::ArtistFixture {
+                name: "Cue Artist".to_string(),
+                qobuz_artist_id: None,
+            },
+            title: "Real Album".to_string(),
             year: Some(1972),
             qobuz_album_id: None,
-            path: Some(album_rel),
+            path: Some(album_rel.to_string()),
             cover_path: None,
         },
     )

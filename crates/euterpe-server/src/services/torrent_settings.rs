@@ -1,12 +1,11 @@
 use std::env;
 use std::num::NonZeroU32;
 
+use euterpe_data::{DataHandle, repositories::settings};
 use euterpe_torrent::SessionSettings;
 use serde::Deserialize;
-use sqlx::SqlitePool;
 
 use crate::api::TorrentSettings;
-use crate::db::settings;
 use crate::error::ApiError;
 
 pub const KEY_TORRENT_SETTINGS: &str = "torrent.settings";
@@ -38,8 +37,8 @@ pub fn default_from_env() -> TorrentSettings {
     }
 }
 
-pub async fn load(pool: &SqlitePool) -> Result<TorrentSettings, ApiError> {
-    let Some(raw) = settings::get(pool, KEY_TORRENT_SETTINGS).await? else {
+pub async fn load(data: &DataHandle) -> Result<TorrentSettings, ApiError> {
+    let Some(raw) = settings::get(data, KEY_TORRENT_SETTINGS).await? else {
         return Ok(default_from_env());
     };
     if let Ok(settings) = serde_json::from_str::<TorrentSettings>(&raw) {
@@ -60,11 +59,12 @@ fn normalize_legacy(legacy: TorrentSettingsLegacy) -> TorrentSettings {
     }
 }
 
-pub async fn save(pool: &SqlitePool, value: &TorrentSettings) -> Result<(), ApiError> {
+pub async fn save(data: &DataHandle, value: &TorrentSettings) -> Result<(), ApiError> {
     validate(value)?;
     let raw = serde_json::to_string(value)
         .map_err(|e| ApiError::Message(format!("torrent settings encode: {e}")))?;
-    settings::set(pool, KEY_TORRENT_SETTINGS, &raw).await
+    settings::set(data, KEY_TORRENT_SETTINGS, &raw).await?;
+    Ok(())
 }
 
 pub fn validate(_s: &TorrentSettings) -> Result<(), ApiError> {

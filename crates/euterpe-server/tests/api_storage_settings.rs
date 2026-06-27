@@ -53,13 +53,12 @@ async fn storage_settings_encrypts_smb_password_and_redacts_response() {
             .is_none()
     );
 
-    let raw: (String,) =
-        sqlx::query_as("SELECT value FROM settings WHERE key = 'storage.settings'")
-            .fetch_one(&state.db)
-            .await
-            .unwrap();
-    assert!(!raw.0.contains("secret"));
-    assert!(raw.0.contains("password_encrypted"));
+    let raw = euterpe_data::fixtures::settings::get(&state.data, "storage.settings")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!raw.contains("secret"));
+    assert!(raw.contains("password_encrypted"));
 
     let get_response = app
         .oneshot(
@@ -161,10 +160,10 @@ async fn storage_settings_rejects_smb_password_without_master_key() {
         debug: false,
         static_dir: std::path::PathBuf::new(),
     };
-    let pool = euterpe_server::db::connect(&config.database_url)
+    let data = euterpe_data::connect_database(&config.database_url)
         .await
         .unwrap();
-    euterpe_server::db::migrate(&pool).await.unwrap();
+    euterpe_data::migrations::migrate(&data).await.unwrap();
 
     let (job_tx, _job_rx) = tokio::sync::mpsc::channel(1);
     let (convert_job_tx, _convert_job_rx) = tokio::sync::mpsc::channel(1);
@@ -173,7 +172,7 @@ async fn storage_settings_rejects_smb_password_without_master_key() {
     let (convert_events, _) = tokio::sync::broadcast::channel(1);
     let state = euterpe_server::AppState::new(
         config,
-        pool,
+        data,
         euterpe_server::AppChannels {
             job_tx,
             convert_job_tx,

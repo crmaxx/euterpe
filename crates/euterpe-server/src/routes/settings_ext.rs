@@ -37,7 +37,7 @@ pub async fn patch_ui_settings(
     if let Some(v) = patch.default_quality {
         settings.default_quality = v;
     }
-    app_settings::save_ui(&state.db, &settings).await?;
+    app_settings::save_ui(&state.data, &settings).await?;
     state.runtime.write().await.ui = settings.clone();
     Ok(Json(UiPreferencesResponse { settings }))
 }
@@ -77,7 +77,7 @@ pub async fn patch_converter_settings(
             settings.flac_encode.multithread = v;
         }
     }
-    app_settings::save_converter(&state.db, &settings).await?;
+    app_settings::save_converter(&state.data, &settings).await?;
     state.runtime.write().await.converter = settings.clone();
     Ok(Json(ConverterSettingsResponse { settings }))
 }
@@ -112,7 +112,7 @@ pub async fn patch_library_scan_settings(
     if let Some(v) = patch.path_queue_capacity {
         settings.path_queue_capacity = v;
     }
-    app_settings::save_library_scan(&state.db, &settings, state.config.debug).await?;
+    app_settings::save_library_scan(&state.data, &settings, state.config.debug).await?;
     state.runtime.write().await.library_scan = settings.clone();
     Ok(Json(LibraryScanSettingsResponse { settings }))
 }
@@ -132,7 +132,7 @@ pub async fn patch_downloads_settings(
     if let Some(v) = patch.concurrency {
         settings.concurrency = v;
     }
-    app_settings::save_downloads(&state.db, &settings).await?;
+    app_settings::save_downloads(&state.data, &settings).await?;
     state.runtime.write().await.downloads = settings.clone();
     Ok(Json(DownloadsSettingsResponse { settings }))
 }
@@ -156,7 +156,7 @@ pub async fn patch_storage_settings(
     let previous = state.runtime.read().await.storage.clone();
     let settings = storage_patch_to_settings(&state, patch).await?;
     let migration = storage_kind_migration(&previous, &settings);
-    app_settings::save_storage(&state.db, &settings).await?;
+    app_settings::save_storage(&state.data, &settings).await?;
     state.runtime.write().await.storage = settings.clone();
     state.invalidate_library_storage_cache().await;
     state.storage_watch.restart().await;

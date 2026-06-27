@@ -13,9 +13,9 @@ euterpe/
 │   └── README.md
 ├── docs/                      # эта документация
 ├── crates/
-│   ├── euterpe-qobuz/         # Phase 1 — TDD
-│   └── euterpe-server/        # Phase 2 — Axum + SQLite
-├── migrations/                # sqlx, Phase 2+
+│   ├── euterpe-data/          # Welds data layer, migrations, typed fixtures
+│   ├── euterpe-qobuz/         # Qobuz client
+│   └── euterpe-server/        # Axum API
 ├── frontend/                  # Phase 4
 │   ├── package.json
 │   ├── vite.config.ts

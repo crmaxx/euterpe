@@ -1,13 +1,13 @@
 {
-  "name": "euterpe",
-  "private": true,
-  "scripts": {
-    "prepare": "husky"
-  },
-  "devDependencies": {
-    "husky": "^9.1.7"
-  },
-  "engines": {
-    "node": "^20.19.0 || >=22.13.0"
-  }
+    "name": "euterpe",
+    "private": true,
+    "scripts": {
+        "prepare": "husky"
+    },
+    "devDependencies": {
+        "husky": "^9.1.7"
+    },
+    "engines": {
+        "node": ">=22.13.0"
+    }
 }
