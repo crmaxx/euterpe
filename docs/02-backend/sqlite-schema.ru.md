@@ -1,6 +1,6 @@
 # Схема SQLite
 
-Схемой владеет crate `euterpe-data`: Welds migrations создают/обновляют таблицы, а server обращается к данным через typed repositories.
+Схемой владеет crate `euterpe-data`: Welds builder migrations создают/обновляют таблицы, а server обращается к данным через typed repositories.
 
 ## Pragmas (при каждом connect через `DataHandle`)
 
@@ -156,6 +156,12 @@ CREATE INDEX idx_tracks_path ON tracks (path);
 - `TEXT` datetime → `TIMESTAMPTZ` later
 - Без `STRICT` SQLite-only types
 - JSON в `payload_json` как TEXT → `JSONB` later
+
+## Migration ownership
+
+Schema evolution starts in `crates/euterpe-data/src/migrations/mod.rs`. New first-party migrations should use Welds builders (`create_table`, `create_index`, supported table-change APIs) and typed repository logic for data effects such as settings seeds.
+
+Existing SQLx-era databases are covered by a binary SQLite compatibility fixture under `crates/euterpe-data/tests/fixtures`. Runtime and tests must not use a root SQL migration chain as an active input.
 
 ## TDD
 

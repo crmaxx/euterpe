@@ -1,5 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use euterpe_data::repositories::{
+    catalog, convert_jobs, cue_jobs, download_jobs, integrations, library_scan_runs, qobuz,
+    settings,
+};
 use euterpe_data::{connect_database, migrations};
 use welds::WeldsModel;
 use welds::detect::{self, TableDef};
@@ -162,26 +166,67 @@ async fn migrate_can_run_more_than_once() {
 }
 
 #[tokio::test]
-async fn existing_sqlx_migrated_database_is_adopted_without_reset() {
+async fn migrations_preserve_existing_user_settings() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    let mut setting = Setting::find_by_id(handle.client(), "downloads.settings".to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    setting.value = r#"{"concurrency":9}"#.to_string();
+    setting.save(handle.client()).await.unwrap();
+
+    migrations::migrate(&handle).await.unwrap();
+
+    let setting = Setting::find_by_id(handle.client(), "downloads.settings".to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(setting.value, r#"{"concurrency":9}"#);
+}
+
+#[tokio::test]
+async fn existing_sqlx_migrated_database_fixture_is_adopted_without_reset() {
     let temp = tempfile::tempdir().unwrap();
     let db_path = temp.path().join("legacy/library.db");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    std::fs::copy("tests/fixtures/legacy-sqlx-v18.sqlite", &db_path).unwrap();
     let database_url = format!("sqlite:{}?mode=rwc", db_path.display());
-    let legacy_pool = sqlx::SqlitePool::connect(&database_url).await.unwrap();
-    sqlx::migrate!("../../migrations")
-        .run(&legacy_pool)
-        .await
-        .unwrap();
-    legacy_pool.close().await;
-
     let handle = connect_database(&database_url).await.unwrap();
 
     migrations::migrate(&handle).await.unwrap();
 
-    let setting = Setting::find_by_id(handle.client(), "ui.preferences".to_string())
-        .await
-        .unwrap();
-    assert!(setting.is_some());
+    assert_eq!(
+        settings::get(&handle, "downloads.settings").await.unwrap(),
+        Some(r#"{"concurrency":7}"#.to_string())
+    );
+    assert_eq!(
+        catalog::get_track_by_id(&handle, 1)
+            .await
+            .unwrap()
+            .unwrap()
+            .path,
+        "Legacy Artist/Legacy Album/01.flac"
+    );
+    assert_eq!(
+        download_jobs::get_by_id(&handle, 1)
+            .await
+            .unwrap()
+            .unwrap()
+            .queue_position,
+        1
+    );
+    assert!(convert_jobs::get_by_id(&handle, 1).await.unwrap().is_some());
+    assert!(cue_jobs::get_by_id(&handle, 1).await.unwrap().is_some());
+    assert_eq!(
+        integrations::list(&handle, Some("tag_source"))
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(qobuz::get_by_id(&handle, 1).await.unwrap().is_some());
+    assert!(library_scan_runs::latest(&handle).await.unwrap().is_some());
 }
 
 fn table_names(tables: &[TableDef]) -> BTreeSet<String> {

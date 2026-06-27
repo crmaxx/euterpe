@@ -32,7 +32,7 @@ pub enum ConvertTrigger {
     Auto,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct ConvertJobRow {
     pub id: i64,
     pub album_id: i64,

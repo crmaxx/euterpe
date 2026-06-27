@@ -9,9 +9,9 @@ description = "Welds-backed persistence boundary for Euterpe"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "sqlite"] }
 thiserror = "2"
-welds = { version = "=0.4.22", features = ["sqlite", "detect", "check", "migrations"] }
+welds = { version = "0.5", features = ["sqlite", "detect", "check", "migrations"] }
 
 [dev-dependencies]
 tempfile = "3"

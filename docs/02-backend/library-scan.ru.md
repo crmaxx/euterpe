@@ -56,4 +56,4 @@ flowchart LR
 
 ## SQLite
 
-Миграция `010_tracks_file_size.sql`: колонка `tracks.file_size` для skip-by-stat.
+Welds builder migrations в `euterpe-data` создают колонку `tracks.file_size` для skip-by-stat.

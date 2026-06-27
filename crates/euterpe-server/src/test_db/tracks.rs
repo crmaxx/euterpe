@@ -4,7 +4,7 @@ use crate::error::ApiError;
 use euterpe_data::DataHandle;
 use euterpe_data::repositories::catalog;
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct TrackRow {
     pub id: i64,
     pub album_id: i64,
@@ -191,7 +191,7 @@ pub async fn cleanup_scan_keep_paths(pool: &SqlitePool, scan_id: i64) -> Result<
     Ok(())
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct TrackHashBackfillRow {
     pub id: i64,
     pub path: String,

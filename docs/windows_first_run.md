@@ -166,7 +166,7 @@ docker compose down -v
 
 | Проблема | Что сделать |
 |----------|-------------|
-| `build` падает на `npm ci` / `cargo` | Контекст сборки — **корень репо** (должны быть `frontend/`, `crates/`, `migrations/`) |
+| `build` падает на `npm ci` / `cargo` | Контекст сборки — **корень репо** (должны быть `frontend/`, `crates/`, `openapi/`) |
 | Очень долгая первая сборка | Нормально; повторные сборки быстрее за счёт кэша слоёв Docker |
 | Нет доступа к `C:\Music` | File sharing в Docker Desktop + путь `C:/Music:/music`; в Settings выбран `/music` |
 | OAuth Qobuz не срабатывает | Совпадение `EUTERPE_PUBLIC_BASE_URL` и адреса в браузере |

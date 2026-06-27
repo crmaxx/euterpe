@@ -5,7 +5,7 @@ use crate::error::ApiError;
 use euterpe_data::DataHandle;
 use euterpe_data::repositories::cue_jobs as data;
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct CueJobRow {
     pub id: i64,
     pub album_id: i64,

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/sqlx",
     "crates/euterpe-cue",
     "crates/euterpe-converter",
     "crates/euterpe-hawk",
@@ -18,3 +19,4 @@ license = "Apache-2.0"
 
 [patch.crates-io]
 smb = { path = "third_party/smb-0.11.2" }
+sqlx = { path = "crates/sqlx" }
