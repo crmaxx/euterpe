@@ -3,14 +3,15 @@ use std::sync::Arc;
 use euterpe_qobuz::{QobuzApi, QobuzError};
 use tokio::sync::Mutex;
 
-use crate::db::favorites;
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::favorites;
+
 use crate::error::ApiError;
 use crate::state::AppState;
-use sqlx::SqlitePool;
 
 /// Best `album_id` for Qobuz `album/get` (short ref, long slug, or catalog id string).
 pub async fn resolve_album_api_id(
-    pool: &SqlitePool,
+    data: &DataHandle,
     qobuz: &Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
     catalog_id: u64,
     from_request: Option<&str>,
@@ -22,7 +23,7 @@ pub async fn resolve_album_api_id(
         }
     }
 
-    if let Some(meta) = favorites::album_meta(pool, catalog_id).await?
+    if let Some(meta) = favorites::album_meta(data, catalog_id).await?
         && let Some(id) = meta.slug.filter(|s| !s.trim().is_empty())
     {
         let t = id.trim();
@@ -55,13 +56,7 @@ pub async fn resolve_album_api_id_for_state(
     catalog_id: u64,
     from_request: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
-    resolve_album_api_id(
-        &state.data.sqlx_pool(),
-        &state.qobuz,
-        catalog_id,
-        from_request,
-    )
-    .await
+    resolve_album_api_id(&state.data, &state.qobuz, catalog_id, from_request).await
 }
 
 /// Resolve via Qobuz favorites (JSON scan + parsed list). No `album/get` probe loop.
@@ -91,7 +86,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     use super::*;
-    use crate::db;
+    use euterpe_data::{connect_database, migrations};
 
     struct ResolveMockQobuz {
         catalog_lookup: Option<(u64, String)>,
@@ -158,20 +153,20 @@ mod tests {
         }
     }
 
-    async fn pool() -> SqlitePool {
-        let pool = db::connect("sqlite::memory:").await.unwrap();
-        db::migrate(&pool).await.unwrap();
-        pool
+    async fn data_handle() -> DataHandle {
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
+        data
     }
 
     #[tokio::test]
     async fn resolve_prefers_qobuz_favorites_over_explicit_slug_request() {
-        let pool = pool().await;
+        let data = data_handle().await;
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
                 catalog_lookup: Some((99, "0191018548094".into())),
             })));
-        let got = resolve_album_api_id(&pool, &qobuz, 99, Some("broken-slug"))
+        let got = resolve_album_api_id(&data, &qobuz, 99, Some("broken-slug"))
             .await
             .unwrap();
         assert_eq!(got.as_deref(), Some("0191018548094"));
@@ -179,12 +174,12 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_uses_explicit_request_when_no_other_source() {
-        let pool = pool().await;
+        let data = data_handle().await;
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
                 catalog_lookup: None,
             })));
-        let got = resolve_album_api_id(&pool, &qobuz, 99, Some("from-request"))
+        let got = resolve_album_api_id(&data, &qobuz, 99, Some("from-request"))
             .await
             .unwrap();
         assert_eq!(got.as_deref(), Some("from-request"));
@@ -192,40 +187,40 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_prefers_qobuz_favorites_over_local_slug() {
-        let pool = pool().await;
-        favorites::upsert_album(&pool, 42, "Album", "Artist", Some("local-slug"), None)
+        let data = data_handle().await;
+        favorites::upsert_album(&data, 42, "Album", "Artist", Some("local-slug"), None)
             .await
             .unwrap();
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
                 catalog_lookup: Some((42, "0191018548094".into())),
             })));
-        let got = resolve_album_api_id(&pool, &qobuz, 42, None).await.unwrap();
+        let got = resolve_album_api_id(&data, &qobuz, 42, None).await.unwrap();
         assert_eq!(got.as_deref(), Some("0191018548094"));
     }
 
     #[tokio::test]
     async fn resolve_uses_local_upc_slug_when_qobuz_has_no_match() {
-        let pool = pool().await;
-        favorites::upsert_album(&pool, 42, "Album", "Artist", Some("0819224015406"), None)
+        let data = data_handle().await;
+        favorites::upsert_album(&data, 42, "Album", "Artist", Some("0819224015406"), None)
             .await
             .unwrap();
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
                 catalog_lookup: None,
             })));
-        let got = resolve_album_api_id(&pool, &qobuz, 42, None).await.unwrap();
+        let got = resolve_album_api_id(&data, &qobuz, 42, None).await.unwrap();
         assert_eq!(got.as_deref(), Some("0819224015406"));
     }
 
     #[tokio::test]
     async fn resolve_falls_back_to_favorites_catalog_scan() {
-        let pool = pool().await;
+        let data = data_handle().await;
         let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
             Arc::new(Mutex::new(Box::new(ResolveMockQobuz {
                 catalog_lookup: Some((393908828, "zg7pv28g4mldg".into())),
             })));
-        let got = resolve_album_api_id(&pool, &qobuz, 393908828, None)
+        let got = resolve_album_api_id(&data, &qobuz, 393908828, None)
             .await
             .unwrap();
         assert_eq!(got.as_deref(), Some("zg7pv28g4mldg"));
