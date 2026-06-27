@@ -122,7 +122,6 @@ impl QobuzApi for DownloadMockQobuz {
 pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     use euterpe_server::config::AppConfig;
     use euterpe_server::crypto::MasterKey;
-    use euterpe_server::db;
     use euterpe_server::services::download::{WorkerDeps, spawn_worker};
     use reqwest::Client;
 
@@ -145,9 +144,10 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
         debug: false,
         static_dir: std::path::PathBuf::new(),
     };
-    let pool = db::connect(&config.database_url).await.unwrap();
-    db::migrate(&pool).await.unwrap();
-    let data = euterpe_data::DataHandle::from_sqlite_pool(pool.clone());
+    let data = euterpe_data::connect_database(&config.database_url)
+        .await
+        .unwrap();
+    euterpe_data::migrations::migrate(&data).await.unwrap();
     euterpe_server::services::app_settings::save_storage(
         &data,
         &euterpe_server::services::app_settings::StorageSettings::local(

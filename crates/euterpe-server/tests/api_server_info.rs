@@ -225,24 +225,15 @@ async fn sync_latest_returns_null_when_no_runs() {
 #[tokio::test]
 async fn sync_latest_returns_most_recent_run() {
     let state = app::test_support::test_state().await;
-    sqlx::query(
-        r#"
-        INSERT INTO qobuz_sync_runs (started_at, finished_at, status, albums_total, albums_added, albums_removed)
-        VALUES ('2020-01-01T00:00:00Z', '2020-01-01T00:01:00Z', 'success', 10, 1, 0)
-        "#,
-    )
-    .execute(&state.data.sqlx_pool())
-    .await
-    .unwrap();
-    sqlx::query(
-        r#"
-        INSERT INTO qobuz_sync_runs (started_at, status)
-        VALUES ('2021-01-01T00:00:00Z', 'running')
-        "#,
-    )
-    .execute(&state.data.sqlx_pool())
-    .await
-    .unwrap();
+    let completed = euterpe_data::repositories::qobuz::start_sync_run(&state.data)
+        .await
+        .unwrap();
+    euterpe_data::repositories::qobuz::finish_sync_success(&state.data, completed, 10, 1, 0)
+        .await
+        .unwrap();
+    let _running = euterpe_data::repositories::qobuz::start_sync_run(&state.data)
+        .await
+        .unwrap();
 
     let app = app::app(state);
     let response = app
@@ -259,5 +250,9 @@ async fn sync_latest_returns_most_recent_run() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(json["run"]["status"], "running");
-    assert_eq!(json["run"]["started_at"], "2021-01-01T00:00:00Z");
+    assert!(
+        json["run"]["started_at"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }

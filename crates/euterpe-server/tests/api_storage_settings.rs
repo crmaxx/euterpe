@@ -53,13 +53,12 @@ async fn storage_settings_encrypts_smb_password_and_redacts_response() {
             .is_none()
     );
 
-    let raw: (String,) =
-        sqlx::query_as("SELECT value FROM settings WHERE key = 'storage.settings'")
-            .fetch_one(&state.data.sqlx_pool())
-            .await
-            .unwrap();
-    assert!(!raw.0.contains("secret"));
-    assert!(raw.0.contains("password_encrypted"));
+    let raw = euterpe_data::fixtures::settings::get(&state.data, "storage.settings")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!raw.contains("secret"));
+    assert!(raw.contains("password_encrypted"));
 
     let get_response = app
         .oneshot(

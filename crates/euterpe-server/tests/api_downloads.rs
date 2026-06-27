@@ -14,8 +14,7 @@ use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
-use euterpe_server::api::DownloadJobType;
-use euterpe_server::db::download_jobs;
+use euterpe_data::repositories::download_jobs::{self, DownloadJobType as DataDownloadJobType};
 use euterpe_server::services::download::DownloadJobPayload;
 
 use download_mock::{DownloadMockQobuz, state_with_download_mock};
@@ -148,7 +147,7 @@ async fn download_job_completes_via_worker() {
         stream_url: format!("http://{addr}/cdn"),
     };
     let state = state_with_download_mock(mock).await;
-    let pool = state.data.sqlx_pool();
+    let data = state.data.clone();
     let app = app::app(state);
 
     let create = app
@@ -191,33 +190,51 @@ async fn download_job_completes_via_worker() {
             }
         }
     }
-    let final_job = download_jobs::get(&pool, job_id).await.unwrap();
+    let final_job = download_jobs::get_by_id(&data, job_id).await.unwrap();
     panic!("job did not complete in time: {final_job:?}");
 }
 
 #[tokio::test]
 async fn purge_finished_deletes_terminal_jobs() {
     let state = test_state_without_worker().await;
-    let pool = state.data.sqlx_pool();
+    let data = state.data.clone();
     let payload = DownloadJobPayload {
         torrent: None,
         album_api_id: Some("1".into()),
         display_title: None,
     };
 
-    let running = download_jobs::insert_queued(&pool, DownloadJobType::Album, 2, 6, Some(&payload))
-        .await
-        .unwrap();
-    download_jobs::claim_running(&pool, running).await.unwrap();
-    let done = download_jobs::insert_queued(&pool, DownloadJobType::Album, 3, 6, Some(&payload))
-        .await
-        .unwrap();
-    download_jobs::claim_running(&pool, done).await.unwrap();
-    download_jobs::finish_success(&pool, done).await.unwrap();
-    let failed = download_jobs::insert_queued(&pool, DownloadJobType::Album, 4, 6, Some(&payload))
-        .await
-        .unwrap();
-    download_jobs::finish_failed(&pool, failed, "err")
+    let running = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(2),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::claim_running(&data, running).await.unwrap();
+    let done = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(3),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::claim_running(&data, done).await.unwrap();
+    download_jobs::finish_success(&data, done).await.unwrap();
+    let failed = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(4),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::finish_failed(&data, failed, "err")
         .await
         .unwrap();
 
@@ -240,25 +257,46 @@ async fn purge_finished_deletes_terminal_jobs() {
     let spec = load_spec();
     validate_schema(&schema_from_spec(&spec, "DownloadPurgeResponse"), &json);
 
-    assert!(download_jobs::get(&pool, running).await.unwrap().is_some());
-    assert!(download_jobs::get(&pool, done).await.unwrap().is_none());
-    assert!(download_jobs::get(&pool, failed).await.unwrap().is_none());
+    assert!(
+        download_jobs::get_by_id(&data, running)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        download_jobs::get_by_id(&data, done)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        download_jobs::get_by_id(&data, failed)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
 async fn delete_with_purge_removes_terminal_job() {
     let state = test_state_without_worker().await;
-    let pool = state.data.sqlx_pool();
+    let data = state.data.clone();
     let payload = DownloadJobPayload {
         torrent: None,
         album_api_id: Some("1".into()),
         display_title: None,
     };
-    let id = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
-        .await
-        .unwrap();
-    download_jobs::claim_running(&pool, id).await.unwrap();
-    download_jobs::finish_success(&pool, id).await.unwrap();
+    let id = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(1),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::claim_running(&data, id).await.unwrap();
+    download_jobs::finish_success(&data, id).await.unwrap();
 
     let app = app::app(state);
     let response = app
@@ -272,22 +310,28 @@ async fn delete_with_purge_removes_terminal_job() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(download_jobs::get(&pool, id).await.unwrap().is_none());
+    assert!(download_jobs::get_by_id(&data, id).await.unwrap().is_none());
 }
 
 #[tokio::test]
 async fn delete_with_purge_rejects_running_job() {
     let state = test_state_without_worker().await;
-    let pool = state.data.sqlx_pool();
+    let data = state.data.clone();
     let payload = DownloadJobPayload {
         torrent: None,
         album_api_id: Some("1".into()),
         display_title: None,
     };
-    let id = download_jobs::insert_queued(&pool, DownloadJobType::Album, 1, 6, Some(&payload))
-        .await
-        .unwrap();
-    download_jobs::claim_running(&pool, id).await.unwrap();
+    let id = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(1),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::claim_running(&data, id).await.unwrap();
 
     let app = app::app(state);
     let response = app
@@ -301,22 +345,28 @@ async fn delete_with_purge_rejects_running_job() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
-    assert!(download_jobs::get(&pool, id).await.unwrap().is_some());
+    assert!(download_jobs::get_by_id(&data, id).await.unwrap().is_some());
 }
 
 #[tokio::test]
 async fn list_downloads_keyset_by_id_desc() {
     let state = test_state_without_worker().await;
-    let pool = state.data.sqlx_pool();
+    let data = state.data.clone();
     for i in 1..=4 {
         let payload = DownloadJobPayload {
             torrent: None,
             album_api_id: Some(format!("album-{i}")),
             display_title: None,
         };
-        download_jobs::insert_queued(&pool, DownloadJobType::Album, i, 6, Some(&payload))
-            .await
-            .unwrap();
+        download_jobs::insert_queued(
+            &data,
+            DataDownloadJobType::Album,
+            Some(i),
+            6,
+            Some(&payload),
+        )
+        .await
+        .unwrap();
     }
 
     let app = app::app(state);
