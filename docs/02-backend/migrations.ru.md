@@ -1,33 +1,27 @@
-# Миграции sqlx
+# Миграции данных
 
 ## Инструмент
 
-- `sqlx-cli` для create/migrate
-- Папка `migrations/` в корне workspace
-- `sqlx::migrate!()` в `euterpe-server` startup
+- Владелец миграций: crate `euterpe-data`.
+- Runtime entrypoint: `euterpe_data::migrations::migrate(&DataHandle)`.
+- Миграции описываются через Welds migration API и выполняются до запуска HTTP server/workers.
+- Старые SQL-файлы в `migrations/` остаются только как compatibility input для уже существующей SQLite-схемы.
 
 ## Правила
 
-1. Одна миграция — одна логическая цель
-2. Имена: `YYYYMMDDHHMMSS_description.sql`
-3. Избегать `AUTOINCREMENT` в комментариях без Postgres плана — использовать INTEGER PK
-4. Не удалять колонки без ADR
+1. Одна миграция — одна логическая цель.
+2. Новая persistence-логика добавляется через `euterpe-data` models/repositories.
+3. Server routes, services, workers и tests не создают raw database operations напрямую.
+4. Не удалять колонки или менять смысл существующих nullable/unique полей без отдельного ADR.
+5. Существующие SQLite базы должны мигрировать вперёд без destructive reset.
 
 ## TDD
 
-```rust
-#[sqlx::test]
-async fn migrations_apply(pool: SqlitePool) {
-    // pool with migrate
-    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM settings")
-        .fetch_one(&pool).await.unwrap();
-    assert_eq!(row.0, 0);
-}
-```
+Миграции покрываются тестами в `crates/euterpe-data/tests/migrations.rs`:
 
-## Offline / compile-time check
-
-`cargo sqlx prepare` для CI с `DATABASE_URL=sqlite::memory:`.
+1. Сначала characterization/compatibility test для ожидаемой схемы или legacy базы.
+2. Затем Welds migration step.
+3. Проверка поведения через typed repositories/fixtures, не через route/service SQL.
 
 ## Backup before migrate
 

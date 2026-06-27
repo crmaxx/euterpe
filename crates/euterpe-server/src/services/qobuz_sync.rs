@@ -108,7 +108,7 @@ mod tests {
     use sqlx::SqlitePool;
 
     use super::*;
-    use crate::db;
+    use crate::test_db as db;
 
     struct MockQobuz {
         albums: Arc<tokio::sync::Mutex<Vec<AlbumSummary>>>,

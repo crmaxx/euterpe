@@ -17,7 +17,6 @@ use lofty::read_from_path;
 use reqwest::Client;
 use reqwest::header::CONTENT_TYPE;
 
-use crate::db::{albums, tracks};
 use crate::error::ApiError;
 use crate::library::paths::{track_path, track_relative_path};
 use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
@@ -458,7 +457,7 @@ pub fn discover_album_cover_rel(library_root: &Path, album_rel_dir: &str) -> Opt
 
 /// If `cover_path` is missing or stale, discover a file on disk and persist it on the album row.
 pub async fn ensure_album_cover_path(
-    pool: &sqlx::SqlitePool,
+    data: &DataHandle,
     library_root: &Path,
     album_id: i64,
     album_path: Option<&str>,
@@ -475,13 +474,13 @@ pub async fn ensure_album_cover_path(
     let Some(rel) = discover_album_cover_rel(library_root, dir) else {
         return Ok(None);
     };
-    albums::set_cover_path(pool, album_id, &rel).await?;
+    catalog::set_album_cover_path(data, album_id, &rel).await?;
     Ok(Some(rel))
 }
 
 /// If `cover_path` is missing or stale, discover a file via storage and persist it on the album row.
 pub async fn ensure_album_cover_path_storage(
-    pool: &sqlx::SqlitePool,
+    data: &DataHandle,
     storage: &dyn LibraryStorage,
     album_id: i64,
     album_path: Option<&str>,
@@ -499,7 +498,7 @@ pub async fn ensure_album_cover_path_storage(
     let Some(rel) = discover_album_cover_rel_storage(storage, dir).await? else {
         return Ok(None);
     };
-    albums::set_cover_path(pool, album_id, &rel).await?;
+    catalog::set_album_cover_path(data, album_id, &rel).await?;
     Ok(Some(rel))
 }
 
@@ -546,7 +545,7 @@ pub fn image_content_type(path: &Path) -> &'static str {
 
 /// Write `cover.<ext>` under the album directory, update DB, embed in all album tracks.
 pub async fn write_album_cover_from_bytes(
-    pool: &sqlx::SqlitePool,
+    data: &DataHandle,
     library_root: &Path,
     album_id: i64,
     album_rel: &str,
@@ -583,10 +582,10 @@ pub async fn write_album_cover_from_bytes(
     tokio::fs::write(&cover_file, bytes)
         .await
         .map_err(|e| ApiError::Message(e.to_string()))?;
-    albums::set_cover_path(pool, album_id, &rel_cover).await?;
+    catalog::set_album_cover_path(data, album_id, &rel_cover).await?;
 
     let mut tracks_embedded = 0u32;
-    let track_rows = tracks::list_by_album(pool, album_id).await?;
+    let track_rows = catalog::list_tracks_by_album(data, album_id).await?;
     for t in track_rows {
         let fp = library_root.join(&t.path);
         if fp.is_file() {
@@ -827,7 +826,7 @@ fn storage_cover_rewrite_max_bytes() -> u64 {
 
 pub async fn apply_album_cover_after_download(
     http: &Client,
-    pool: &sqlx::SqlitePool,
+    data: &DataHandle,
     library_root: &Path,
     album: &AlbumDetail,
     quality: Quality,
@@ -850,8 +849,8 @@ pub async fn apply_album_cover_after_download(
         .unwrap_or_else(|_| cover_path.to_string_lossy().into_owned());
 
     for qid in qobuz_catalog_ids_for_cover(download_job_catalog_id, album) {
-        if let Some(album_id) = albums::find_id_by_qobuz_album_id(pool, qid as i64).await? {
-            albums::set_cover_path(pool, album_id, &rel_cover).await?;
+        if let Some(album_id) = catalog::find_album_id_by_qobuz_album_id(data, qid as i64).await? {
+            catalog::set_album_cover_path(data, album_id, &rel_cover).await?;
             break;
         }
     }
@@ -872,7 +871,7 @@ pub async fn apply_album_cover_after_download(
 
 pub async fn apply_album_cover_after_download_storage(
     http: &Client,
-    pool: &sqlx::SqlitePool,
+    data: &DataHandle,
     storage: &dyn LibraryStorage,
     album: &AlbumDetail,
     quality: Quality,
@@ -900,8 +899,8 @@ pub async fn apply_album_cover_after_download_storage(
     .await?;
 
     for qid in qobuz_catalog_ids_for_cover(download_job_catalog_id, album) {
-        if let Some(album_id) = albums::find_id_by_qobuz_album_id(pool, qid as i64).await? {
-            albums::set_cover_path(pool, album_id, &result.cover_path).await?;
+        if let Some(album_id) = catalog::find_album_id_by_qobuz_album_id(data, qid as i64).await? {
+            catalog::set_album_cover_path(data, album_id, &result.cover_path).await?;
             break;
         }
     }
@@ -1012,6 +1011,7 @@ mod mime_tests {
 mod path_tests {
     use super::*;
     use crate::library::storage::LocalStorage;
+    use crate::test_db::albums;
     use std::io::Write;
 
     #[test]
@@ -1089,11 +1089,11 @@ mod path_tests {
     #[tokio::test]
     async fn write_album_cover_from_bytes_updates_db_and_file() {
         let dir = tempfile::TempDir::new().unwrap();
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
         let album_path = dir.path().join("Artist").join("Album");
         std::fs::create_dir_all(&album_path).unwrap();
-        let artist_id = crate::db::artists::upsert_by_name(&pool, "Artist", None)
+        let artist_id = crate::test_db::artists::upsert_by_name(&pool, "Artist", None)
             .await
             .unwrap();
         let album_id = albums::upsert(
@@ -1112,7 +1112,7 @@ mod path_tests {
 
         let png = b"\x89PNG\r\n\x1a\n".to_vec();
         let result = write_album_cover_from_bytes(
-            &pool,
+            &DataHandle::from_sqlite_pool(pool.clone()),
             dir.path(),
             album_id,
             "Artist/Album",

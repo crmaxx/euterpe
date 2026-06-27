@@ -29,7 +29,8 @@ preview-level until the storage migration settles.
 
 | Path | Purpose |
 | --- | --- |
-| `crates/euterpe-server` | Axum API server, SQLite persistence, workers, storage integration |
+| `crates/euterpe-server` | Axum API server, workers, routes, storage integration |
+| `crates/euterpe-data` | Welds-backed SQLite data layer: connection, migrations, repositories, fixtures |
 | `crates/euterpe-qobuz` | Qobuz API client |
 | `crates/euterpe-smb` | SMB storage backend wrapper |
 | `crates/euterpe-cue` | CUE parsing and split support |

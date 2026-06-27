@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use euterpe_data::DataHandle;
+use euterpe_data::repositories::{download_jobs, favorites};
 use euterpe_qobuz::{AlbumDetail, DEFAULT_USER_AGENT, QobuzApi, QobuzError, Quality, TrackSummary};
 use euterpe_torrent::TorrentEngine;
 use futures_util::{StreamExt, TryStreamExt};
@@ -14,7 +15,6 @@ use tokio_util::io::StreamReader;
 
 use crate::api::{JobProgressEvent, ScanProgressEvent};
 use crate::config::AppConfig;
-use crate::db::{download_jobs, favorites};
 use crate::error::ApiError;
 use crate::library::paths::{track_path, track_relative_path};
 use crate::library::storage::{self, StoragePath};
@@ -75,19 +75,17 @@ pub fn spawn_worker(
 }
 
 async fn try_dispatch(deps: &Arc<WorkerDeps>) -> Result<(), ApiError> {
-    use crate::api::DownloadJobType;
+    use download_jobs::DownloadJobType;
 
     loop {
         let mut dispatched = false;
 
         let album_running =
-            download_jobs::count_running_by_type(&deps.data.sqlx_pool(), DownloadJobType::Album)
-                .await?;
+            download_jobs::count_running_by_type(&deps.data, DownloadJobType::Album).await?;
         if album_running == 0
             && let Some(id) =
-                download_jobs::next_queued_id(&deps.data.sqlx_pool(), DownloadJobType::Album)
-                    .await?
-            && download_jobs::claim_running(&deps.data.sqlx_pool(), id).await?
+                download_jobs::next_queued_id(&deps.data, DownloadJobType::Album).await?
+            && download_jobs::claim_running(&deps.data, id).await?
         {
             dispatched = true;
             let deps = Arc::clone(deps);
@@ -106,16 +104,12 @@ async fn try_dispatch(deps: &Arc<WorkerDeps>) -> Result<(), ApiError> {
             0
         };
         if torrent_max > 0 {
-            let torrent_running = download_jobs::count_running_by_type(
-                &deps.data.sqlx_pool(),
-                DownloadJobType::Torrent,
-            )
-            .await?;
+            let torrent_running =
+                download_jobs::count_running_by_type(&deps.data, DownloadJobType::Torrent).await?;
             if torrent_running < torrent_max as u64
                 && let Some(id) =
-                    download_jobs::next_queued_id(&deps.data.sqlx_pool(), DownloadJobType::Torrent)
-                        .await?
-                && download_jobs::claim_running(&deps.data.sqlx_pool(), id).await?
+                    download_jobs::next_queued_id(&deps.data, DownloadJobType::Torrent).await?
+                && download_jobs::claim_running(&deps.data, id).await?
             {
                 dispatched = true;
                 let deps = Arc::clone(deps);
@@ -300,7 +294,7 @@ async fn fetch_album_detail(
 
 /// Claim a queued job and run it (used in tests; production uses scheduler + `execute_job`).
 pub async fn run_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
-    if !download_jobs::claim_running(&deps.data.sqlx_pool(), job_id).await? {
+    if !download_jobs::claim_running(&deps.data, job_id).await? {
         return Ok(());
     }
     execute_job(job_id, deps).await
@@ -310,29 +304,34 @@ pub async fn run_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
 pub async fn execute_job(job_id: i64, deps: &WorkerDeps) -> Result<(), ApiError> {
     dl_debug!(deps, job_id, "download job executing");
 
-    let job = download_jobs::get(&deps.data.sqlx_pool(), job_id)
+    let job = download_jobs::get_by_id(&deps.data, job_id)
         .await?
         .ok_or_else(|| ApiError::Message(format!("job {job_id} not found")))?;
 
     let result = match job.job_type {
-        crate::api::DownloadJobType::Album => {
+        download_jobs::DownloadJobType::Album => {
             let quality = quality_from_format_id(job.quality as u8)
                 .ok_or_else(|| ApiError::bad_request("unsupported quality"))?;
-            run_album_job(job_id, job.qobuz_id as u64, quality, deps).await
+            run_album_job(
+                job_id,
+                job.qobuz_id.unwrap_or_default() as u64,
+                quality,
+                deps,
+            )
+            .await
         }
-        crate::api::DownloadJobType::Torrent => {
+        download_jobs::DownloadJobType::Torrent => {
             super::torrent_job::run_torrent_job(job_id, deps).await
         }
         _ => Err(ApiError::bad_request("unsupported job_type")),
     };
 
     if let Err(e) = result {
-        if download_jobs::get(&deps.data.sqlx_pool(), job_id)
+        if download_jobs::get_by_id(&deps.data, job_id)
             .await?
-            .is_some_and(|j| j.status == crate::api::DownloadJobStatus::Running)
+            .is_some_and(|j| j.status == download_jobs::DownloadJobStatus::Running)
         {
-            let _ =
-                download_jobs::finish_failed(&deps.data.sqlx_pool(), job_id, &e.to_string()).await;
+            let _ = download_jobs::finish_failed(&deps.data, job_id, &e.to_string()).await;
         }
         return Err(e);
     }
@@ -346,11 +345,12 @@ async fn run_album_job(
     deps: &WorkerDeps,
 ) -> Result<(), ApiError> {
     let meta = if album_id > 0 {
-        favorites::album_meta(&deps.data.sqlx_pool(), album_id).await?
+        favorites::album_meta(&deps.data, album_id).await?
     } else {
         None
     };
-    let payload = download_jobs::get_payload(&deps.data.sqlx_pool(), job_id).await?;
+    let payload: Option<crate::services::download::payload::DownloadJobPayload> =
+        download_jobs::get_payload(&deps.data, job_id).await?;
     let stored_api_id = payload.as_ref().and_then(|p| p.album_api_id.clone());
     tracing::info!(
         job_id,
@@ -379,7 +379,7 @@ async fn run_album_job(
     let label = format_album_display_title(artist, &album.summary.title);
     let mut job_payload = payload.unwrap_or_default();
     job_payload.display_title = Some(label);
-    download_jobs::set_payload(&deps.data.sqlx_pool(), job_id, &job_payload).await?;
+    download_jobs::set_payload(&deps.data, job_id, &job_payload).await?;
 
     let tracks = album
         .tracks
@@ -414,7 +414,7 @@ async fn run_album_job(
                     .acquire_owned()
                     .await
                     .map_err(|e| ApiError::Message(e.to_string()))?;
-                if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
+                if download_jobs::is_stopped(&deps.data, job_id).await? {
                     return Ok::<(usize, u64, u64), ApiError>((idx, track.id, 0));
                 }
                 dl_debug!(
@@ -436,20 +436,15 @@ async fn run_album_job(
 
     while let Some(result) = downloads.next().await {
         let (_idx, _track_id, speed_bps) = result?;
-        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
+        if download_jobs::is_stopped(&deps.data, job_id).await? {
             dl_debug!(deps, job_id, "download job stopped");
             tracing::info!(job_id, "download job stopped (cancelled or paused)");
             return Ok(());
         }
         done += 1;
         let progress = (done as f64 / total as f64) * 100.0;
-        download_jobs::update_progress_and_speed(
-            &deps.data.sqlx_pool(),
-            job_id,
-            progress,
-            Some(speed_bps),
-        )
-        .await?;
+        download_jobs::update_progress_and_speed(&deps.data, job_id, progress, Some(speed_bps))
+            .await?;
         let _ = deps.events.send(JobProgressEvent {
             id: job_id,
             progress_pct: progress,
@@ -506,7 +501,7 @@ async fn run_album_job(
         StorageLocation::Local { path } => {
             crate::library::covers::apply_album_cover_after_download(
                 &deps.http,
-                &deps.data.sqlx_pool(),
+                &deps.data,
                 &std::path::PathBuf::from(path),
                 &album,
                 quality,
@@ -519,7 +514,7 @@ async fn run_album_job(
                 storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
             crate::library::covers::apply_album_cover_after_download_storage(
                 &deps.http,
-                &deps.data.sqlx_pool(),
+                &deps.data,
                 storage.as_ref(),
                 &album,
                 quality,
@@ -532,11 +527,11 @@ async fn run_album_job(
         tracing::warn!(job_id, error = %e, "album cover download/embed failed");
     }
 
-    if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
+    if download_jobs::is_stopped(&deps.data, job_id).await? {
         return Ok(());
     }
 
-    download_jobs::finish_success(&deps.data.sqlx_pool(), job_id).await?;
+    download_jobs::finish_success(&deps.data, job_id).await?;
     dl_debug!(
         deps,
         job_id,
@@ -676,7 +671,7 @@ async fn download_track(
     let mut downloaded_size: Option<u64> = None;
 
     for attempt in 1..=MAX_ATTEMPTS {
-        if download_jobs::is_stopped(&deps.data.sqlx_pool(), job_id).await? {
+        if download_jobs::is_stopped(&deps.data, job_id).await? {
             return Ok(0);
         }
 
@@ -907,7 +902,8 @@ mod tests {
     use super::*;
     use crate::api::DownloadJobType;
     use crate::config::AppConfig;
-    use crate::db;
+    use crate::test_db as db;
+    use crate::test_db::download_jobs;
 
     fn test_runtime(config: &AppConfig) -> RuntimeSettingsHandle {
         Arc::new(tokio::sync::RwLock::new(RuntimeSettings {
@@ -1713,12 +1709,12 @@ mod tests {
         assert_eq!(tags.isrc.as_deref(), Some("XX-1"));
         assert_eq!(tags.composer.as_deref(), Some("Composer"));
 
-        let lib_album_id = crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
+        let lib_album_id = crate::test_db::albums::find_id_by_qobuz_album_id(&pool, 99)
             .await
             .unwrap()
             .expect("album row for favorites in_library JOIN (qobuz_album_id=job.qobuz_id)");
 
-        let indexed = crate::db::tracks::list_by_album(&pool, lib_album_id)
+        let indexed = crate::test_db::tracks::list_by_album(&pool, lib_album_id)
             .await
             .unwrap();
         assert_eq!(
@@ -1838,13 +1834,13 @@ mod tests {
         run_job(job_id, &deps).await.unwrap();
 
         assert!(
-            crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
+            crate::test_db::albums::find_id_by_qobuz_album_id(&pool, 99)
                 .await
                 .unwrap()
                 .is_some()
         );
         assert!(
-            crate::db::albums::find_id_by_qobuz_album_id(&pool, 2000)
+            crate::test_db::albums::find_id_by_qobuz_album_id(&pool, 2000)
                 .await
                 .unwrap()
                 .is_none()
@@ -1991,11 +1987,11 @@ mod tests {
         );
         assert_eq!(std::fs::read(&track2).unwrap(), body);
 
-        let lib_album_id = crate::db::albums::find_id_by_qobuz_album_id(&pool, 99)
+        let lib_album_id = crate::test_db::albums::find_id_by_qobuz_album_id(&pool, 99)
             .await
             .unwrap()
             .expect("album indexed after skip-download job");
-        let indexed = crate::db::tracks::list_by_album(&pool, lib_album_id)
+        let indexed = crate::test_db::tracks::list_by_album(&pool, lib_album_id)
             .await
             .unwrap();
         assert_eq!(indexed.len(), 2);

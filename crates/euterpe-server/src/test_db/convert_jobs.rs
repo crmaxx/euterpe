@@ -206,7 +206,7 @@ fn convert_row_from_data(row: data::ConvertJobRow) -> ConvertJobRow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{albums, artists, connect, migrate};
+    use crate::test_db::{albums, artists, connect, migrate};
 
     async fn seed_album(pool: &SqlitePool) -> i64 {
         let artist_id = artists::upsert_by_name(pool, "Artist", None).await.unwrap();

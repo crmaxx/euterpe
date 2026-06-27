@@ -468,7 +468,7 @@ async fn schedule_debounced_changes(
         .library_scan_config(deps.config.debug)?;
     watch.pause_for_scan().await;
     let scan_id = match crate::services::library_scan::start_scan_storage(
-        &deps.data.sqlx_pool(),
+        &deps.data,
         storage,
         deps.scan_events.clone(),
         scan_cfg,
@@ -484,7 +484,7 @@ async fn schedule_debounced_changes(
             return Err(error);
         }
     };
-    crate::services::library_scan::wait_scan_finished(&deps.data.sqlx_pool(), scan_id).await;
+    crate::services::library_scan::wait_scan_finished(&deps.data, scan_id).await;
     watch.restart().await;
     Ok(())
 }

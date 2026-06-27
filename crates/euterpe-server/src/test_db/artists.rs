@@ -21,7 +21,7 @@ pub async fn name_by_id(pool: &SqlitePool, id: i64) -> Result<Option<String>, Ap
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{connect, migrate};
+    use crate::test_db::{connect, migrate};
 
     #[tokio::test]
     async fn upsert_artist_returns_stable_id() {

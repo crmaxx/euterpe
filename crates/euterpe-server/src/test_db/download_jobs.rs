@@ -507,8 +507,8 @@ mod tests {
 
     #[tokio::test]
     async fn claim_running_only_from_queued() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
         let id = insert_queued(&pool, DownloadJobType::Album, 42, 6, None)
             .await
             .unwrap();
@@ -518,8 +518,8 @@ mod tests {
 
     #[tokio::test]
     async fn purge_finished_removes_terminal_jobs_only() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
 
         let queued = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
             .await
@@ -549,8 +549,8 @@ mod tests {
 
     #[tokio::test]
     async fn delete_by_id_removes_row() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
         let id = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
             .await
             .unwrap();
@@ -562,8 +562,8 @@ mod tests {
 
     #[tokio::test]
     async fn pause_running_allows_next_queued() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
 
         let running = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
             .await
@@ -587,8 +587,8 @@ mod tests {
 
     #[tokio::test]
     async fn retry_failed_requeues_at_end() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
 
         let id = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
             .await
@@ -621,8 +621,8 @@ mod tests {
 
     #[tokio::test]
     async fn adjust_queue_priority_swaps_neighbors() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
 
         let a = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
             .await
@@ -665,8 +665,8 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_lifecycle_operations_are_bad_requests() {
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
 
         let queued = insert_queued(&pool, DownloadJobType::Album, 1, 6, None)
             .await
@@ -701,8 +701,8 @@ mod tests {
     async fn has_running_album_matches_payload_album_api_id() {
         use crate::services::download::DownloadJobPayload;
 
-        let pool = crate::db::connect("sqlite::memory:").await.unwrap();
-        crate::db::migrate(&pool).await.unwrap();
+        let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
+        crate::test_db::migrate(&pool).await.unwrap();
         let payload = DownloadJobPayload {
             album_api_id: Some("zg7pv28g4mldg".into()),
             display_title: None,

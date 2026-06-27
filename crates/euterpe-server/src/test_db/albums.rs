@@ -253,7 +253,7 @@ fn album_sort_value_to_data(value: SortKeyValue) -> catalog::AlbumListSortValue 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{artists, connect, migrate};
+    use crate::test_db::{artists, connect, migrate};
 
     #[tokio::test]
     async fn upsert_album_by_path() {
@@ -348,9 +348,9 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::db::tracks::upsert(
+        crate::test_db::tracks::upsert(
             &pool,
-            crate::db::tracks::TrackUpsert {
+            crate::test_db::tracks::TrackUpsert {
                 album_id: non_empty,
                 title: "Track",
                 track_number: None,

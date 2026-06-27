@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytes::BytesMut;
+use euterpe_data::DataHandle;
 use futures_util::stream;
-use sqlx::SqlitePool;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tokio::sync::broadcast;
@@ -232,7 +232,7 @@ pub async fn copy_to_library_storage_cancellable(
 }
 
 pub async fn trigger_library_scan(
-    pool: &SqlitePool,
+    data: &DataHandle,
     library_path: PathBuf,
     scan_events: broadcast::Sender<ScanProgressEvent>,
     scan_cfg: LibraryScanConfig,
@@ -240,7 +240,7 @@ pub async fn trigger_library_scan(
 ) -> Result<i64, ApiError> {
     let scan_root = library_scan::resolve_scan_root_query(&library_path, Some(library_dest_rel))?;
     library_scan::start_scan(
-        pool,
+        data,
         library_path,
         scan_events,
         scan_cfg,

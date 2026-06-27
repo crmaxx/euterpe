@@ -9,7 +9,6 @@ use crate::api::{
     CueAlbumResponse, CueDocument, CueExtraField, CueFileChoice, CueIssue, CueJobSummary,
     CueSplitRequest, CueValidationResponse,
 };
-use crate::db::cue_jobs::CueJobRow;
 use crate::error::ApiError;
 use crate::library::storage::{LibraryStorage, StorageEntryKind, StoragePath};
 
@@ -176,12 +175,11 @@ pub fn document_to_core(document: &CueDocument) -> euterpe_cue::CueDocument {
     }
 }
 
-pub fn cue_job_to_api(row: CueJobRow) -> CueJobSummary {
-    let row = crate::db::cue_jobs::row_to_summary(row);
+pub fn cue_job_to_api(row: data_cue_jobs::CueJobRow) -> CueJobSummary {
     CueJobSummary {
         id: row.id,
         album_id: row.album_id,
-        status: row.status,
+        status: row.status.as_str().to_string(),
         tracks_total: row.tracks_total,
         tracks_done: row.tracks_done,
         progress_pct: row.progress_pct,

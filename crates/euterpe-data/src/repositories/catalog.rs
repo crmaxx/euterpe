@@ -364,6 +364,28 @@ pub async fn album_id_by_path(handle: &DataHandle, path: &str) -> Result<Option<
         .map(|album| album.id))
 }
 
+pub async fn album_id_by_path_or_prefix(handle: &DataHandle, path: &str) -> Result<Option<i64>> {
+    let prefix = format!("{}/", path.trim_end_matches('/'));
+    let mut rows = Album::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter(|album| {
+            album
+                .path
+                .as_deref()
+                .is_some_and(|album_path| album_path == path || album_path.starts_with(&prefix))
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by_key(|album| {
+        (
+            album.path.as_ref().map_or(usize::MAX, String::len),
+            album.id,
+        )
+    });
+    Ok(rows.first().map(|album| album.id))
+}
+
 pub async fn find_album_id_by_qobuz_album_id(
     handle: &DataHandle,
     qobuz_id: i64,

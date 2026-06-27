@@ -1,6 +1,8 @@
 # Схема SQLite
 
-## Pragmas (при каждом connect)
+Схемой владеет crate `euterpe-data`: Welds migrations создают/обновляют таблицы, а server обращается к данным через typed repositories.
+
+## Pragmas (при каждом connect через `DataHandle`)
 
 ```sql
 PRAGMA journal_mode = WAL;
@@ -26,7 +28,7 @@ CREATE TABLE settings (
 
 Ключи (Phase 6+ / FP-10): `qobuz.active_account_id` → `qobuz_accounts.id`.
 
-### qobuz_accounts (future, FP-1 / FP-10)
+### qobuz_accounts
 
 Несколько привязанных аккаунтов Qobuz; UAT только encrypted.
 
@@ -157,4 +159,4 @@ CREATE INDEX idx_tracks_path ON tracks (path);
 
 ## TDD
 
-sqlx migration test: apply up + down in transaction.
+Migration/repository tests живут в `crates/euterpe-data/tests`. Проверки должны идти через typed repositories или fixtures; raw SQL в server tests не используется как setup/assertion API.

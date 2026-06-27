@@ -298,7 +298,7 @@ pub async fn album_has_convertible_tracks(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{albums, artists, connect, migrate};
+    use crate::test_db::{albums, artists, connect, migrate};
 
     #[tokio::test]
     async fn upsert_track_by_path() {
