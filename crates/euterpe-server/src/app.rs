@@ -677,10 +677,16 @@ fn qobuz_sync_run_from_data(row: qobuz_runs::QobuzSyncRunSummary) -> QobuzSyncRu
 pub mod test_support {
     use super::*;
     use crate::services::download::{WorkerDeps, spawn_worker};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_CONFIG_ID: AtomicU64 = AtomicU64::new(0);
 
     fn test_config() -> AppConfig {
-        let library_path =
-            std::env::temp_dir().join(format!("euterpe-server-test-{}", std::process::id()));
+        let id = TEST_CONFIG_ID.fetch_add(1, Ordering::Relaxed);
+        let library_path = std::env::temp_dir().join(format!(
+            "euterpe-server-test-{}-{id}",
+            std::process::id()
+        ));
         AppConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             database_url: "sqlite::memory:".into(),
@@ -766,5 +772,18 @@ pub mod test_support {
     /// App state for API tests that seed `download_jobs` directly (no background scheduler).
     pub async fn test_state_without_worker() -> AppState {
         test_state_inner(false).await
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_config_uses_unique_library_paths() {
+            let first = test_config();
+            let second = test_config();
+
+            assert_ne!(first.library_path, second.library_path);
+        }
     }
 }

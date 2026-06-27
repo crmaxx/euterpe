@@ -81,25 +81,7 @@ async fn library_scan_indexes_files() {
     let json: Value = serde_json::from_slice(&body).unwrap();
     let scan_id = json["scan_id"].as_i64().unwrap();
 
-    for _ in 0..50 {
-        let res = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(format!("/api/v1/library/scan/{scan_id}"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let bytes = res.into_body().collect().await.unwrap().to_bytes();
-        let run: Value = serde_json::from_slice(&bytes).unwrap();
-        if run["status"] == "success" {
-            assert!(run["files_indexed"].as_i64().unwrap() >= 1);
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    wait_for_scan_success(&app, scan_id, Some(1)).await;
 
     let albums = app
         .oneshot(
