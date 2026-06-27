@@ -12,10 +12,10 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::AppConfig;
-use crate::db::{albums, library_scan_runs, tracks};
 use crate::error::ApiError;
 use crate::library::storage::{self, StoragePath};
 use crate::services::app_settings::{RuntimeSettingsHandle, StorageLocation};
+use euterpe_data::repositories::{catalog, library_scan_runs};
 
 const DEBOUNCE_WINDOW: Duration = Duration::from_millis(1500);
 const PENDING_SCAN_RETRY: Duration = Duration::from_secs(5);
@@ -434,7 +434,7 @@ async fn schedule_debounced_changes(
     cancel: &CancellationToken,
 ) -> Result<(), ApiError> {
     for prune in prunes {
-        let deleted = prune_removed_watch_path(&deps.data.sqlx_pool(), &prune).await?;
+        let deleted = prune_removed_watch_path(&deps.data, &prune).await?;
         if deleted > 0 {
             tracing::info!(
                 path = %prune.as_str(),
@@ -446,7 +446,7 @@ async fn schedule_debounced_changes(
     if !scan_requested || cancel.is_cancelled() {
         return Ok(());
     }
-    while library_scan_runs::has_running(&deps.data.sqlx_pool()).await? {
+    while library_scan_runs::has_running(&deps.data).await? {
         if cancel.is_cancelled() {
             return Ok(());
         }
@@ -489,26 +489,23 @@ async fn schedule_debounced_changes(
     Ok(())
 }
 
-async fn prune_removed_watch_path(
-    pool: &sqlx::SqlitePool,
-    path: &StoragePath,
-) -> Result<u64, ApiError> {
+async fn prune_removed_watch_path(data: &DataHandle, path: &StoragePath) -> Result<u64, ApiError> {
     let looks_like_file = std::path::Path::new(path.as_str())
         .extension()
         .and_then(|v| v.to_str())
         .is_some();
     if looks_like_file {
-        let deleted = tracks::delete_by_path(pool, path.as_str()).await?;
+        let deleted = catalog::delete_track_by_path(data, path.as_str()).await?;
         let cleanup_scope = path.parent();
-        albums::delete_empty_storage_albums_in_scope(
-            pool,
+        catalog::delete_empty_storage_albums_in_scope(
+            data,
             cleanup_scope.as_ref().map(|p| p.as_str()),
         )
         .await?;
         Ok(deleted)
     } else {
-        let deleted = tracks::delete_by_path_or_prefix(pool, path.as_str()).await?;
-        albums::delete_empty_storage_albums_in_scope(pool, Some(path.as_str())).await?;
+        let deleted = catalog::delete_tracks_by_path_or_prefix(data, path.as_str()).await?;
+        catalog::delete_empty_storage_albums_in_scope(data, Some(path.as_str())).await?;
         Ok(deleted)
     }
 }
@@ -516,18 +513,20 @@ async fn prune_removed_watch_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{artists, connect, migrate};
+    use euterpe_data::{connect_database, migrations};
     use tokio::sync::broadcast;
 
     async fn insert_storage_album_with_tracks(
-        pool: &sqlx::SqlitePool,
+        data: &DataHandle,
         album_path: &str,
         track_paths: &[&str],
     ) -> i64 {
-        let artist_id = artists::upsert_by_name(pool, "Artist", None).await.unwrap();
-        let album_id = albums::upsert(
-            pool,
-            albums::AlbumUpsert {
+        let artist_id = catalog::upsert_artist_by_name(data, "Artist", None)
+            .await
+            .unwrap();
+        let album_id = catalog::upsert_album(
+            data,
+            catalog::AlbumUpsert {
                 artist_id: Some(artist_id),
                 title: album_path,
                 year: None,
@@ -540,9 +539,9 @@ mod tests {
         .unwrap();
 
         for path in track_paths {
-            tracks::upsert(
-                pool,
-                tracks::TrackUpsert {
+            catalog::upsert_track(
+                data,
+                catalog::TrackUpsert {
                     album_id,
                     title: path,
                     track_number: None,
@@ -634,80 +633,94 @@ mod tests {
 
     #[tokio::test]
     async fn file_prune_deletes_only_matching_track_and_keeps_album() {
-        let pool = connect("sqlite::memory:").await.unwrap();
-        migrate(&pool).await.unwrap();
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
         let album_id = insert_storage_album_with_tracks(
-            &pool,
+            &data,
             "Artist/Album",
             &["Artist/Album/01.flac", "Artist/Album/02.flac"],
         )
         .await;
 
         let deleted =
-            prune_removed_watch_path(&pool, &StoragePath::parse("Artist/Album/01.flac").unwrap())
+            prune_removed_watch_path(&data, &StoragePath::parse("Artist/Album/01.flac").unwrap())
                 .await
                 .unwrap();
 
         assert_eq!(deleted, 1);
-        let rows = tracks::list_by_album(&pool, album_id).await.unwrap();
+        let rows = catalog::list_tracks_by_album(&data, album_id)
+            .await
+            .unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].path, "Artist/Album/02.flac");
-        assert!(albums::get_by_id(&pool, album_id).await.unwrap().is_some());
+        assert!(
+            catalog::get_album_by_id(&data, album_id)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
     async fn directory_prune_deletes_children_and_keeps_sibling_prefix_album() {
-        let pool = connect("sqlite::memory:").await.unwrap();
-        migrate(&pool).await.unwrap();
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
         let album_id = insert_storage_album_with_tracks(
-            &pool,
+            &data,
             "Artist/Album",
             &["Artist/Album/01.flac", "Artist/Album/02.flac"],
         )
         .await;
         let sibling_id =
-            insert_storage_album_with_tracks(&pool, "Artist/AlbumX", &["Artist/AlbumX/01.flac"])
+            insert_storage_album_with_tracks(&data, "Artist/AlbumX", &["Artist/AlbumX/01.flac"])
                 .await;
 
-        let deleted = prune_removed_watch_path(&pool, &StoragePath::parse("Artist/Album").unwrap())
+        let deleted = prune_removed_watch_path(&data, &StoragePath::parse("Artist/Album").unwrap())
             .await
             .unwrap();
 
         assert_eq!(deleted, 2);
         assert!(
-            tracks::list_by_album(&pool, album_id)
+            catalog::list_tracks_by_album(&data, album_id)
                 .await
                 .unwrap()
                 .is_empty()
         );
-        let sibling_rows = tracks::list_by_album(&pool, sibling_id).await.unwrap();
+        let sibling_rows = catalog::list_tracks_by_album(&data, sibling_id)
+            .await
+            .unwrap();
         assert_eq!(sibling_rows.len(), 1);
         assert_eq!(sibling_rows[0].path, "Artist/AlbumX/01.flac");
     }
 
     #[tokio::test]
     async fn prune_of_last_track_removes_empty_storage_album() {
-        let pool = connect("sqlite::memory:").await.unwrap();
-        migrate(&pool).await.unwrap();
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
         let album_id =
-            insert_storage_album_with_tracks(&pool, "Artist/Album", &["Artist/Album/01.flac"])
+            insert_storage_album_with_tracks(&data, "Artist/Album", &["Artist/Album/01.flac"])
                 .await;
 
         let deleted =
-            prune_removed_watch_path(&pool, &StoragePath::parse("Artist/Album/01.flac").unwrap())
+            prune_removed_watch_path(&data, &StoragePath::parse("Artist/Album/01.flac").unwrap())
                 .await
                 .unwrap();
 
         assert_eq!(deleted, 1);
-        assert!(albums::get_by_id(&pool, album_id).await.unwrap().is_none());
+        assert!(
+            catalog::get_album_by_id(&data, album_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn prune_only_debounce_batch_does_not_start_scan() {
-        let pool = connect("sqlite::memory:").await.unwrap();
-        migrate(&pool).await.unwrap();
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
         let album_id =
-            insert_storage_album_with_tracks(&pool, "Artist/Album", &["Artist/Album/01.flac"])
+            insert_storage_album_with_tracks(&data, "Artist/Album", &["Artist/Album/01.flac"])
                 .await;
         let mut settings = crate::services::app_settings::RuntimeSettings::default();
         settings.storage.library = Some(StorageLocation::Smb {
@@ -723,7 +736,7 @@ mod tests {
         let (scan_events, mut scan_rx) = broadcast::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(1);
         let deps = StorageWatchDeps {
-            data: euterpe_data::DataHandle::from_sqlite_pool(pool.clone()),
+            data,
             config: Arc::new(AppConfig::from_env().unwrap()),
             runtime,
             scan_events,
@@ -743,7 +756,7 @@ mod tests {
         .unwrap();
 
         assert!(
-            tracks::list_by_album(&pool, album_id)
+            catalog::list_tracks_by_album(&deps.data, album_id)
                 .await
                 .unwrap()
                 .is_empty()
