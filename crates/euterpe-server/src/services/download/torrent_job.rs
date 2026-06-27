@@ -425,7 +425,7 @@ async fn run_torrent_cue_split_after_download(
         Duration::from_millis(200),
     );
     let split_result = cue::run_storage_cue_split_job(
-        &deps.data.sqlx_pool(),
+        &deps.data,
         storage.clone(),
         cue_job_id,
         CueSplitRequest {

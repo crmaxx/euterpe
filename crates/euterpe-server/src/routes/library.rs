@@ -681,8 +681,7 @@ async fn run_cue_split_job(
     album_path: Option<String>,
 ) -> Result<(), ApiError> {
     let storage = state.library_storage().await?;
-    cue::run_storage_cue_split_job(&state.data.sqlx_pool(), storage.clone(), job_id, body, None)
-        .await?;
+    cue::run_storage_cue_split_job(&state.data, storage.clone(), job_id, body, None).await?;
     if let Some(album_path) = album_path
         && let Ok(scan_root) = StoragePath::parse(album_path)
     {
