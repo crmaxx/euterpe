@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
+use euterpe_data::DataHandle;
+use euterpe_data::repositories::catalog;
 use euterpe_qobuz::{AlbumDetail, Quality, TrackSummary};
-use sqlx::SqlitePool;
 
-use crate::db::{albums, artists, tracks};
 use crate::error::ApiError;
 use crate::library::fs::file_stat_sync;
 use crate::library::paths::track_relative_path;
@@ -23,7 +23,7 @@ fn relative_path(library_root: &Path, absolute: &Path) -> Result<String, ApiErro
 /// `favorite_catalog_id` must match `download_jobs.qobuz_id` / `qobuz_favorites.qobuz_id` for the
 /// favorites list `LEFT JOIN albums ON albums.qobuz_album_id = qobuz_favorites.qobuz_id`.
 pub async fn register_album_from_qobuz_download(
-    pool: &SqlitePool,
+    data: &DataHandle,
     library_root: &Path,
     favorite_catalog_id: u64,
     album: &AlbumDetail,
@@ -52,13 +52,13 @@ pub async fn register_album_from_qobuz_download(
         .map(|a| a.name.as_str())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("Unknown Artist");
-    let artist_id = artists::upsert_by_name(pool, artist_name, None).await?;
+    let artist_id = catalog::upsert_artist_by_name(data, artist_name, None).await?;
 
     let year = year_from_release_date(album.summary.release_date_original.as_deref());
 
-    let album_id = albums::upsert(
-        pool,
-        albums::AlbumUpsert {
+    let album_id = catalog::upsert_album(
+        data,
+        catalog::AlbumUpsert {
             artist_id: Some(artist_id),
             title: &album.summary.title,
             year,
@@ -71,14 +71,14 @@ pub async fn register_album_from_qobuz_download(
 
     let format_id = quality.format_id();
     for track in track_items {
-        upsert_track_from_api(pool, library_root, album_id, album, track, format_id, year).await?;
+        upsert_track_from_api(data, library_root, album_id, album, track, format_id, year).await?;
     }
 
     Ok(())
 }
 
 pub async fn register_album_from_qobuz_download_storage(
-    pool: &SqlitePool,
+    data: &DataHandle,
     storage: &dyn LibraryStorage,
     favorite_catalog_id: u64,
     album: &AlbumDetail,
@@ -107,11 +107,11 @@ pub async fn register_album_from_qobuz_download_storage(
         .map(|a| a.name.as_str())
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("Unknown Artist");
-    let artist_id = artists::upsert_by_name(pool, artist_name, None).await?;
+    let artist_id = catalog::upsert_artist_by_name(data, artist_name, None).await?;
     let year = year_from_release_date(album.summary.release_date_original.as_deref());
-    let album_id = albums::upsert(
-        pool,
-        albums::AlbumUpsert {
+    let album_id = catalog::upsert_album(
+        data,
+        catalog::AlbumUpsert {
             artist_id: Some(artist_id),
             title: &album.summary.title,
             year,
@@ -128,9 +128,9 @@ pub async fn register_album_from_qobuz_download_storage(
         let meta = storage.metadata(&StoragePath::parse(&path_str)?).await.ok();
         let file_size = meta.and_then(|m| i64::try_from(m.size).ok());
         let (disc_number, genre) = track_db_fields_from_qobuz(album, track);
-        tracks::upsert(
-            pool,
-            tracks::TrackUpsert {
+        catalog::upsert_track(
+            data,
+            catalog::TrackUpsert {
                 album_id,
                 title: &track.title,
                 track_number: track.track_number.map(|n| n as i32),
@@ -151,7 +151,7 @@ pub async fn register_album_from_qobuz_download_storage(
 }
 
 async fn upsert_track_from_api(
-    pool: &SqlitePool,
+    data: &DataHandle,
     library_root: &Path,
     album_id: i64,
     album: &AlbumDetail,
@@ -168,9 +168,9 @@ async fn upsert_track_from_api(
     let file_size = i64::try_from(size).ok();
     let (disc_number, genre) = track_db_fields_from_qobuz(album, track);
 
-    tracks::upsert(
-        pool,
-        tracks::TrackUpsert {
+    catalog::upsert_track(
+        data,
+        catalog::TrackUpsert {
             album_id,
             title: &track.title,
             track_number: track.track_number.map(|n| n as i32),
@@ -196,7 +196,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::db::{self, tracks};
+    use euterpe_data::{connect_database, migrations};
 
     fn sample_album() -> AlbumDetail {
         AlbumDetail {
@@ -264,14 +264,14 @@ mod tests {
             tokio::fs::write(&path, b"audio").await.unwrap();
         }
 
-        let pool = db::connect("sqlite::memory:").await.unwrap();
-        db::migrate(&pool).await.unwrap();
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
 
-        register_album_from_qobuz_download(&pool, dir.path(), 99, &album, quality)
+        register_album_from_qobuz_download(&data, dir.path(), 99, &album, quality)
             .await
             .unwrap();
 
-        let rows = tracks::list_by_album(&pool, 1).await.unwrap();
+        let rows = catalog::list_tracks_by_album(&data, 1).await.unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].title, "One");
         assert_eq!(rows[0].qobuz_track_id, Some(1001));
@@ -295,14 +295,14 @@ mod tests {
             .unwrap();
         tokio::fs::write(&path, b"existing").await.unwrap();
 
-        let pool = db::connect("sqlite::memory:").await.unwrap();
-        db::migrate(&pool).await.unwrap();
+        let data = connect_database("sqlite::memory:").await.unwrap();
+        migrations::migrate(&data).await.unwrap();
 
-        register_album_from_qobuz_download(&pool, dir.path(), 42, &album, quality)
+        register_album_from_qobuz_download(&data, dir.path(), 42, &album, quality)
             .await
             .unwrap();
 
-        let rows = tracks::list_by_album(&pool, 1).await.unwrap();
+        let rows = catalog::list_tracks_by_album(&data, 1).await.unwrap();
         assert_eq!(rows.len(), 2);
         let first = rows
             .iter()

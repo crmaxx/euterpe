@@ -473,7 +473,7 @@ async fn run_album_job(
     let register_result = match &storage_location {
         StorageLocation::Local { path } => {
             crate::library::register_download::register_album_from_qobuz_download(
-                &deps.data.sqlx_pool(),
+                &deps.data,
                 &std::path::PathBuf::from(path),
                 album_id,
                 &album,
@@ -485,7 +485,7 @@ async fn run_album_job(
             let storage =
                 storage::storage_from_location(&storage_location, deps.config.master_key.as_ref())?;
             crate::library::register_download::register_album_from_qobuz_download_storage(
-                &deps.data.sqlx_pool(),
+                &deps.data,
                 storage.as_ref(),
                 album_id,
                 &album,
