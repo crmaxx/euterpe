@@ -1956,6 +1956,8 @@ mod tests {
 
         let (job_tx, _job_rx) = mpsc::channel(8);
         let (convert_job_tx, _convert_job_rx) = mpsc::channel(8);
+        let runtime = test_runtime(&config);
+        runtime.write().await.downloads.concurrency = 1;
         let deps = WorkerDeps {
             data: DataHandle::from_sqlite_pool(pool.clone()),
             qobuz: Arc::new(Mutex::new(Box::new(MockDownloadQobuz {
@@ -1963,7 +1965,7 @@ mod tests {
                 stream_url: format!("http://{addr}/stream"),
             }))),
             config: config.clone(),
-            runtime: test_runtime(&config),
+            runtime,
             events,
             http: Client::new(),
             torrent: None,

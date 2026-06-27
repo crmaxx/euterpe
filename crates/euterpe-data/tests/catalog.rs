@@ -107,6 +107,72 @@ async fn artist_album_and_track_upserts_return_stable_ids() {
 }
 
 #[tokio::test]
+async fn concurrent_album_upserts_by_path_return_existing_id() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let db_url = format!("sqlite:{}", dir.path().join("catalog.sqlite").display());
+    let handle = connect_database(&db_url).await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+
+    let artist_id = catalog::upsert_artist_by_name(&handle, "Artist", None)
+        .await
+        .unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+    let left_handle = handle.clone();
+    let right_handle = handle.clone();
+    let left_barrier = barrier.clone();
+    let right_barrier = barrier.clone();
+
+    let left = tokio::spawn(async move {
+        left_barrier.wait().await;
+        catalog::upsert_album(
+            &left_handle,
+            AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album",
+                year: Some(2024),
+                qobuz_album_id: None,
+                path: Some("Artist/Album"),
+                cover_path: None,
+            },
+        )
+        .await
+    });
+    let right = tokio::spawn(async move {
+        right_barrier.wait().await;
+        catalog::upsert_album(
+            &right_handle,
+            AlbumUpsert {
+                artist_id: Some(artist_id),
+                title: "Album",
+                year: Some(2024),
+                qobuz_album_id: None,
+                path: Some("Artist/Album"),
+                cover_path: None,
+            },
+        )
+        .await
+    });
+
+    let left_id = left.await.unwrap().unwrap();
+    let right_id = right.await.unwrap().unwrap();
+
+    assert_eq!(left_id, right_id);
+    let albums = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::Title,
+            order: catalog::AlbumListOrder::Asc,
+            limit: 10,
+            q: Some("Album".to_string()),
+            after: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(albums.items.len(), 1);
+}
+
+#[tokio::test]
 async fn tracks_list_by_album_sorts_by_filename_and_prefix_delete_keeps_siblings() {
     let handle = connect_database("sqlite::memory:").await.unwrap();
     migrations::migrate(&handle).await.unwrap();
@@ -706,15 +772,19 @@ async fn scan_keep_paths_prune_absent_tracks_and_cleanup_records() {
     catalog::record_scan_keep_path(&handle, 7, "Artist/Album/01.flac")
         .await
         .unwrap();
+    catalog::record_scan_keep_path(&handle, 7, "Artist/Album/02.flac")
+        .await
+        .unwrap();
     catalog::record_scan_keep_path(&handle, 7, "Artist/Album/01.flac")
         .await
         .unwrap();
+    assert_eq!(catalog::scan_keep_path_count(&handle, 7).await.unwrap(), 2);
 
     let deleted = catalog::delete_absent_in_scope_for_scan(&handle, Some("Artist/Album"), 7)
         .await
         .unwrap();
     assert_eq!(deleted, 1);
-    assert_eq!(catalog::scan_keep_path_count(&handle, 7).await.unwrap(), 1);
+    assert_eq!(catalog::scan_keep_path_count(&handle, 7).await.unwrap(), 2);
 
     catalog::cleanup_scan_keep_paths(&handle, 7).await.unwrap();
     assert_eq!(catalog::scan_keep_path_count(&handle, 7).await.unwrap(), 0);

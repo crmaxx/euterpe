@@ -46,6 +46,68 @@ async fn scan_run_cancel_only_changes_running_rows() {
 }
 
 #[tokio::test]
+async fn scan_run_cancelled_status_is_not_overwritten_by_success() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+
+    let id = library_scan_runs::start(&handle).await.unwrap();
+    assert!(library_scan_runs::cancel(&handle, id).await.unwrap());
+
+    library_scan_runs::finish_success(&handle, id)
+        .await
+        .unwrap();
+
+    let run = library_scan_runs::get_by_id(&handle, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "cancelled");
+}
+
+#[tokio::test]
+async fn scan_run_cancelled_status_is_not_overwritten_by_failure() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+
+    let id = library_scan_runs::start(&handle).await.unwrap();
+    assert!(library_scan_runs::cancel(&handle, id).await.unwrap());
+
+    library_scan_runs::finish_failed(&handle, id, "late failure")
+        .await
+        .unwrap();
+
+    let run = library_scan_runs::get_by_id(&handle, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "cancelled");
+    assert!(run.error_message.is_none());
+}
+
+#[tokio::test]
+async fn scan_run_cancelled_status_ignores_late_progress() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+
+    let id = library_scan_runs::start(&handle).await.unwrap();
+    library_scan_runs::update_progress(&handle, id, 1, 1, 1, 1)
+        .await
+        .unwrap();
+    assert!(library_scan_runs::cancel(&handle, id).await.unwrap());
+
+    library_scan_runs::update_progress(&handle, id, 99, 99, 99, 99)
+        .await
+        .unwrap();
+
+    let run = library_scan_runs::get_by_id(&handle, id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(run.status, "cancelled");
+    assert_eq!(run.files_seen, 1);
+}
+
+#[tokio::test]
 async fn scan_run_failure_stores_error_message() {
     let handle = connect_database("sqlite::memory:").await.unwrap();
     migrations::migrate(&handle).await.unwrap();

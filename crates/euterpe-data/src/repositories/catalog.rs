@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::connection::DataHandle;
-use crate::error::Result;
+use crate::error::{DataError, Result};
 use welds::WeldsModel;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,8 +176,8 @@ struct Track {
 #[welds(table = "scan_keep_paths")]
 struct ScanKeepPath {
     #[welds(primary_key)]
+    id: i64,
     scan_id: i64,
-    #[welds(primary_key)]
     path: String,
 }
 
@@ -224,25 +224,8 @@ pub async fn get_artist_name_by_id(handle: &DataHandle, id: i64) -> Result<Optio
 }
 
 pub async fn upsert_album(handle: &DataHandle, album: AlbumUpsert<'_>) -> Result<i64> {
-    let mut albums = Album::all().run(handle.client()).await?;
-    if let Some(path) = album.path
-        && let Some(existing) = albums
-            .iter_mut()
-            .find(|existing| existing.path.as_deref() == Some(path))
-    {
-        apply_album_update(existing, &album);
-        existing.save(handle.client()).await?;
-        return Ok(existing.id);
-    }
-
-    if let Some(qid) = album.qobuz_album_id
-        && let Some(existing) = albums
-            .iter_mut()
-            .find(|existing| existing.qobuz_album_id == Some(qid))
-    {
-        apply_album_update(existing, &album);
-        existing.save(handle.client()).await?;
-        return Ok(existing.id);
+    if let Some(id) = update_existing_album(handle, &album).await? {
+        return Ok(id);
     }
 
     let now = sqlite_timestamp();
@@ -255,8 +238,41 @@ pub async fn upsert_album(handle: &DataHandle, album: AlbumUpsert<'_>) -> Result
     row.cover_path = album.cover_path.map(ToString::to_string);
     row.created_at = now.clone();
     row.updated_at = now;
-    row.save(handle.client()).await?;
+    if let Err(error) = row.save(handle.client()).await {
+        if let Some(id) = update_existing_album(handle, &album).await? {
+            return Ok(id);
+        }
+        return Err(DataError::from(error));
+    }
     Ok(row.id)
+}
+
+async fn update_existing_album(
+    handle: &DataHandle,
+    album: &AlbumUpsert<'_>,
+) -> Result<Option<i64>> {
+    let mut albums = Album::all().run(handle.client()).await?;
+    if let Some(path) = album.path
+        && let Some(existing) = albums
+            .iter_mut()
+            .find(|existing| existing.path.as_deref() == Some(path))
+    {
+        apply_album_update(existing, album);
+        existing.save(handle.client()).await?;
+        return Ok(Some(existing.id));
+    }
+
+    if let Some(qid) = album.qobuz_album_id
+        && let Some(existing) = albums
+            .iter_mut()
+            .find(|existing| existing.qobuz_album_id == Some(qid))
+    {
+        apply_album_update(existing, album);
+        existing.save(handle.client()).await?;
+        return Ok(Some(existing.id));
+    }
+
+    Ok(None)
 }
 
 pub async fn get_album_by_id(handle: &DataHandle, id: i64) -> Result<Option<AlbumRow>> {

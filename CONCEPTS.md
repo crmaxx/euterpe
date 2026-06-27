@@ -31,6 +31,16 @@ Storage Watch is allowed to degrade when a backend cannot provide reliable notif
 
 ## Library Ingestion
 
+### Library Scan
+The process that reconciles Library Storage with the catalog of known artists, albums, tracks, covers, and media metadata.
+
+Library Scan may run against the whole library or a subtree. Its outcome depends on persisted catalog effects, not only on discovering files or advancing progress counters.
+
+### Scan Run
+A persisted execution record for a Library Scan, including its lifecycle state and progress counters.
+
+Scan Run terminal states are monotonic from the caller's point of view: once a run is cancelled or otherwise terminal, later worker progress or completion attempts should not make it running or successful again.
+
 ### Torrent Import
 The process that moves completed torrent payloads from the local incoming area into Library Storage and then schedules the library work required to index the imported media.
 

@@ -1,6 +1,6 @@
 use crate::connection::DataHandle;
 use crate::error::Result;
-use welds::WeldsModel;
+use welds::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryScanRunSummary {
@@ -75,46 +75,46 @@ pub async fn update_progress(
     files_indexed: i64,
     files_total: i64,
 ) -> Result<()> {
-    if let Some(mut run) = LibraryScanRun::find_by_id(handle.client(), id).await? {
-        run.files_seen = files_seen;
-        run.files_processed = files_processed;
-        run.files_indexed = files_indexed;
-        run.files_total = files_total;
-        run.save(handle.client()).await?;
-    }
+    LibraryScanRun::where_col(|run| run.id.equal(id))
+        .where_col(|run| run.status.equal("running"))
+        .set(|run| run.files_seen, files_seen)
+        .set(|run| run.files_processed, files_processed)
+        .set(|run| run.files_indexed, files_indexed)
+        .set(|run| run.files_total, files_total)
+        .run(handle.client())
+        .await?;
     Ok(())
 }
 
 pub async fn finish_success(handle: &DataHandle, id: i64) -> Result<()> {
-    if let Some(mut run) = LibraryScanRun::find_by_id(handle.client(), id).await? {
-        run.status = "success".to_string();
-        run.finished_at = Some(sqlite_timestamp());
-        run.save(handle.client()).await?;
-    }
+    LibraryScanRun::where_col(|run| run.id.equal(id))
+        .where_col(|run| run.status.equal("running"))
+        .set(|run| run.status, "success".to_string())
+        .set(|run| run.finished_at, Some(sqlite_timestamp()))
+        .run(handle.client())
+        .await?;
     Ok(())
 }
 
 pub async fn finish_failed(handle: &DataHandle, id: i64, error: &str) -> Result<()> {
-    if let Some(mut run) = LibraryScanRun::find_by_id(handle.client(), id).await? {
-        run.status = "failed".to_string();
-        run.finished_at = Some(sqlite_timestamp());
-        run.error_message = Some(error.to_string());
-        run.save(handle.client()).await?;
-    }
+    LibraryScanRun::where_col(|run| run.id.equal(id))
+        .where_col(|run| run.status.equal("running"))
+        .set(|run| run.status, "failed".to_string())
+        .set(|run| run.finished_at, Some(sqlite_timestamp()))
+        .set(|run| run.error_message, Some(error.to_string()))
+        .run(handle.client())
+        .await?;
     Ok(())
 }
 
 pub async fn cancel(handle: &DataHandle, id: i64) -> Result<bool> {
-    let Some(mut run) = LibraryScanRun::find_by_id(handle.client(), id).await? else {
-        return Ok(false);
-    };
-    if run.status != "running" {
-        return Ok(false);
-    }
-    run.status = "cancelled".to_string();
-    run.finished_at = Some(sqlite_timestamp());
-    run.save(handle.client()).await?;
-    Ok(true)
+    let updated = LibraryScanRun::where_col(|run| run.id.equal(id))
+        .where_col(|run| run.status.equal("running"))
+        .set(|run| run.status, "cancelled".to_string())
+        .set(|run| run.finished_at, Some(sqlite_timestamp()))
+        .run(handle.client())
+        .await?;
+    Ok(updated == 1)
 }
 
 pub async fn is_cancelled(handle: &DataHandle, id: i64) -> Result<bool> {

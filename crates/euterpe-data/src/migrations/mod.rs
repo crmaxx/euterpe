@@ -138,7 +138,7 @@ async fn has_current_legacy_schema(handle: &DataHandle) -> Result<bool> {
     let tables = detect::find_all_tables(handle.client()).await?;
     let table_names: BTreeSet<&str> = tables
         .iter()
-        .map(|table| table.ident().name().as_ref())
+        .map(|table| table.ident().name())
         .collect();
     let required_tables = [
         "settings",

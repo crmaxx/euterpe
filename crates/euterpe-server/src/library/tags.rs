@@ -461,22 +461,14 @@ pub fn write_tags_to_bytes(
         .read()
         .map_err(|e| ApiError::Message(format!("read {display_path}: {e}")))?;
 
-    let tag_types: Vec<_> = tagged.tags().iter().map(|tag| tag.tag_type()).collect();
-    if tag_types.is_empty() {
-        let mut tag = Tag::new(tagged.primary_tag_type());
-        apply_tags_to_lofty_tag(&mut tag, tags);
-        tagged.insert_tag(tag);
-    } else {
-        for tag_type in tag_types {
-            if let Some(tag) = tagged.tag_mut(tag_type) {
-                apply_tags_to_lofty_tag(tag, tags);
-            }
-        }
-    }
+    let mut tag = Tag::new(tagged.primary_tag_type());
+    apply_tags_to_lofty_tag(&mut tag, tags);
+    tagged.clear();
+    tagged.insert_tag(tag);
 
     let mut cursor = Cursor::new(bytes);
     tagged
-        .save_to(&mut cursor, WriteOptions::default())
+        .save_to(&mut cursor, WriteOptions::new().remove_others(true))
         .map_err(|e| ApiError::Message(format!("write tags {display_path}: {e}")))?;
     Ok(cursor.into_inner())
 }
@@ -598,6 +590,10 @@ mod tests {
     use tempfile::TempDir;
 
     fn write_test_wav(path: &Path, tags: &TrackTags) {
+        write_test_wav_with_samples(path, tags, 512);
+    }
+
+    fn write_test_wav_with_samples(path: &Path, tags: &TrackTags, samples: usize) {
         let spec = hound::WavSpec {
             channels: 1,
             sample_rate: 44100,
@@ -605,7 +601,7 @@ mod tests {
             sample_format: hound::SampleFormat::Int,
         };
         let mut writer = hound::WavWriter::create(path, spec).unwrap();
-        for _ in 0..512 {
+        for _ in 0..samples {
             writer.write_sample(0i16).unwrap();
         }
         writer.finalize().unwrap();
@@ -771,6 +767,111 @@ mod tests {
         assert_eq!(read.genre.as_deref(), Some("Ambient"));
         let read_from_path = read_tags(&path).unwrap();
         assert_eq!(read_from_path.artist, "Storage Artist Patched");
+    }
+
+    #[tokio::test]
+    async fn write_tags_storage_updates_path_reader_for_short_wav() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("01.wav");
+        let original = TrackTags {
+            title: "Short Song".into(),
+            artist: "Old Artist".into(),
+            album: "Old Album".into(),
+            track_number: Some(1),
+            year: Some(2020),
+            disc_number: Some(1),
+            track_total: None,
+            disc_total: None,
+            genre: None,
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        };
+        write_test_wav_with_samples(&path, &original, 64);
+        let storage = crate::library::storage::LocalStorage::new(dir.path());
+        let storage_path = crate::library::storage::StoragePath::parse("01.wav").unwrap();
+        let current = read_tags_storage(&storage, &storage_path).await.unwrap();
+        let patched = apply_album_patch(
+            &current,
+            &AlbumTagsPatch {
+                artist: Some("New Artist".into()),
+                album: Some("New Album".into()),
+                track_total: Some(12),
+                disc_total: Some(2),
+                ..Default::default()
+            },
+        );
+
+        write_tags_storage(&storage, &storage_path, &patched)
+            .await
+            .unwrap();
+
+        let read_from_path = read_tags(&path).unwrap();
+        assert_eq!(read_from_path.artist, "New Artist");
+        assert_eq!(read_from_path.album, "New Album");
+        assert_eq!(read_from_path.track_number, Some(1));
+        assert_eq!(read_from_path.disc_number, Some(1));
+        assert_eq!(read_from_path.track_total, Some(12));
+        assert_eq!(read_from_path.disc_total, Some(2));
+    }
+
+    #[tokio::test]
+    async fn write_tags_storage_updates_path_reader_for_nested_short_wav() {
+        let dir = TempDir::new().unwrap();
+        let album_dir = dir.path().join("Tag Artist/Tag Album");
+        std::fs::create_dir_all(&album_dir).unwrap();
+        let path = album_dir.join("01 One.wav");
+        let original = TrackTags {
+            title: "One".into(),
+            artist: "Old Artist".into(),
+            album: "Old Album".into(),
+            track_number: Some(1),
+            year: Some(2000),
+            disc_number: Some(1),
+            track_total: None,
+            disc_total: None,
+            genre: None,
+            duration_sec: None,
+            qobuz_track_id: None,
+            qobuz_album_id: None,
+            label: None,
+            isrc: None,
+            composer: None,
+        };
+        write_test_wav_with_samples(&path, &original, 64);
+        let storage = crate::library::storage::LocalStorage::new(dir.path());
+        let storage_path =
+            crate::library::storage::StoragePath::parse("Tag Artist/Tag Album/01 One.wav").unwrap();
+        let current = read_tags_storage(&storage, &storage_path).await.unwrap();
+        let patched = apply_album_patch(
+            &current,
+            &AlbumTagsPatch {
+                artist: Some("New Artist".into()),
+                album: Some("New Album".into()),
+                year: Some(2024),
+                genre: Some("Jazz".into()),
+                track_total: Some(12),
+                disc_total: Some(2),
+            },
+        );
+
+        write_tags_storage(&storage, &storage_path, &patched)
+            .await
+            .unwrap();
+
+        let read_from_path = read_tags(&path).unwrap();
+        assert_eq!(read_from_path.title, "One");
+        assert_eq!(read_from_path.track_number, Some(1));
+        assert_eq!(read_from_path.disc_number, Some(1));
+        assert_eq!(read_from_path.artist, "New Artist");
+        assert_eq!(read_from_path.album, "New Album");
+        assert_eq!(read_from_path.year, Some(2024));
+        assert_eq!(read_from_path.genre.as_deref(), Some("Jazz"));
+        assert_eq!(read_from_path.track_total, Some(12));
+        assert_eq!(read_from_path.disc_total, Some(2));
     }
 
     #[test]
