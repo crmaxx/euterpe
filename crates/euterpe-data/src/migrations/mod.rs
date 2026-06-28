@@ -63,6 +63,8 @@ mod m026_index_cue_jobs_album_status;
 mod m027_index_cue_jobs_status;
 #[path = "028_create_scan_keep_paths.rs"]
 mod m028_create_scan_keep_paths;
+#[path = "029_extend_qobuz_sync_runs_for_scheduler.rs"]
+mod m029_extend_qobuz_sync_runs_for_scheduler;
 
 use m001_create_settings::create_settings;
 use m002_create_qobuz_favorites::create_qobuz_favorites;
@@ -92,6 +94,7 @@ use m025_create_cue_jobs::create_cue_jobs;
 use m026_index_cue_jobs_album_status::index_cue_jobs_album_status;
 use m027_index_cue_jobs_status::index_cue_jobs_status;
 use m028_create_scan_keep_paths::create_scan_keep_paths;
+use m029_extend_qobuz_sync_runs_for_scheduler::extend_qobuz_sync_runs_for_scheduler;
 
 const MIGRATIONS: &[MigrationFn] = &[
     create_settings,
@@ -122,6 +125,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     index_cue_jobs_album_status,
     index_cue_jobs_status,
     create_scan_keep_paths,
+    extend_qobuz_sync_runs_for_scheduler,
 ];
 
 pub async fn migrate(handle: &DataHandle) -> Result<()> {
@@ -136,10 +140,7 @@ pub async fn migrate(handle: &DataHandle) -> Result<()> {
 
 async fn has_current_legacy_schema(handle: &DataHandle) -> Result<bool> {
     let tables = detect::find_all_tables(handle.client()).await?;
-    let table_names: BTreeSet<&str> = tables
-        .iter()
-        .map(|table| table.ident().name())
-        .collect();
+    let table_names: BTreeSet<&str> = tables.iter().map(|table| table.ident().name()).collect();
     let required_tables = [
         "settings",
         "qobuz_favorites",
@@ -183,6 +184,12 @@ async fn seed_default_settings(handle: &DataHandle) -> Result<()> {
     )
     .await?;
     seed_setting(handle, "downloads.settings", r#"{"concurrency":3}"#).await?;
+    seed_setting(
+        handle,
+        "qobuz.scheduled_sync.settings",
+        r#"{"enabled":false,"cron_expression":"","auto_download_new_favorites":false}"#,
+    )
+    .await?;
     Ok(())
 }
 

@@ -188,6 +188,14 @@ pub async fn album_meta(handle: &DataHandle, qobuz_id: u64) -> Result<Option<Fav
         }))
 }
 
+pub async fn album_is_in_library(handle: &DataHandle, qobuz_id: u64) -> Result<bool> {
+    Ok(Album::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .any(|album| album.qobuz_album_id == Some(qobuz_id as i64)))
+}
+
 pub async fn mark_removed_except(handle: &DataHandle, keep_ids: &[u64]) -> Result<u64> {
     let keep_ids = keep_ids.iter().map(|id| *id as i64).collect::<Vec<_>>();
     let mut removed = 0;

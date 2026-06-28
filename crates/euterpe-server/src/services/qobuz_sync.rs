@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use euterpe_data::repositories::qobuz::QobuzSyncTrigger;
 use euterpe_data::{
     DataHandle,
     repositories::{favorites, qobuz as sync_runs},
@@ -10,6 +11,19 @@ use tokio::sync::Mutex;
 
 use crate::api::QobuzSyncResponse;
 use crate::error::ApiError;
+
+#[derive(Debug, Clone)]
+pub struct NewlyAddedFavoriteAlbum {
+    pub qobuz_id: u64,
+    pub album_api_id: String,
+    pub display_title: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct QobuzSyncResult {
+    pub response: QobuzSyncResponse,
+    pub newly_added_albums: Vec<NewlyAddedFavoriteAlbum>,
+}
 
 fn album_fields(album: &AlbumSummary) -> (u64, String, String, Option<String>, Option<String>) {
     let artist = album
@@ -44,9 +58,24 @@ pub async fn run(
     data: &DataHandle,
     qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
 ) -> Result<QobuzSyncResponse, ApiError> {
-    let run_id = sync_runs::start_sync_run(data).await?;
+    Ok(run_with_details(data, qobuz).await?.response)
+}
 
-    let sync_result: Result<QobuzSyncResponse, ApiError> = async {
+pub async fn run_with_details(
+    data: &DataHandle,
+    qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
+) -> Result<QobuzSyncResult, ApiError> {
+    run_with_details_and_trigger(data, qobuz, QobuzSyncTrigger::Manual).await
+}
+
+pub async fn run_with_details_and_trigger(
+    data: &DataHandle,
+    qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>>,
+    trigger: QobuzSyncTrigger,
+) -> Result<QobuzSyncResult, ApiError> {
+    let run_id = sync_runs::start_sync_run_with_trigger(data, trigger).await?;
+
+    let sync_result: Result<QobuzSyncResult, ApiError> = async {
         let albums = {
             let guard = qobuz.lock().await;
             guard.favorites_all_albums().await?
@@ -56,6 +85,7 @@ pub async fn run(
         let before_set: HashSet<u64> = before.iter().copied().collect();
 
         let mut added = 0u64;
+        let mut newly_added_albums = Vec::new();
         for album in &albums {
             let (qobuz_id, title, artist, album_api_id, cover_url) = album_fields(album);
             let existed = before_set.contains(&qobuz_id);
@@ -70,6 +100,15 @@ pub async fn run(
             .await?;
             if !existed {
                 added += 1;
+                if let Some(album_api_id) = album_api_id.filter(|id| !id.trim().is_empty()) {
+                    newly_added_albums.push(NewlyAddedFavoriteAlbum {
+                        qobuz_id,
+                        album_api_id,
+                        display_title: crate::services::download::format_album_display_title(
+                            &artist, &title,
+                        ),
+                    });
+                }
             }
         }
 
@@ -80,11 +119,14 @@ pub async fn run(
         sync_runs::finish_sync_success(data, run_id, albums_total, added as i64, removed as i64)
             .await?;
 
-        Ok(QobuzSyncResponse {
-            run_id,
-            albums_total,
-            added: added as i64,
-            removed: removed as i64,
+        Ok(QobuzSyncResult {
+            response: QobuzSyncResponse {
+                run_id,
+                albums_total,
+                added: added as i64,
+                removed: removed as i64,
+            },
+            newly_added_albums,
         })
     }
     .await;

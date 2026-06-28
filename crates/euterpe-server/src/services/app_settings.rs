@@ -13,6 +13,7 @@ pub const KEY_CONVERTER_SETTINGS: &str = "converter.settings";
 pub const KEY_LIBRARY_SCAN_SETTINGS: &str = "library.scan.settings";
 pub const KEY_DOWNLOADS_SETTINGS: &str = "downloads.settings";
 pub const KEY_STORAGE_SETTINGS: &str = "storage.settings";
+pub const KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS: &str = "qobuz.scheduled_sync.settings";
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -216,6 +217,16 @@ impl Default for DownloadsSettings {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct QobuzScheduledSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cron_expression: String,
+    #[serde(default)]
+    pub auto_download_new_favorites: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeSettings {
     pub ui: UiPreferences,
@@ -223,6 +234,7 @@ pub struct RuntimeSettings {
     pub library_scan: LibraryScanSettings,
     pub downloads: DownloadsSettings,
     pub storage: StorageSettings,
+    pub qobuz_scheduled_sync: QobuzScheduledSyncSettings,
 }
 
 impl RuntimeSettings {
@@ -388,6 +400,10 @@ pub fn storage_defaults(_config: &AppConfig) -> StorageSettings {
     StorageSettings::default()
 }
 
+pub fn qobuz_scheduled_sync_defaults() -> QobuzScheduledSyncSettings {
+    QobuzScheduledSyncSettings::default()
+}
+
 pub async fn load_runtime_settings(data: &DataHandle, config: &AppConfig) -> RuntimeSettings {
     RuntimeSettings {
         ui: load_ui(data, config).await,
@@ -395,6 +411,7 @@ pub async fn load_runtime_settings(data: &DataHandle, config: &AppConfig) -> Run
         library_scan: load_library_scan(data, config).await,
         downloads: load_downloads(data, config).await,
         storage: load_storage(data, config).await,
+        qobuz_scheduled_sync: load_qobuz_scheduled_sync(data).await,
     }
 }
 
@@ -428,6 +445,15 @@ pub async fn load_storage(data: &DataHandle, config: &AppConfig) -> StorageSetti
         upsert_storage_preset(&mut settings.presets, location);
     }
     settings
+}
+
+pub async fn load_qobuz_scheduled_sync(data: &DataHandle) -> QobuzScheduledSyncSettings {
+    load_json(
+        data,
+        KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS,
+        qobuz_scheduled_sync_defaults(),
+    )
+    .await
 }
 
 async fn load_json<T>(data: &DataHandle, key: &str, default: T) -> T
@@ -469,6 +495,14 @@ pub async fn save_storage(data: &DataHandle, value: &StorageSettings) -> Result<
     save_json(data, KEY_STORAGE_SETTINGS, value).await
 }
 
+pub async fn save_qobuz_scheduled_sync(
+    data: &DataHandle,
+    value: &QobuzScheduledSyncSettings,
+) -> Result<(), ApiError> {
+    validate_qobuz_scheduled_sync(value)?;
+    save_json(data, KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS, value).await
+}
+
 async fn save_json<T>(data: &DataHandle, key: &str, value: &T) -> Result<(), ApiError>
 where
     T: Serialize,
@@ -501,6 +535,13 @@ pub fn validate_converter(v: &ConverterSettings) -> Result<(), ApiError> {
 pub fn validate_downloads(v: &DownloadsSettings) -> Result<(), ApiError> {
     if v.concurrency == 0 || v.concurrency > 32 {
         return Err(ApiError::bad_request("concurrency must be 1..=32"));
+    }
+    Ok(())
+}
+
+pub fn validate_qobuz_scheduled_sync(v: &QobuzScheduledSyncSettings) -> Result<(), ApiError> {
+    if v.enabled {
+        crate::services::qobuz_scheduled_sync::CronSchedule::parse(&v.cron_expression)?;
     }
     Ok(())
 }

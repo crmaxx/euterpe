@@ -68,6 +68,7 @@ export const queryKeys = {
   converterSettings: ["converterSettings"] as const,
   libraryScanSettings: ["libraryScanSettings"] as const,
   downloadsSettings: ["downloadsSettings"] as const,
+  qobuzScheduledSyncSettings: ["qobuzScheduledSyncSettings"] as const,
   storageSettings: ["storageSettings"] as const,
   storageBrowse: (path?: string) => ["storageBrowse", path ?? ""] as const,
   albumConvertLatest: (albumId: number) =>
@@ -759,6 +760,36 @@ export function usePatchDownloadsSettings() {
     mutationFn: api.patchDownloadsSettings,
     onSuccess: (res) => {
       qc.setQueryData(queryKeys.downloadsSettings, res.settings);
+    },
+  });
+}
+
+export function useQobuzScheduledSyncSettings() {
+  return useQuery({
+    queryKey: queryKeys.qobuzScheduledSyncSettings,
+    queryFn: api.qobuzScheduledSyncSettings,
+  });
+}
+
+export function usePatchQobuzScheduledSyncSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchQobuzScheduledSyncSettings,
+    onSuccess: (res) => {
+      qc.setQueryData(queryKeys.qobuzScheduledSyncSettings, res);
+    },
+  });
+}
+
+export function useRunQobuzScheduledSyncNow() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.runQobuzScheduledSyncNow,
+    onSuccess: (res) => {
+      qc.setQueryData(queryKeys.qobuzScheduledSyncSettings, res);
+      void qc.invalidateQueries({ queryKey: ["favorites"] });
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.syncLatest });
     },
   });
 }

@@ -1,9 +1,11 @@
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 
+use crate::api::QobuzSyncRunSummary;
 pub use crate::services::app_settings::{
     ConverterSettings, DownloadsSettings, FilePolicyDto, FlacEncodeSettingsDto, FlacPresetDto,
-    LibraryScanSettings, StorageLocation, StorageSettings, UiLocale, UiPreferences, UiTheme,
+    LibraryScanSettings, QobuzScheduledSyncSettings, StorageLocation, StorageSettings, UiLocale,
+    UiPreferences, UiTheme,
 };
 use crate::services::storage_watch::{StorageWatchState, StorageWatchStatus};
 
@@ -81,6 +83,29 @@ pub struct DownloadsSettingsResponse {
 pub struct DownloadsSettingsPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub concurrency: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzScheduledSyncSettingsResponse {
+    pub settings: QobuzScheduledSyncSettings,
+    pub status: QobuzScheduledSyncStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QobuzScheduledSyncStatus {
+    pub server_timezone: String,
+    pub next_run_at: Option<String>,
+    pub last_run: Option<QobuzSyncRunSummary>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct QobuzScheduledSyncSettingsPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cron_expression: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_download_new_favorites: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

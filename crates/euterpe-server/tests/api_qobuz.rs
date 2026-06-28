@@ -31,6 +31,210 @@ async fn sync_without_credentials_returns_503() {
 }
 
 #[tokio::test]
+async fn scheduled_sync_settings_defaults_match_openapi_contract() {
+    let state = app::test_support::test_state().await;
+    let app = app::app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/settings/qobuz-scheduled-sync")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let spec = schema::load_spec();
+    schema::validate_schema(
+        &schema::schema_from_spec(&spec, "QobuzScheduledSyncSettingsResponse"),
+        &json,
+    );
+    assert_eq!(json["settings"]["enabled"], false);
+    assert_eq!(json["settings"]["cron_expression"], "");
+    assert_eq!(json["settings"]["auto_download_new_favorites"], false);
+    assert!(json["status"]["server_timezone"].as_str().is_some());
+    assert!(json["status"]["next_run_at"].is_null());
+    assert!(json["status"]["last_run"].is_null());
+}
+
+#[tokio::test]
+async fn scheduled_sync_settings_reject_invalid_enabled_cron() {
+    let state = app::test_support::test_state().await;
+    let app = app::app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/v1/settings/qobuz-scheduled-sync")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"enabled":true,"cron_expression":"not a cron"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn scheduled_sync_settings_patch_accepts_valid_cron_and_returns_next_run() {
+    let state = app::test_support::test_state().await;
+    let app = app::app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/v1/settings/qobuz-scheduled-sync")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"enabled":true,"cron_expression":"0 3 * * *","auto_download_new_favorites":true}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["settings"]["enabled"], true);
+    assert_eq!(json["settings"]["cron_expression"], "0 3 * * *");
+    assert_eq!(json["settings"]["auto_download_new_favorites"], true);
+    assert!(json["status"]["next_run_at"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn scheduled_sync_run_now_uses_settings_endpoint_and_requires_qobuz() {
+    let state = app::test_support::test_state().await;
+    let app = app::app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/settings/qobuz-scheduled-sync/run")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn scheduled_sync_run_now_auto_downloads_new_favorites_when_enabled() {
+    let mock = MockQobuz::with_albums(vec![MockQobuz::album(77, "New Album", "Artist A")]);
+    let state = state_with_mock(mock).await;
+    let app = app::app(state);
+
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/v1/settings/qobuz-scheduled-sync")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"auto_download_new_favorites":true,"cron_expression":"0 3 * * *"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+
+    let run = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/settings/qobuz-scheduled-sync/run")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let run_status = run.status();
+    let run_body = run.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        run_status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&run_body)
+    );
+
+    let downloads = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/downloads")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&downloads.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(json["items"].as_array().unwrap().len(), 1);
+    assert_eq!(json["items"][0]["qobuz_id"], 77);
+}
+
+#[tokio::test]
+async fn manual_qobuz_sync_stays_list_refresh_only_when_auto_download_enabled() {
+    let mock = MockQobuz::with_albums(vec![MockQobuz::album(88, "Manual Album", "Artist B")]);
+    let state = state_with_mock(mock).await;
+    let app = app::app(state);
+
+    let patch = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/v1/settings/qobuz-scheduled-sync")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"auto_download_new_favorites":true}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(patch.status(), StatusCode::OK);
+
+    let sync = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/qobuz/sync")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sync.status(), StatusCode::OK);
+
+    let downloads = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/downloads")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let json: serde_json::Value =
+        serde_json::from_slice(&downloads.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(json["items"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
 async fn sync_with_mock_populates_db() {
     let mock = MockQobuz::with_albums(vec![
         MockQobuz::album(10, "Alpha", "Artist A"),

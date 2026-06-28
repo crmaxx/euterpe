@@ -40,6 +40,7 @@ pub struct AppState {
     pub convert_events: broadcast::Sender<ConvertProgressEvent>,
     pub runtime: RuntimeSettingsHandle,
     pub storage_watch: crate::services::storage_watch::StorageWatchHandle,
+    pub qobuz_scheduled_sync: crate::services::qobuz_scheduled_sync::QobuzScheduledSyncHandle,
     pub hawk: Option<Arc<euterpe_hawk::Hawk>>,
     pub torrent: Option<Arc<dyn TorrentEngine>>,
     pub torrent_staging: Arc<TorrentStaging>,
@@ -98,6 +99,15 @@ impl AppState {
                 convert_job_tx: channels.convert_job_tx.clone(),
             },
         );
+        let qobuz_scheduled_sync =
+            crate::services::qobuz_scheduled_sync::QobuzScheduledSyncHandle::new(
+                crate::services::qobuz_scheduled_sync::QobuzScheduledSyncDeps {
+                    data: data.clone(),
+                    qobuz: qobuz.clone(),
+                    runtime: runtime.clone(),
+                    job_tx: channels.job_tx.clone(),
+                },
+            );
 
         Ok(Self {
             data,
@@ -111,6 +121,7 @@ impl AppState {
             convert_events: channels.convert_events,
             runtime,
             storage_watch,
+            qobuz_scheduled_sync,
             hawk,
             torrent,
             torrent_staging: Arc::new(TorrentStaging::new()),

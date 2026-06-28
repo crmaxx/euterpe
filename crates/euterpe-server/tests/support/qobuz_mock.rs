@@ -115,6 +115,16 @@ impl QobuzApi for MockQobuz {
 pub async fn state_with_mock(mock: MockQobuz) -> AppState {
     let mut state = test_state().await;
     qobuz_account::seed_active_qobuz_account(&state, 1, "test-token").await;
-    state.qobuz = Arc::new(Mutex::new(Box::new(mock) as Box<dyn QobuzApi + Send + Sync>));
+    let qobuz = Arc::new(Mutex::new(Box::new(mock) as Box<dyn QobuzApi + Send + Sync>));
+    state.qobuz = Arc::clone(&qobuz);
+    state.qobuz_scheduled_sync =
+        euterpe_server::services::qobuz_scheduled_sync::QobuzScheduledSyncHandle::new(
+            euterpe_server::services::qobuz_scheduled_sync::QobuzScheduledSyncDeps {
+                data: state.data.clone(),
+                qobuz,
+                runtime: state.runtime.clone(),
+                job_tx: state.job_tx.clone(),
+            },
+        );
     state
 }

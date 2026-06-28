@@ -688,6 +688,62 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/v1/settings/qobuz-scheduled-sync:
+    get:
+      operationId: getQobuzScheduledSyncSettings
+      tags: [Settings, Qobuz]
+      summary: Qobuz favorites scheduled sync settings
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Current scheduled sync settings and status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzScheduledSyncSettingsResponse"
+    patch:
+      operationId: patchQobuzScheduledSyncSettings
+      tags: [Settings, Qobuz]
+      summary: Update Qobuz favorites scheduled sync settings
+      security:
+        - AdminBearer: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QobuzScheduledSyncSettingsPatch"
+      responses:
+        "200":
+          description: Updated scheduled sync settings and status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzScheduledSyncSettingsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/settings/qobuz-scheduled-sync/run:
+    post:
+      operationId: runQobuzScheduledSyncNow
+      tags: [Settings, Qobuz]
+      summary: Run Qobuz favorites scheduled sync now
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Sync completed and scheduled sync status refreshed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QobuzScheduledSyncSettingsResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
   /api/v1/settings/storage:
     get:
       operationId: getStorageSettings
@@ -2427,7 +2483,7 @@ components:
 
     QobuzSyncRunSummary:
       type: object
-      required: [id, status, started_at]
+      required: [id, status, trigger, started_at]
       additionalProperties: false
       properties:
         id:
@@ -2435,21 +2491,26 @@ components:
           format: int64
         status:
           type: string
-          enum: [running, success, failed]
+          enum: [running, success, failed, skipped]
+        trigger:
+          type: string
+          enum: [manual, scheduled, settings_run_now]
         started_at:
           type: string
         finished_at:
           type: ["string", "null"]
         albums_total:
-          type: integer
+          type: ["integer", "null"]
           minimum: 0
         albums_added:
-          type: integer
+          type: ["integer", "null"]
           minimum: 0
         albums_removed:
-          type: integer
+          type: ["integer", "null"]
           minimum: 0
         error_message:
+          type: ["string", "null"]
+        skip_reason:
           type: ["string", "null"]
 
     QobuzSyncLatestResponse:
@@ -3077,6 +3138,56 @@ components:
       properties:
         concurrency:
           type: integer
+
+    QobuzScheduledSyncSettings:
+      type: object
+      required: [enabled, cron_expression, auto_download_new_favorites]
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        cron_expression:
+          type: string
+          description: Cron expression evaluated in the server-local timezone.
+        auto_download_new_favorites:
+          type: boolean
+
+    QobuzScheduledSyncStatus:
+      type: object
+      required: [server_timezone, next_run_at, last_run]
+      additionalProperties: false
+      properties:
+        server_timezone:
+          type: string
+          description: Server-local timezone used for cron evaluation.
+        next_run_at:
+          type: ["string", "null"]
+          description: Next scheduled run time when enabled and valid.
+        last_run:
+          oneOf:
+            - $ref: "#/components/schemas/QobuzSyncRunSummary"
+            - type: "null"
+
+    QobuzScheduledSyncSettingsResponse:
+      type: object
+      required: [settings, status]
+      additionalProperties: false
+      properties:
+        settings:
+          $ref: "#/components/schemas/QobuzScheduledSyncSettings"
+        status:
+          $ref: "#/components/schemas/QobuzScheduledSyncStatus"
+
+    QobuzScheduledSyncSettingsPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        cron_expression:
+          type: string
+        auto_download_new_favorites:
+          type: boolean
 
     ConvertAlbumResponse:
       type: object

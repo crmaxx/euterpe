@@ -914,6 +914,7 @@ mod tests {
             storage: app_settings::StorageSettings::local(
                 config.library_path.display().to_string(),
             ),
+            qobuz_scheduled_sync: app_settings::qobuz_scheduled_sync_defaults(),
         }))
     }
 

@@ -32,12 +32,31 @@ pub struct QobuzAccountRecord {
 pub struct QobuzSyncRunSummary {
     pub id: i64,
     pub status: String,
+    pub trigger: String,
     pub started_at: String,
     pub finished_at: Option<String>,
     pub albums_total: Option<i64>,
     pub albums_added: Option<i64>,
     pub albums_removed: Option<i64>,
     pub error_message: Option<String>,
+    pub skip_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QobuzSyncTrigger {
+    Manual,
+    Scheduled,
+    SettingsRunNow,
+}
+
+impl QobuzSyncTrigger {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Scheduled => "scheduled",
+            Self::SettingsRunNow => "settings_run_now",
+        }
+    }
 }
 
 #[derive(Debug, WeldsModel)]
@@ -79,6 +98,8 @@ struct QobuzSyncRun {
     albums_added: Option<i64>,
     albums_removed: Option<i64>,
     error_message: Option<String>,
+    trigger: Option<String>,
+    skip_reason: Option<String>,
 }
 
 pub async fn get_by_id(handle: &DataHandle, id: i64) -> Result<Option<QobuzAccountRecord>> {
@@ -235,14 +256,23 @@ pub async fn sync_latest(handle: &DataHandle) -> Result<Option<QobuzSyncRunSumma
 }
 
 pub async fn start_sync_run(handle: &DataHandle) -> Result<i64> {
+    start_sync_run_with_trigger(handle, QobuzSyncTrigger::Manual).await
+}
+
+pub async fn start_sync_run_with_trigger(
+    handle: &DataHandle,
+    trigger: QobuzSyncTrigger,
+) -> Result<i64> {
     let mut row = QobuzSyncRun::new();
     row.started_at = sqlite_timestamp();
     row.finished_at = None;
     row.status = "running".to_string();
+    row.trigger = Some(trigger.as_str().to_string());
     row.albums_total = Some(0);
     row.albums_added = Some(0);
     row.albums_removed = Some(0);
     row.error_message = None;
+    row.skip_reason = None;
     row.save(handle.client()).await?;
     Ok(row.id)
 }
@@ -273,6 +303,26 @@ pub async fn finish_sync_failed(handle: &DataHandle, run_id: i64, error: &str) -
         run.save(handle.client()).await?;
     }
     Ok(())
+}
+
+pub async fn insert_sync_skipped(
+    handle: &DataHandle,
+    trigger: QobuzSyncTrigger,
+    reason: &str,
+) -> Result<i64> {
+    let now = sqlite_timestamp();
+    let mut row = QobuzSyncRun::new();
+    row.started_at = now.clone();
+    row.finished_at = Some(now);
+    row.status = "skipped".to_string();
+    row.trigger = Some(trigger.as_str().to_string());
+    row.albums_total = Some(0);
+    row.albums_added = Some(0);
+    row.albums_removed = Some(0);
+    row.error_message = None;
+    row.skip_reason = Some(reason.to_string());
+    row.save(handle.client()).await?;
+    Ok(row.id)
 }
 
 fn account_record_from_model(account: welds::state::DbState<QobuzAccount>) -> QobuzAccountRecord {
@@ -307,12 +357,14 @@ fn sync_summary_from_model(run: welds::state::DbState<QobuzSyncRun>) -> QobuzSyn
     QobuzSyncRunSummary {
         id: run.id,
         status: run.status.clone(),
+        trigger: run.trigger.clone().unwrap_or_else(|| "manual".to_string()),
         started_at: run.started_at.clone(),
         finished_at: run.finished_at.clone(),
         albums_total: run.albums_total,
         albums_added: run.albums_added,
         albums_removed: run.albums_removed,
         error_message: run.error_message.clone(),
+        skip_reason: run.skip_reason.clone(),
     }
 }
 

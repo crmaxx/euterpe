@@ -101,6 +101,12 @@ export type DownloadsSettingsPatch =
   components["schemas"]["DownloadsSettingsPatch"];
 export type DownloadsSettingsResponse =
   components["schemas"]["DownloadsSettingsResponse"];
+export type QobuzScheduledSyncSettings =
+  components["schemas"]["QobuzScheduledSyncSettings"];
+export type QobuzScheduledSyncSettingsPatch =
+  components["schemas"]["QobuzScheduledSyncSettingsPatch"];
+export type QobuzScheduledSyncSettingsResponse =
+  components["schemas"]["QobuzScheduledSyncSettingsResponse"];
 export type StorageSettingsResponse =
   components["schemas"]["StorageSettingsResponse"];
 export type StorageSettingsView =
@@ -328,6 +334,26 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+
+  qobuzScheduledSyncSettings: () =>
+    fetchJson<QobuzScheduledSyncSettingsResponse>(
+      "/settings/qobuz-scheduled-sync",
+    ),
+
+  patchQobuzScheduledSyncSettings: (body: QobuzScheduledSyncSettingsPatch) =>
+    fetchJson<QobuzScheduledSyncSettingsResponse>(
+      "/settings/qobuz-scheduled-sync",
+      {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      },
+    ),
+
+  runQobuzScheduledSyncNow: () =>
+    fetchJson<QobuzScheduledSyncSettingsResponse>(
+      "/settings/qobuz-scheduled-sync/run",
+      { method: "POST" },
+    ),
 
   storageSettings: () =>
     fetchJson<StorageSettingsResponse>("/settings/storage"),

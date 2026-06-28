@@ -128,6 +128,15 @@ pub fn app(state: AppState) -> Router {
             get(settings_ext::get_downloads_settings).patch(settings_ext::patch_downloads_settings),
         )
         .route(
+            "/api/v1/settings/qobuz-scheduled-sync",
+            get(settings_ext::get_qobuz_scheduled_sync_settings)
+                .patch(settings_ext::patch_qobuz_scheduled_sync_settings),
+        )
+        .route(
+            "/api/v1/settings/qobuz-scheduled-sync/run",
+            post(settings_ext::run_qobuz_scheduled_sync_now),
+        )
+        .route(
             "/api/v1/settings/storage",
             get(settings_ext::get_storage_settings).patch(settings_ext::patch_storage_settings),
         )
@@ -314,6 +323,7 @@ pub async fn serve(
     )
     .await?;
     state.storage_watch.restart().await;
+    state.qobuz_scheduled_sync.restart().await?;
 
     let worker_deps = WorkerDeps {
         data: data.clone(),
@@ -665,12 +675,14 @@ fn qobuz_sync_run_from_data(row: qobuz_runs::QobuzSyncRunSummary) -> QobuzSyncRu
     QobuzSyncRunSummary {
         id: row.id,
         status: row.status,
+        trigger: row.trigger,
         started_at: row.started_at,
         finished_at: row.finished_at,
         albums_total: row.albums_total,
         albums_added: row.albums_added,
         albums_removed: row.albums_removed,
         error_message: row.error_message,
+        skip_reason: row.skip_reason,
     }
 }
 
@@ -683,10 +695,8 @@ pub mod test_support {
 
     fn test_config() -> AppConfig {
         let id = TEST_CONFIG_ID.fetch_add(1, Ordering::Relaxed);
-        let library_path = std::env::temp_dir().join(format!(
-            "euterpe-server-test-{}-{id}",
-            std::process::id()
-        ));
+        let library_path =
+            std::env::temp_dir().join(format!("euterpe-server-test-{}-{id}", std::process::id()));
         AppConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
             database_url: "sqlite::memory:".into(),

@@ -16,6 +16,7 @@ axum = { version = "0.8", features = ["macros", "multipart"] }
 bytes = "1"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
+croner = "3.0.1"
 dotenvy = "0.15"
 flume = { version = "0.11", features = ["async"] }
 euterpe-converter = { path = "../euterpe-converter", features = ["wavpack"] }

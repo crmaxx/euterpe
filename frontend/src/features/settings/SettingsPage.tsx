@@ -20,6 +20,7 @@ import { ConverterSettingsSection } from "@/features/settings/ConverterSettingsS
 import { DownloadsSettingsSection } from "@/features/settings/DownloadsSettingsSection";
 import { IntegrationsSection } from "@/features/settings/IntegrationsSection";
 import { LibraryScanSettingsSection } from "@/features/settings/LibraryScanSettingsSection";
+import { QobuzScheduledSyncSection } from "@/features/settings/QobuzScheduledSyncSection";
 import { StorageSettingsSection } from "@/features/settings/StorageSettingsSection";
 import { TorrentSettingsSection } from "@/features/settings/TorrentSettingsSection";
 import { useToast } from "@/hooks/use-toast";
@@ -218,6 +219,8 @@ export function SettingsPage() {
           </div>
         )}
       </section>
+
+      <QobuzScheduledSyncSection />
 
       <IntegrationsSection />
 

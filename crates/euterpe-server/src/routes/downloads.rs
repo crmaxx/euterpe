@@ -242,53 +242,6 @@ async fn cancel_torrent_for_job(state: &AppState, id: i64) -> Result<(), ApiErro
     Ok(())
 }
 
-async fn queue_album_download(
-    state: &AppState,
-    album_api_id: &str,
-    quality: u8,
-    qobuz_id: Option<u64>,
-    display_title: Option<String>,
-) -> Result<i64, ApiError> {
-    let qobuz_for_dedup = qobuz_id.filter(|id| *id > 0);
-    if data_download_jobs::has_running_album(&state.data, album_api_id, qobuz_for_dedup, quality)
-        .await?
-    {
-        return Err(ApiError::Message(
-            "JOB_ALREADY_RUNNING: album download in progress".into(),
-        ));
-    }
-
-    let payload = DownloadJobPayload {
-        album_api_id: Some(album_api_id.to_string()),
-        display_title: display_title.filter(|s| !s.trim().is_empty()),
-        torrent: None,
-    };
-    let job_id = data_download_jobs::insert_queued(
-        &state.data,
-        data_download_jobs::DownloadJobType::Album,
-        qobuz_id.filter(|id| *id > 0).map(|id| id as i64),
-        quality,
-        Some(&payload),
-    )
-    .await?;
-
-    tracing::debug!(
-        job_id,
-        qobuz_id = ?qobuz_id,
-        quality,
-        album_api_id = %album_api_id,
-        "download job queued"
-    );
-
-    state
-        .job_tx
-        .send(job_id)
-        .await
-        .map_err(|e| ApiError::Message(format!("job queue closed: {e}")))?;
-
-    Ok(job_id)
-}
-
 pub async fn create_download(
     State(state): State<AppState>,
     Json(body): Json<CreateDownloadRequest>,
@@ -325,7 +278,7 @@ pub async fn create_download(
         None
     };
 
-    let job_id = queue_album_download(
+    let job_id = crate::services::download::queue_album_download_for_state(
         &state,
         &resolved_api_id,
         body.quality,
@@ -368,7 +321,7 @@ pub async fn create_download_by_url(
         .unwrap_or("");
     let display_title = Some(format_album_display_title(artist, &summary.title));
 
-    let job_id = queue_album_download(
+    let job_id = crate::services::download::queue_album_download_for_state(
         &state,
         &album_api_id,
         body.quality,

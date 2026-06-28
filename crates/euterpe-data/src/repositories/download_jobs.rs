@@ -223,8 +223,45 @@ pub async fn has_running_album(
     qobuz_id: Option<u64>,
     quality: u8,
 ) -> Result<bool> {
+    has_album_job_matching_status(
+        handle,
+        album_api_id,
+        qobuz_id,
+        quality,
+        &[DownloadJobStatus::Running],
+    )
+    .await
+}
+
+pub async fn has_active_album(
+    handle: &DataHandle,
+    album_api_id: &str,
+    qobuz_id: Option<u64>,
+    quality: u8,
+) -> Result<bool> {
+    has_album_job_matching_status(
+        handle,
+        album_api_id,
+        qobuz_id,
+        quality,
+        &[
+            DownloadJobStatus::Queued,
+            DownloadJobStatus::Running,
+            DownloadJobStatus::Paused,
+        ],
+    )
+    .await
+}
+
+async fn has_album_job_matching_status(
+    handle: &DataHandle,
+    album_api_id: &str,
+    qobuz_id: Option<u64>,
+    quality: u8,
+    statuses: &[DownloadJobStatus],
+) -> Result<bool> {
     for job in DownloadJob::all().run(handle.client()).await? {
-        if job.status != DownloadJobStatus::Running.as_str()
+        if !statuses.iter().any(|status| job.status == status.as_str())
             || job.job_type != DownloadJobType::Album.as_str()
             || job.quality != quality as i32
         {

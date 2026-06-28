@@ -396,6 +396,41 @@ export interface paths {
         patch: operations["patchDownloadsSettings"];
         trace?: never;
     };
+    "/api/v1/settings/qobuz-scheduled-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Qobuz favorites scheduled sync settings */
+        get: operations["getQobuzScheduledSyncSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Qobuz favorites scheduled sync settings */
+        patch: operations["patchQobuzScheduledSyncSettings"];
+        trace?: never;
+    };
+    "/api/v1/settings/qobuz-scheduled-sync/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Qobuz favorites scheduled sync now */
+        post: operations["runQobuzScheduledSyncNow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings/storage": {
         parameters: {
             query?: never;
@@ -1153,13 +1188,16 @@ export interface components {
             /** Format: int64 */
             id: number;
             /** @enum {string} */
-            status: "running" | "success" | "failed";
+            status: "running" | "success" | "failed" | "skipped";
+            /** @enum {string} */
+            trigger: "manual" | "scheduled" | "settings_run_now";
             started_at: string;
             finished_at?: string | null;
-            albums_total?: number;
-            albums_added?: number;
-            albums_removed?: number;
+            albums_total?: number | null;
+            albums_added?: number | null;
+            albums_removed?: number | null;
             error_message?: string | null;
+            skip_reason?: string | null;
         };
         QobuzSyncLatestResponse: {
             run: components["schemas"]["QobuzSyncRunSummary"] | null;
@@ -1451,6 +1489,28 @@ export interface components {
         };
         DownloadsSettingsPatch: {
             concurrency?: number;
+        };
+        QobuzScheduledSyncSettings: {
+            enabled: boolean;
+            /** @description Cron expression evaluated in the server-local timezone. */
+            cron_expression: string;
+            auto_download_new_favorites: boolean;
+        };
+        QobuzScheduledSyncStatus: {
+            /** @description Server-local timezone used for cron evaluation. */
+            server_timezone: string;
+            /** @description Next scheduled run time when enabled and valid. */
+            next_run_at: string | null;
+            last_run: components["schemas"]["QobuzSyncRunSummary"] | null;
+        };
+        QobuzScheduledSyncSettingsResponse: {
+            settings: components["schemas"]["QobuzScheduledSyncSettings"];
+            status: components["schemas"]["QobuzScheduledSyncStatus"];
+        };
+        QobuzScheduledSyncSettingsPatch: {
+            enabled?: boolean;
+            cron_expression?: string;
+            auto_download_new_favorites?: boolean;
         };
         ConvertAlbumResponse: {
             /** Format: int64 */
@@ -2528,6 +2588,72 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    getQobuzScheduledSyncSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current scheduled sync settings and status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QobuzScheduledSyncSettingsResponse"];
+                };
+            };
+        };
+    };
+    patchQobuzScheduledSyncSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QobuzScheduledSyncSettingsPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated scheduled sync settings and status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QobuzScheduledSyncSettingsResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    runQobuzScheduledSyncNow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sync completed and scheduled sync status refreshed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QobuzScheduledSyncSettingsResponse"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getStorageSettings: {

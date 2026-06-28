@@ -67,6 +67,22 @@ async fn fresh_database_migrates_to_current_schema_shape() {
     );
     assert_columns(
         &columns,
+        "qobuz_sync_runs",
+        &[
+            "albums_added",
+            "albums_removed",
+            "albums_total",
+            "error_message",
+            "finished_at",
+            "id",
+            "skip_reason",
+            "started_at",
+            "status",
+            "trigger",
+        ],
+    );
+    assert_columns(
+        &columns,
         "download_jobs",
         &[
             "created_at",
@@ -144,6 +160,7 @@ async fn migrations_seed_default_settings_through_typed_reads() {
         "converter.settings",
         "library.scan.settings",
         "downloads.settings",
+        "qobuz.scheduled_sync.settings",
     ] {
         let setting = Setting::find_by_id(handle.client(), key.to_string())
             .await
