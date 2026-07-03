@@ -298,7 +298,7 @@ function TorrentPanel() {
 
 export function SourcesPage() {
   const { t } = usePreferences();
-  const [activeTab, setActiveTab] = useState<SourceTab>("torrent");
+  const [activeTab, setActiveTab] = useState<SourceTab>("qobuz-favorites");
 
   return (
     <div className="space-y-8">
@@ -312,18 +312,18 @@ export function SourcesPage() {
         aria-label={t("sources.title")}
         className="inline-flex rounded-lg bg-muted p-1"
       >
-        <TabButton tab="torrent" activeTab={activeTab} onSelect={setActiveTab}>
-          {t("sources.tabs.torrent")}
-        </TabButton>
-        <TabButton tab="qobuz-url" activeTab={activeTab} onSelect={setActiveTab}>
-          {t("sources.tabs.qobuzUrl")}
-        </TabButton>
         <TabButton
           tab="qobuz-favorites"
           activeTab={activeTab}
           onSelect={setActiveTab}
         >
           {t("sources.tabs.qobuzFavorites")}
+        </TabButton>
+        <TabButton tab="qobuz-url" activeTab={activeTab} onSelect={setActiveTab}>
+          {t("sources.tabs.qobuzUrl")}
+        </TabButton>
+        <TabButton tab="torrent" activeTab={activeTab} onSelect={setActiveTab}>
+          {t("sources.tabs.torrent")}
         </TabButton>
       </div>
 

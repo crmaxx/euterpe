@@ -3,12 +3,16 @@
 - Use `web_url_read` from SearXNG MCP for reading web page content
 
 ## Project Skills
-- For this project, always apply skills from `~/.agents/skills` when doing code work:
+- For this project, always apply shared skills from `~/.agents/skills` when doing code work:
   - `karpathy-guidelines`
   - `clean-code`
+- For frontend-only work, also apply:
+  - `type-script`
+- For backend-only work, also apply Rust skills:
   - `rust/weldsorm.md`
   - `rust-best-practices`
   - `rust-async-patterns`
+- For changes that touch both frontend and backend, apply `type-script` to the frontend portion and the Rust skills to the backend portion.
 - For `rust-best-practices`, read relevant reference chapters in the same turn when the work needs deeper Rust design, review, testing, error-handling, performance, or documentation guidance.
 - For `rust-async-patterns`, read `references/details.md` when async/Tokio/channel/task/cancellation details matter beyond the quick rules in `SKILL.md`.
 

@@ -15,19 +15,25 @@ describe("SourcesPage", () => {
     expect(
       await screen.findByRole("heading", { name: /sources/i, level: 2 }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /torrent/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /qobuz url/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Qobuz Favorites",
+      "Qobuz Url",
+      "Torrent",
+    ]);
     expect(
       screen.getByRole("tab", { name: /qobuz favorites/i }),
-    ).toBeInTheDocument();
+    ).toHaveAttribute("aria-selected", "true");
   });
 
   it("shows magnet and torrent file sections on the Torrent tab", async () => {
+    const user = userEvent.setup();
     render(
       <TestProviders>
         <SourcesPage />
       </TestProviders>,
     );
+
+    await user.click(await screen.findByRole("tab", { name: /torrent/i }));
 
     expect(
       await screen.findByRole("heading", { name: /magnet link/i, level: 3 }),
@@ -41,12 +47,14 @@ describe("SourcesPage", () => {
   });
 
   it("does not repeat section names as visible torrent input labels", async () => {
+    const user = userEvent.setup();
     render(
       <TestProviders>
         <SourcesPage />
       </TestProviders>,
     );
 
+    await user.click(await screen.findByRole("tab", { name: /torrent/i }));
     await screen.findByRole("heading", { name: /magnet link/i, level: 3 });
 
     expect(screen.getAllByText(/^Magnet link$/i)).toHaveLength(1);
@@ -56,7 +64,17 @@ describe("SourcesPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("moves Qobuz favorites into a Sources tab", async () => {
+  it("shows Qobuz favorites on the default tab", async () => {
+    render(
+      <TestProviders>
+        <SourcesPage />
+      </TestProviders>,
+    );
+
+    expect(await screen.findByText("Test Album")).toBeInTheDocument();
+  });
+
+  it("shows the Qobuz URL panel on the Qobuz Url tab", async () => {
     const user = userEvent.setup();
     render(
       <TestProviders>
@@ -64,10 +82,10 @@ describe("SourcesPage", () => {
       </TestProviders>,
     );
 
-    await user.click(
-      await screen.findByRole("tab", { name: /qobuz favorites/i }),
-    );
+    await user.click(await screen.findByRole("tab", { name: /qobuz url/i }));
 
-    expect(await screen.findByText("Test Album")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("textbox", { name: /qobuz album url/i }),
+    ).toBeInTheDocument();
   });
 });
