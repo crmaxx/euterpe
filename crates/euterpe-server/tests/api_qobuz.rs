@@ -1,5 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use euterpe_data::repositories::catalog::{self, AlbumUpsert};
 use euterpe_server::app;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
@@ -409,7 +410,7 @@ async fn list_favorites_keyset() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/qobuz/favorites?type=album&limit=2&sort=title&order=asc")
+                .uri("/api/v1/qobuz/favorites?type=album&limit=2&sort=title&order=asc&library_filter=all")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -428,12 +429,26 @@ async fn list_favorites_keyset() {
     assert_eq!(json["has_more"], true);
     let cursor = json["next_cursor"].as_str().unwrap();
 
-    let page2 = app
+    let mismatched_cursor = app
         .clone()
         .oneshot(
             Request::builder()
                 .uri(format!(
                     "/api/v1/qobuz/favorites?type=album&limit=2&sort=title&order=asc&cursor={cursor}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mismatched_cursor.status(), StatusCode::BAD_REQUEST);
+
+    let page2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/qobuz/favorites?type=album&limit=2&sort=title&order=asc&library_filter=all&cursor={cursor}"
                 ))
                 .body(Body::empty())
                 .unwrap(),
@@ -448,7 +463,7 @@ async fn list_favorites_keyset() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/api/v1/qobuz/favorites?type=album&q=Two&sort=artist")
+                .uri("/api/v1/qobuz/favorites?type=album&q=Two&sort=artist&library_filter=all")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -469,6 +484,106 @@ async fn list_favorites_keyset() {
         .await
         .unwrap();
     assert_eq!(bad_sort.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn list_favorites_defaults_to_in_library_with_explicit_filter_modes() {
+    let mock = MockQobuz::with_albums(vec![
+        MockQobuz::album(1, "Local Favorite", "A"),
+        MockQobuz::album(2, "Remote Favorite", "B"),
+    ]);
+    let state = state_with_mock(mock).await;
+    let app = app::app(state.clone());
+
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/qobuz/sync")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let artist_id = catalog::upsert_artist_by_name(&state.data, "A", None)
+        .await
+        .unwrap();
+    catalog::upsert_album(
+        &state.data,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Local Favorite",
+            year: None,
+            qobuz_album_id: Some(1),
+            path: Some("A/Local Favorite"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let default_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/qobuz/favorites?type=album")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(default_response.status(), StatusCode::OK);
+    let default_json: serde_json::Value = serde_json::from_slice(
+        &default_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(default_json["items"].as_array().unwrap().len(), 1);
+    assert_eq!(default_json["items"][0]["qobuz_id"], 1);
+    assert_eq!(default_json["items"][0]["in_library"], true);
+
+    let all_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/qobuz/favorites?type=album&library_filter=all")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let all_json: serde_json::Value =
+        serde_json::from_slice(&all_response.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
+    assert_eq!(all_json["items"].as_array().unwrap().len(), 2);
+
+    let remote_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/qobuz/favorites?type=album&library_filter=not_in_library")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let remote_json: serde_json::Value = serde_json::from_slice(
+        &remote_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(remote_json["items"].as_array().unwrap().len(), 1);
+    assert_eq!(remote_json["items"][0]["qobuz_id"], 2);
+    assert_eq!(remote_json["items"][0]["in_library"], false);
 }
 
 #[tokio::test]

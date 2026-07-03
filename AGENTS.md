@@ -26,6 +26,12 @@
 - Do not add raw SQL for application data access when Welds can express the operation clearly.
 - Raw SQL is allowed only when Welds cannot reasonably express the query or when it is needed for a backend-specific operation; document the reason at the call site.
 
+## API Compatibility
+- The app's OpenAPI contract is currently consumed only by this repository's frontend unless a task explicitly says otherwise.
+- Do not add deprecated compatibility parameters, duplicate fields, or migration shims for internal-only API changes by default.
+- Prefer updating the OpenAPI contract, backend handlers, generated frontend schema, client, and tests in one direct change.
+- Add deprecation/backward-compatibility paths only when there is a known external API consumer or an explicit compatibility requirement.
+
 ## Project Knowledge
 - `docs/solutions/` contains documented solutions to past problems and durable patterns, organized by category with YAML frontmatter (`module`, `problem_type`, `tags`). Relevant when implementing or debugging in documented areas.
 - `CONCEPTS.md` contains shared project vocabulary for domain concepts and named processes.

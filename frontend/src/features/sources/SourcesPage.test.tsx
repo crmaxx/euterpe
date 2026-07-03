@@ -71,7 +71,7 @@ describe("SourcesPage", () => {
       </TestProviders>,
     );
 
-    expect(await screen.findByText("Test Album")).toBeInTheDocument();
+    expect(await screen.findByText("In Lib Album")).toBeInTheDocument();
   });
 
   it("shows the Qobuz URL panel on the Qobuz Url tab", async () => {

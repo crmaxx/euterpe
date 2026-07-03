@@ -15,6 +15,7 @@ import {
   type LibraryAlbumItem,
   type LibraryScanLatestResponse,
   type QobuzFavoriteItem,
+  type QobuzFavoritesLibraryFilter,
   type SortOrder,
   type StorageLocationPatch,
 } from "./client";
@@ -37,7 +38,7 @@ export type FavoritesListQuery = {
   sort?: "title" | "artist" | "in_library";
   order?: SortOrder;
   q?: string;
-  in_library?: boolean;
+  library_filter?: QobuzFavoritesLibraryFilter;
 };
 
 export type LibraryAlbumsListQuery = {
@@ -525,7 +526,7 @@ function favoritesFilterKey(params: FavoritesListQuery): string {
     sort: params.sort ?? "title",
     order: params.order ?? "asc",
     q: params.q ?? "",
-    in_library: params.in_library ?? null,
+    library_filter: params.library_filter ?? null,
   });
 }
 
@@ -601,7 +602,9 @@ export function useFavoritesList(params: FavoritesListQuery = {}) {
 }
 
 /** Flattened favorites for queue titles and other consumers. */
-export function useFavoritesFlat(params: FavoritesListQuery = { limit: 500 }) {
+export function useFavoritesFlat(
+  params: FavoritesListQuery = { limit: 500, library_filter: "all" },
+) {
   const query = useFavoritesKeyset(params);
   const { hasNextPage, isFetchingNextPage, fetchNextPage, dataUpdatedAt } = query;
   useEffect(() => {

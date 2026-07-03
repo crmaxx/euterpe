@@ -484,7 +484,7 @@ struct FavoritesQuery {
     order: Option<String>,
     cursor: Option<String>,
     q: Option<String>,
-    in_library: Option<bool>,
+    library_filter: Option<String>,
 }
 
 fn default_limit() -> u32 {
@@ -512,7 +512,8 @@ async fn list_favorites(
         Some("desc") => favorites::SortOrder::Desc,
         Some(_) => return Err(ApiError::bad_request("order must be asc or desc")),
     };
-    let fingerprint = qobuz_favorites_fingerprint(q.q.as_ref(), q.in_library);
+    let in_library = effective_favorites_in_library_filter(&q)?;
+    let fingerprint = qobuz_favorites_fingerprint(q.q.as_ref(), in_library);
     let after = decode_qobuz_favorites_cursor(&q, sort, order, &fingerprint)?;
     let page = favorites::list_albums_keyset(
         &state.data,
@@ -521,7 +522,7 @@ async fn list_favorites(
             order,
             limit: limit as usize,
             q: q.q,
-            in_library: q.in_library,
+            in_library,
             after,
         },
     )
@@ -539,6 +540,17 @@ async fn list_favorites(
         next_cursor,
         has_more: page.has_more,
     }))
+}
+
+fn effective_favorites_in_library_filter(query: &FavoritesQuery) -> Result<Option<bool>, ApiError> {
+    match query.library_filter.as_deref().unwrap_or("in_library") {
+        "in_library" => Ok(Some(true)),
+        "all" => Ok(None),
+        "not_in_library" => Ok(Some(false)),
+        _ => Err(ApiError::bad_request(
+            "library_filter must be in_library, all, or not_in_library",
+        )),
+    }
 }
 
 async fn add_favorites(

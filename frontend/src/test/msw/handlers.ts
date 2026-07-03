@@ -24,6 +24,18 @@ export const mockFavorites = {
   has_more: false,
 };
 
+function favoritesForRequest(request: Request) {
+  const filter =
+    new URL(request.url).searchParams.get("library_filter") ?? "in_library";
+  const items =
+    filter === "all"
+      ? mockFavorites.items
+      : mockFavorites.items.filter((item) =>
+          filter === "not_in_library" ? !item.in_library : item.in_library,
+        );
+  return { ...mockFavorites, items };
+}
+
 const watchDisabled = { state: "disabled", degraded_reason: null };
 
 export const handlers = [
@@ -250,7 +262,9 @@ export const handlers = [
     HttpResponse.json({ run: null }),
   ),
 
-  http.get("/api/v1/qobuz/favorites", () => HttpResponse.json(mockFavorites)),
+  http.get("/api/v1/qobuz/favorites", ({ request }) =>
+    HttpResponse.json(favoritesForRequest(request)),
+  ),
 
   http.post("/api/v1/qobuz/sync", () =>
     HttpResponse.json({

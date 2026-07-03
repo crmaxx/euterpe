@@ -17,9 +17,10 @@ function renderFavorites() {
 }
 
 describe("FavoritesPage", () => {
-  it("renders mock favorites", async () => {
+  it("renders in-library favorites by default", async () => {
     renderFavorites();
-    expect(await screen.findByText("Test Album")).toBeInTheDocument();
+    expect(await screen.findByText("In Lib Album")).toBeInTheDocument();
+    expect(screen.queryByText("Test Album")).not.toBeInTheDocument();
     expect(screen.getAllByText("Test Artist").length).toBeGreaterThanOrEqual(1);
   });
 
@@ -38,17 +39,37 @@ describe("FavoritesPage", () => {
     );
     const user = userEvent.setup();
     renderFavorites();
-    await screen.findByText("Test Album");
+    await screen.findByText("In Lib Album");
     await user.click(screen.getByRole("button", { name: /sync now/i }));
     await waitFor(() => expect(synced).toBe(true));
   });
 
   it("shows Download when not in library and Re-download when in library", async () => {
+    const user = userEvent.setup();
     renderFavorites();
     expect(await screen.findByText("In Lib Album")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^All$/i }));
+    expect(await screen.findByText("Test Album")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Re-download$/i })).toBeInTheDocument();
     const downloads = screen.getAllByRole("button", { name: /^Download$/i });
     expect(downloads.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("switches between all and not-in-library filters", async () => {
+    const user = userEvent.setup();
+    renderFavorites();
+    expect(await screen.findByText("In Lib Album")).toBeInTheDocument();
+    expect(screen.queryByText("Test Album")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /^All$/i }));
+    expect(await screen.findByText("Test Album")).toBeInTheDocument();
+    expect(screen.getByText("In Lib Album")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /not in library/i }));
+    await waitFor(() =>
+      expect(screen.queryByText("In Lib Album")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("Test Album")).toBeInTheDocument();
   });
 
   it("locks row download until job completes", async () => {
@@ -76,6 +97,7 @@ describe("FavoritesPage", () => {
     );
     const user = userEvent.setup();
     renderFavorites();
+    await user.click(await screen.findByRole("button", { name: /^All$/i }));
     const btn = await screen.findByRole("button", { name: /downloading/i });
     expect(btn).toBeDisabled();
     await user.click(btn);

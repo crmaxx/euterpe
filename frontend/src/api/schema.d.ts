@@ -2140,7 +2140,8 @@ export interface operations {
                 order?: "asc" | "desc";
                 cursor?: string;
                 q?: string;
-                in_library?: boolean;
+                /** @description Library membership filter. Defaults to `in_library`; use `all` for unfiltered favorites. */
+                library_filter?: "in_library" | "all" | "not_in_library";
             };
             header?: never;
             path?: never;

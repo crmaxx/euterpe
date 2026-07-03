@@ -53,6 +53,18 @@ The scheduled process that refreshes local Qobuz favorites from the connected Qo
 
 Scheduled Qobuz Favorites Sync defaults to updating the favorites list only. Automatic download of newly discovered favorites is an opt-in behavior and is limited to albums that are not already in the library.
 
+## Engineering Contracts
+
+### OpenAPI Contract
+The repository-owned HTTP contract that defines the backend wire shape and the generated frontend client types.
+
+OpenAPI Contract changes should be made before backend and frontend implementation work so tests and generated types describe the intended behavior rather than reverse-engineering it afterward.
+
+### Internal API Contract
+An OpenAPI Contract whose known consumers are inside this repository and can be updated in the same change.
+
+Internal API Contracts should have one current wire shape. Deprecated aliases, duplicate parameters, and compatibility shims belong only when an external consumer or explicit deployment constraint requires them.
+
 ## Data Layer
 
 ### First-Party Data Layer

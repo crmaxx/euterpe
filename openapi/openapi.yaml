@@ -260,10 +260,13 @@ paths:
           in: query
           schema:
             type: string
-        - name: in_library
+        - name: library_filter
           in: query
+          description: Library membership filter. Defaults to `in_library`; use `all` for unfiltered favorites.
           schema:
-            type: boolean
+            type: string
+            enum: [in_library, all, not_in_library]
+            default: in_library
       responses:
         "200":
           description: Paginated favorites

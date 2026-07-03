@@ -134,7 +134,10 @@ export function QueuePage() {
   const { t } = usePreferences();
   const { toast } = useToast();
   const { data, isLoading, isError, error, refetch, isFetching } = useDownloads();
-  const { items: favoriteItems } = useFavoritesFlat({ limit: 100 });
+  const { items: favoriteItems } = useFavoritesFlat({
+    limit: 100,
+    library_filter: "all",
+  });
   const cancel = useCancelDownload();
   const purgeFinished = usePurgeFinishedDownloads();
   const purgeOne = usePurgeDownload();

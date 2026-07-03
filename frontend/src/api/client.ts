@@ -1,7 +1,7 @@
 import { getAdminToken, notifyAdminUnauthorized } from "@/lib/auth";
 import { ApiClientError, type ErrorResponse } from "./errors";
 import { appendKeysetParams, type KeysetListParams, type SortOrder } from "./keyset";
-import type { components } from "./schema";
+import type { components, operations } from "./schema";
 
 export type { KeysetListParams, SortOrder };
 export type { KeysetListResponse } from "./keyset";
@@ -12,6 +12,9 @@ export type QobuzSyncLatestResponse =
 export type QobuzFavoritesListResponse =
   components["schemas"]["QobuzFavoritesListResponse"];
 export type QobuzFavoriteItem = components["schemas"]["QobuzFavoriteItem"];
+export type QobuzFavoritesLibraryFilter = NonNullable<
+  operations["listQobuzFavorites"]["parameters"]["query"]["library_filter"]
+>;
 export type QobuzSyncResponse = components["schemas"]["QobuzSyncResponse"];
 export type QobuzTestLoginRequest =
   components["schemas"]["QobuzTestLoginRequest"];
@@ -225,7 +228,7 @@ export const api = {
   favorites: (
     params: KeysetListParams & {
       q?: string;
-      in_library?: boolean;
+      library_filter?: QobuzFavoritesLibraryFilter;
     } = {},
   ) => {
     const search = new URLSearchParams({ type: "album" });
@@ -235,7 +238,7 @@ export const api = {
       order: params.order ?? "asc",
       cursor: params.cursor ?? undefined,
       q: params.q,
-      in_library: params.in_library,
+      library_filter: params.library_filter,
     });
     return fetchJson<QobuzFavoritesListResponse>(`/qobuz/favorites?${search}`);
   },

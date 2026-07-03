@@ -35,6 +35,7 @@ const SORT_STORAGE_KEY = "euterpe.favorites.sort";
 const ORDER_STORAGE_KEY = "euterpe.favorites.order";
 
 type FavoritesSort = NonNullable<FavoritesListQuery["sort"]>;
+type FavoritesLibraryFilter = NonNullable<FavoritesListQuery["library_filter"]>;
 
 function loadStoredSort(): FavoritesSort {
   const s = sessionStorage.getItem(SORT_STORAGE_KEY);
@@ -228,7 +229,8 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
   const [order, setOrder] = useState<SortOrder>(loadStoredOrder);
   const [qInput, setQInput] = useState("");
   const [q, setQ] = useState("");
-  const [inLibrary, setInLibrary] = useState<boolean | undefined>(undefined);
+  const [libraryFilter, setLibraryFilter] =
+    useState<FavoritesLibraryFilter>("in_library");
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   useEffect(() => {
     const timerId = window.setTimeout(() => setQ(qInput.trim()), 300);
@@ -246,9 +248,9 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
       sort,
       order,
       q: q || undefined,
-      in_library: inLibrary,
+      library_filter: libraryFilter,
     }),
-    [sort, order, q, inLibrary],
+    [sort, order, q, libraryFilter],
   );
 
   const favoritesQuery = useFavoritesList(listParams);
@@ -452,24 +454,26 @@ const FavoritesPageContent = memo(function FavoritesPageContent() {
           <Button
             type="button"
             size="sm"
-            variant={inLibrary === undefined ? "secondary" : "outline"}
-            onClick={() => setInLibrary(undefined)}
+            variant={libraryFilter === "all" ? "secondary" : "outline"}
+            onClick={() => setLibraryFilter("all")}
           >
             {t("favorites.filterAll")}
           </Button>
           <Button
             type="button"
             size="sm"
-            variant={inLibrary === true ? "secondary" : "outline"}
-            onClick={() => setInLibrary(true)}
+            variant={libraryFilter === "in_library" ? "secondary" : "outline"}
+            onClick={() => setLibraryFilter("in_library")}
           >
             {t("favorites.filterInLibrary")}
           </Button>
           <Button
             type="button"
             size="sm"
-            variant={inLibrary === false ? "secondary" : "outline"}
-            onClick={() => setInLibrary(false)}
+            variant={
+              libraryFilter === "not_in_library" ? "secondary" : "outline"
+            }
+            onClick={() => setLibraryFilter("not_in_library")}
           >
             {t("favorites.filterNotInLibrary")}
           </Button>
