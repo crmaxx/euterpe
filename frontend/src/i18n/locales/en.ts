@@ -65,6 +65,31 @@ export const en = {
       switchAccount: "Switch account",
       logOut: "Log out",
     },
+    qobuzScheduled: {
+      title: "Scheduled favorites sync",
+      enable: "Enable scheduled sync",
+      cron: "Cron expression",
+      autoDownload: "Auto-download new favorites",
+      serverTimezone: "Server timezone",
+      nextRun: "Next run",
+      lastRun: "Last result",
+      never: "Not scheduled",
+      none: "No runs yet",
+      save: "Save schedule",
+      runNow: "Run now",
+      saved: "Schedule saved",
+      saveFailed: "Could not save schedule",
+      runComplete: "Scheduled sync complete",
+      runListOnly:
+        "Favorites list refreshed. Auto-download is off, so no download jobs were queued.",
+      runNoNewFavorites:
+        "Favorites list refreshed. No new favorites were found; existing unsynced favorites were checked for download queueing.",
+      runAutoDownload:
+        "Favorites list refreshed. {added} new favorites found; eligible albums were queued for download.",
+      lastRunSummary:
+        "{trigger}: {status} · total {total} · new {added} · removed {removed}",
+      runFailed: "Could not run scheduled sync",
+    },
     downloads: {
       title: "Downloads",
       defaultQuality: "Default quality",

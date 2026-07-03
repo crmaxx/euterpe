@@ -49,4 +49,51 @@ describe("SettingsPage", () => {
     renderSettings(["/settings?qobuz=connected&account_id=1"]);
     expect(await screen.findByText(/qobuz connected/i)).toBeInTheDocument();
   });
+
+  it("shows and saves Qobuz scheduled sync settings", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    renderSettings();
+
+    expect(await screen.findByText(/scheduled favorites sync/i)).toBeInTheDocument();
+    await user.click(screen.getByLabelText(/enable scheduled sync/i));
+    await user.clear(screen.getByLabelText(/cron expression/i));
+    await user.type(screen.getByLabelText(/cron expression/i), "0 3 * * *");
+    await user.click(screen.getByLabelText(/auto-download new favorites/i));
+    await user.click(screen.getByRole("button", { name: /^save schedule$/i }));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/settings/qobuz-scheduled-sync"),
+        expect.objectContaining({ method: "PATCH" }),
+      );
+    });
+
+    fetchSpy.mockRestore();
+  });
+
+  it("runs Qobuz scheduled sync now from settings", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    renderSettings();
+
+    await user.click(await screen.findByRole("button", { name: /run now/i }));
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/settings/qobuz-scheduled-sync/run"),
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(
+      await screen.findByText(/auto-download is off, so no download jobs were queued/i),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/settings_run_now: success .* new 0/i),
+    ).toBeInTheDocument();
+
+    fetchSpy.mockRestore();
+  });
 });

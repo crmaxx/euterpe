@@ -1,6 +1,7 @@
 /target/
 /dist/
 node_modules/
+.npm-cache/
 **/*.rs.bk
 .env
 compose.yml

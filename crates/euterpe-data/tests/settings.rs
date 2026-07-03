@@ -47,3 +47,38 @@ async fn settings_preserve_seeded_values_until_overwritten() {
         Some("{\"concurrency\":1}".to_string())
     );
 }
+
+#[tokio::test]
+async fn qobuz_scheduled_sync_settings_are_seeded_and_preserved() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+
+    assert_eq!(
+        settings::get(&handle, "qobuz.scheduled_sync.settings")
+            .await
+            .unwrap(),
+        Some(
+            r#"{"enabled":false,"cron_expression":"0 3 * * *","auto_download_new_favorites":false}"#
+                .to_string()
+        )
+    );
+
+    settings::set(
+        &handle,
+        "qobuz.scheduled_sync.settings",
+        r#"{"enabled":true,"cron_expression":"0 3 * * *","auto_download_new_favorites":true}"#,
+    )
+    .await
+    .unwrap();
+    migrations::migrate(&handle).await.unwrap();
+
+    assert_eq!(
+        settings::get(&handle, "qobuz.scheduled_sync.settings")
+            .await
+            .unwrap(),
+        Some(
+            r#"{"enabled":true,"cron_expression":"0 3 * * *","auto_download_new_favorites":true}"#
+                .to_string()
+        )
+    );
+}

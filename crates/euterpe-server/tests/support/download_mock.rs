@@ -167,6 +167,15 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
     let runtime = Arc::new(tokio::sync::RwLock::new(
         euterpe_server::services::app_settings::load_runtime_settings(&data, &config).await,
     ));
+    let qobuz_scheduled_sync =
+        euterpe_server::services::qobuz_scheduled_sync::QobuzScheduledSyncHandle::new(
+            euterpe_server::services::qobuz_scheduled_sync::QobuzScheduledSyncDeps {
+                data: data.clone(),
+                qobuz: Arc::clone(&qobuz),
+                runtime: runtime.clone(),
+                job_tx: job_tx.clone(),
+            },
+        );
 
     let state = AppState {
         data: data.clone(),
@@ -188,6 +197,7 @@ pub async fn state_with_download_mock(mock: DownloadMockQobuz) -> AppState {
                 convert_job_tx,
             },
         ),
+        qobuz_scheduled_sync,
         hawk: None,
         torrent: None,
         torrent_staging: Arc::new(euterpe_server::services::torrent_staging::TorrentStaging::new()),

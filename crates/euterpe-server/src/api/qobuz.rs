@@ -24,6 +24,7 @@ pub struct QobuzSyncResponse {
 pub struct QobuzSyncRunSummary {
     pub id: i64,
     pub status: String,
+    pub trigger: String,
     pub started_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
@@ -35,6 +36,8 @@ pub struct QobuzSyncRunSummary {
     pub albums_removed: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

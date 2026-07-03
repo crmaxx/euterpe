@@ -300,6 +300,53 @@ async fn download_lifecycle_transitions_preserve_current_rules() {
     );
 }
 
+#[tokio::test]
+async fn active_album_job_check_matches_queued_running_and_paused_work() {
+    let handle = migrated_handle().await;
+    let payload = json!({"album_api_id":"album-api-1"});
+    let queued = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(42),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    assert!(
+        download_jobs::has_active_album(&handle, "album-api-1", Some(42), 6)
+            .await
+            .unwrap()
+    );
+
+    assert!(download_jobs::claim_running(&handle, queued).await.unwrap());
+    assert!(
+        download_jobs::has_active_album(&handle, "album-api-1", Some(42), 6)
+            .await
+            .unwrap()
+    );
+
+    download_jobs::pause(&handle, queued).await.unwrap();
+    assert!(
+        download_jobs::has_active_album(&handle, "album-api-1", Some(42), 6)
+            .await
+            .unwrap()
+    );
+
+    assert!(
+        !download_jobs::has_active_album(&handle, "album-api-1", Some(42), 7)
+            .await
+            .unwrap()
+    );
+
+    download_jobs::cancel(&handle, queued).await.unwrap();
+    assert!(
+        !download_jobs::has_active_album(&handle, "album-api-1", Some(42), 6)
+            .await
+            .unwrap()
+    );
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 struct TorrentPayload {
     display_title: Option<String>,

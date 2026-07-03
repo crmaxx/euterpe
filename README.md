@@ -43,8 +43,7 @@ preview-level until the storage migration settles.
 ## Requirements
 
 - Rust 1.95 or newer.
-- Node.js `^20.19.0` or `>=22.13.0`.
-- npm.
+- Node.js `>=22.13.0`.
 - SQLite, via the bundled Rust dependencies.
 - Optional: Docker and Overmind for deployment/dev orchestration.
 

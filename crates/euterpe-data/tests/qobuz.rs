@@ -159,10 +159,13 @@ async fn sync_run_lifecycle_reports_latest_status_and_counters() {
     let handle = migrated_handle().await;
 
     let first = qobuz::start_sync_run(&handle).await.unwrap();
-    let second = qobuz::start_sync_run(&handle).await.unwrap();
+    let second = qobuz::start_sync_run_with_trigger(&handle, qobuz::QobuzSyncTrigger::Scheduled)
+        .await
+        .unwrap();
     let running = qobuz::sync_latest(&handle).await.unwrap().unwrap();
     assert_eq!(running.id, second);
     assert_eq!(running.status, "running");
+    assert_eq!(running.trigger, "scheduled");
 
     qobuz::finish_sync_success(&handle, first, 10, 7, 3)
         .await
@@ -183,5 +186,26 @@ async fn sync_run_lifecycle_reports_latest_status_and_counters() {
     let latest = qobuz::sync_latest(&handle).await.unwrap().unwrap();
     assert_eq!(latest.id, second);
     assert_eq!(latest.status, "failed");
+    assert_eq!(latest.trigger, "scheduled");
     assert_eq!(latest.error_message.as_deref(), Some("network"));
+}
+
+#[tokio::test]
+async fn sync_run_lifecycle_records_skipped_scheduled_outcomes() {
+    let handle = migrated_handle().await;
+
+    let skipped = qobuz::insert_sync_skipped(
+        &handle,
+        qobuz::QobuzSyncTrigger::Scheduled,
+        "already_running",
+    )
+    .await
+    .unwrap();
+
+    let latest = qobuz::sync_latest(&handle).await.unwrap().unwrap();
+    assert_eq!(latest.id, skipped);
+    assert_eq!(latest.status, "skipped");
+    assert_eq!(latest.trigger, "scheduled");
+    assert_eq!(latest.skip_reason.as_deref(), Some("already_running"));
+    assert!(latest.finished_at.is_some());
 }

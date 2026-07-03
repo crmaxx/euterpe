@@ -89,6 +89,14 @@ pub struct FavoriteAlbumMeta {
     pub artist_name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FavoriteAlbumDownloadCandidate {
+    pub qobuz_id: u64,
+    pub album_api_id: String,
+    pub title: String,
+    pub artist_name: String,
+}
+
 #[derive(Debug, Clone)]
 struct FavoriteJoinedRow {
     qobuz_id: i64,
@@ -186,6 +194,14 @@ pub async fn album_meta(handle: &DataHandle, qobuz_id: u64) -> Result<Option<Fav
             title: favorite.title.clone().unwrap_or_default(),
             artist_name: favorite.artist_name.clone().unwrap_or_default(),
         }))
+}
+
+pub async fn album_is_in_library(handle: &DataHandle, qobuz_id: u64) -> Result<bool> {
+    Ok(Album::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .any(|album| album.qobuz_album_id == Some(qobuz_id as i64)))
 }
 
 pub async fn mark_removed_except(handle: &DataHandle, keep_ids: &[u64]) -> Result<u64> {
@@ -309,6 +325,37 @@ pub async fn active_album_ids(handle: &DataHandle) -> Result<Vec<u64>> {
         .collect::<Vec<_>>();
     ids.sort_unstable();
     Ok(ids)
+}
+
+pub async fn active_album_download_candidates(
+    handle: &DataHandle,
+) -> Result<Vec<FavoriteAlbumDownloadCandidate>> {
+    let albums_by_qobuz_id = Album::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter_map(|album| album.qobuz_album_id.map(|qobuz_id| (qobuz_id, album)))
+        .collect::<HashMap<_, _>>();
+
+    let mut candidates = QobuzFavorite::all()
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .filter(|favorite| favorite.entity_type == "album" && favorite.removed == 0)
+        .filter(|favorite| !albums_by_qobuz_id.contains_key(&favorite.qobuz_id))
+        .map(|favorite| favorite.into_inner())
+        .filter_map(|favorite| {
+            let album_api_id = favorite.slug.filter(|slug| !slug.trim().is_empty())?;
+            Some(FavoriteAlbumDownloadCandidate {
+                qobuz_id: favorite.qobuz_id as u64,
+                album_api_id,
+                title: favorite.title.unwrap_or_default(),
+                artist_name: favorite.artist_name.unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| candidate.qobuz_id);
+    Ok(candidates)
 }
 
 fn favorite_row_to_item(row: FavoriteJoinedRow) -> QobuzFavoriteAlbum {

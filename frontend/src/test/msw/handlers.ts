@@ -123,6 +123,64 @@ export const handlers = [
     });
   }),
 
+  http.get("/api/v1/settings/qobuz-scheduled-sync", () =>
+    HttpResponse.json({
+      settings: {
+        enabled: false,
+        cron_expression: "0 3 * * *",
+        auto_download_new_favorites: false,
+      },
+      status: {
+        server_timezone: "server-local (+03:00)",
+        next_run_at: null,
+        last_run: null,
+      },
+    }),
+  ),
+
+  http.patch("/api/v1/settings/qobuz-scheduled-sync", async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    return HttpResponse.json({
+      settings: {
+        enabled: (body.enabled as boolean) ?? false,
+        cron_expression: (body.cron_expression as string) ?? "0 3 * * *",
+        auto_download_new_favorites:
+          (body.auto_download_new_favorites as boolean) ?? false,
+      },
+      status: {
+        server_timezone: "server-local (+03:00)",
+        next_run_at: body.enabled ? "2026-06-28T03:00:00+03:00" : null,
+        last_run: null,
+      },
+    });
+  }),
+
+  http.post("/api/v1/settings/qobuz-scheduled-sync/run", () =>
+    HttpResponse.json({
+      settings: {
+        enabled: false,
+        cron_expression: "0 3 * * *",
+        auto_download_new_favorites: false,
+      },
+      status: {
+        server_timezone: "server-local (+03:00)",
+        next_run_at: null,
+        last_run: {
+          id: 1,
+          status: "success",
+          trigger: "settings_run_now",
+          albums_total: 2,
+          albums_added: 0,
+          albums_removed: 0,
+          error_message: null,
+          skip_reason: null,
+          started_at: "2026-06-28T00:00:00Z",
+          finished_at: "2026-06-28T00:00:01Z",
+        },
+      },
+    }),
+  ),
+
   http.get("/api/v1/settings/storage", () =>
     HttpResponse.json({
       settings: {

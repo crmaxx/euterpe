@@ -46,6 +46,13 @@ The process that moves completed torrent payloads from the local incoming area i
 
 Torrent Import is not complete just because files were copied. When it requires a follow-up scan, that scan's terminal state is part of the import outcome.
 
+## Qobuz Sync
+
+### Scheduled Qobuz Favorites Sync
+The scheduled process that refreshes local Qobuz favorites from the connected Qobuz account according to a user-configured cron expression.
+
+Scheduled Qobuz Favorites Sync defaults to updating the favorites list only. Automatic download of newly discovered favorites is an opt-in behavior and is limited to albums that are not already in the library.
+
 ## Data Layer
 
 ### First-Party Data Layer

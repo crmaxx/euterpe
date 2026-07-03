@@ -4,6 +4,7 @@ pub mod download;
 pub mod integrations;
 pub mod library_scan;
 pub mod qobuz_oauth;
+pub mod qobuz_scheduled_sync;
 pub mod qobuz_sync;
 pub mod storage_watch;
 pub mod torrent_cleanup;

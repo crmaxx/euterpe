@@ -35,11 +35,13 @@ fn summary_from_data(row: data::QobuzSyncRunSummary) -> QobuzSyncRunSummary {
     QobuzSyncRunSummary {
         id: row.id,
         status: row.status,
+        trigger: row.trigger,
         started_at: row.started_at,
         finished_at: row.finished_at,
         albums_total: row.albums_total,
         albums_added: row.albums_added,
         albums_removed: row.albums_removed,
         error_message: row.error_message,
+        skip_reason: row.skip_reason,
     }
 }

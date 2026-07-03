@@ -1,19 +1,23 @@
 use axum::Json;
 use axum::extract::{Query, State};
+use euterpe_data::repositories::qobuz as qobuz_runs;
+use euterpe_data::repositories::qobuz::QobuzSyncTrigger;
 use serde::Deserialize;
 use std::path::{Component, Path};
 
 use crate::api::{
     ConverterSettingsPatch, ConverterSettingsResponse, DownloadsSettingsPatch,
     DownloadsSettingsResponse, LibraryScanSettingsPatch, LibraryScanSettingsResponse,
-    SmbSharesRequest, SmbSharesResponse, StorageBrowseEntry, StorageBrowseRequest,
-    StorageBrowseResponse, StorageLocationPatch, StorageSettingsPatch, StorageSettingsResponse,
-    StorageSettingsView, StorageTestRequest, StorageTestResponse, StringPatchField,
-    UiPreferencesPatch, UiPreferencesResponse,
+    QobuzScheduledSyncSettingsPatch, QobuzScheduledSyncSettingsResponse, QobuzScheduledSyncStatus,
+    QobuzSyncRunSummary, SmbSharesRequest, SmbSharesResponse, StorageBrowseEntry,
+    StorageBrowseRequest, StorageBrowseResponse, StorageLocationPatch, StorageSettingsPatch,
+    StorageSettingsResponse, StorageSettingsView, StorageTestRequest, StorageTestResponse,
+    StringPatchField, UiPreferencesPatch, UiPreferencesResponse,
 };
 use crate::error::ApiError;
 use crate::library::storage::{self, StorageEntryKind, StoragePath};
 use crate::services::app_settings::{self, StorageLocation, StorageSettings};
+use crate::services::qobuz_scheduled_sync::{CronSchedule, server_timezone_label};
 use crate::state::AppState;
 
 pub async fn get_ui_settings(
@@ -135,6 +139,93 @@ pub async fn patch_downloads_settings(
     app_settings::save_downloads(&state.data, &settings).await?;
     state.runtime.write().await.downloads = settings.clone();
     Ok(Json(DownloadsSettingsResponse { settings }))
+}
+
+pub async fn get_qobuz_scheduled_sync_settings(
+    State(state): State<AppState>,
+) -> Result<Json<QobuzScheduledSyncSettingsResponse>, ApiError> {
+    let settings = state.runtime.read().await.qobuz_scheduled_sync.clone();
+    qobuz_scheduled_sync_response(&state, settings)
+        .await
+        .map(Json)
+}
+
+pub async fn patch_qobuz_scheduled_sync_settings(
+    State(state): State<AppState>,
+    Json(patch): Json<QobuzScheduledSyncSettingsPatch>,
+) -> Result<Json<QobuzScheduledSyncSettingsResponse>, ApiError> {
+    let mut settings = state.runtime.read().await.qobuz_scheduled_sync.clone();
+    if let Some(v) = patch.enabled {
+        settings.enabled = v;
+    }
+    if let Some(v) = patch.cron_expression {
+        settings.cron_expression = v;
+    }
+    if let Some(v) = patch.auto_download_new_favorites {
+        settings.auto_download_new_favorites = v;
+    }
+    settings = app_settings::normalize_qobuz_scheduled_sync(settings);
+    app_settings::save_qobuz_scheduled_sync(&state.data, &settings).await?;
+    state.runtime.write().await.qobuz_scheduled_sync = settings.clone();
+    state.qobuz_scheduled_sync.restart().await?;
+    qobuz_scheduled_sync_response(&state, settings)
+        .await
+        .map(Json)
+}
+
+pub async fn run_qobuz_scheduled_sync_now(
+    State(state): State<AppState>,
+) -> Result<Json<QobuzScheduledSyncSettingsResponse>, ApiError> {
+    state.require_credentials().await?;
+    let settings = state.runtime.read().await.qobuz_scheduled_sync.clone();
+    state
+        .qobuz_scheduled_sync
+        .trigger_once(QobuzSyncTrigger::SettingsRunNow)
+        .await?;
+    qobuz_scheduled_sync_response(&state, settings)
+        .await
+        .map(Json)
+}
+
+async fn qobuz_scheduled_sync_response(
+    state: &AppState,
+    settings: app_settings::QobuzScheduledSyncSettings,
+) -> Result<QobuzScheduledSyncSettingsResponse, ApiError> {
+    let next_run_at = if settings.enabled {
+        Some(
+            CronSchedule::parse(&settings.cron_expression)?
+                .next_from_now()?
+                .to_rfc3339(),
+        )
+    } else {
+        None
+    };
+    let last_run = qobuz_runs::sync_latest(&state.data)
+        .await?
+        .map(qobuz_sync_run_from_data);
+    Ok(QobuzScheduledSyncSettingsResponse {
+        settings,
+        status: QobuzScheduledSyncStatus {
+            server_timezone: server_timezone_label(),
+            next_run_at,
+            last_run,
+        },
+    })
+}
+
+fn qobuz_sync_run_from_data(row: qobuz_runs::QobuzSyncRunSummary) -> QobuzSyncRunSummary {
+    QobuzSyncRunSummary {
+        id: row.id,
+        status: row.status,
+        trigger: row.trigger,
+        started_at: row.started_at,
+        finished_at: row.finished_at,
+        albums_total: row.albums_total,
+        albums_added: row.albums_added,
+        albums_removed: row.albums_removed,
+        error_message: row.error_message,
+        skip_reason: row.skip_reason,
+    }
 }
 
 pub async fn get_storage_settings(
