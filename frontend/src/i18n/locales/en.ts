@@ -80,6 +80,14 @@ export const en = {
       saved: "Schedule saved",
       saveFailed: "Could not save schedule",
       runComplete: "Scheduled sync complete",
+      runListOnly:
+        "Favorites list refreshed. Auto-download is off, so no download jobs were queued.",
+      runNoNewFavorites:
+        "Favorites list refreshed. No new favorites were found; existing unsynced favorites were checked for download queueing.",
+      runAutoDownload:
+        "Favorites list refreshed. {added} new favorites found; eligible albums were queued for download.",
+      lastRunSummary:
+        "{trigger}: {status} · total {total} · new {added} · removed {removed}",
       runFailed: "Could not run scheduled sync",
     },
     downloads: {

@@ -7,6 +7,7 @@ use euterpe_data::repositories::{
 use euterpe_data::{connect_database, migrations};
 use welds::WeldsModel;
 use welds::detect::{self, TableDef};
+use welds::migrations::prelude::*;
 
 #[derive(Debug, WeldsModel)]
 #[welds(table = "settings")]
@@ -15,6 +16,23 @@ struct Setting {
     key: String,
     value: String,
     updated_at: String,
+}
+
+#[derive(Debug, WeldsModel)]
+#[welds(table = "_welds_migrations")]
+struct MigrationLog {
+    #[welds(primary_key)]
+    id: i64,
+    name: String,
+    when_applied: i64,
+    rollback_sql: String,
+}
+
+fn drop_scan_keep_paths(state: &TableState) -> welds::errors::Result<MigrationStep> {
+    Ok(MigrationStep::new(
+        "drop_scan_keep_paths_for_test",
+        change_table(state, "scan_keep_paths")?.drop(),
+    ))
 }
 
 #[tokio::test]
@@ -244,6 +262,56 @@ async fn existing_sqlx_migrated_database_fixture_is_adopted_without_reset() {
     );
     assert!(qobuz::get_by_id(&handle, 1).await.unwrap().is_some());
     assert!(library_scan_runs::latest(&handle).await.unwrap().is_some());
+
+    let columns = columns_by_table(&detect::find_all_tables(handle.client()).await.unwrap());
+    assert_columns(&columns, "qobuz_sync_runs", &["trigger", "skip_reason"]);
+    qobuz::insert_sync_skipped(
+        &handle,
+        qobuz::QobuzSyncTrigger::Scheduled,
+        "already_running",
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn legacy_sqlx_database_missing_recent_table_is_upgraded_without_recreate() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("legacy/library.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    std::fs::copy("tests/fixtures/legacy-sqlx-v18.sqlite", &db_path).unwrap();
+    let database_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    let handle = connect_database(&database_url).await.unwrap();
+    up(handle.client(), &[drop_scan_keep_paths]).await.unwrap();
+
+    migrations::migrate(&handle).await.unwrap();
+
+    let columns = columns_by_table(&detect::find_all_tables(handle.client()).await.unwrap());
+    assert!(columns.contains_key("scan_keep_paths"));
+    assert_columns(&columns, "qobuz_sync_runs", &["trigger", "skip_reason"]);
+}
+
+#[tokio::test]
+async fn legacy_sqlx_database_after_failed_welds_setup_is_repaired() {
+    let temp = tempfile::tempdir().unwrap();
+    let db_path = temp.path().join("legacy/library.db");
+    std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+    std::fs::copy("tests/fixtures/legacy-sqlx-v18.sqlite", &db_path).unwrap();
+    let database_url = format!("sqlite:{}?mode=rwc", db_path.display());
+    let handle = connect_database(&database_url).await.unwrap();
+    up(handle.client(), &[]).await.unwrap();
+
+    migrations::migrate(&handle).await.unwrap();
+
+    let applied = MigrationLog::all().count(handle.client()).await.unwrap();
+    assert!(applied >= 29);
+    qobuz::insert_sync_skipped(
+        &handle,
+        qobuz::QobuzSyncTrigger::Scheduled,
+        "already_running",
+    )
+    .await
+    .unwrap();
 }
 
 fn table_names(tables: &[TableDef]) -> BTreeSet<String> {

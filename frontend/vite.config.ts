@@ -4,6 +4,8 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import pkg from "./package.json";
 
+const devApiProxy = process.env.VITE_DEV_API_PROXY ?? "http://127.0.0.1:8080";
+
 export default defineConfig({
   // Load VITE_* from repo root `.env` (same file as HAWK_TOKEN for the server).
   envDir: path.resolve(__dirname, ".."),
@@ -18,8 +20,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:8080",
-      "/health": "http://127.0.0.1:8080",
+      "/api": devApiProxy,
+      "/health": devApiProxy,
     },
   },
 });

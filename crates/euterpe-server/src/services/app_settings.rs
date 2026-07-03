@@ -227,6 +227,8 @@ pub struct QobuzScheduledSyncSettings {
     pub auto_download_new_favorites: bool,
 }
 
+pub const DEFAULT_QOBUZ_SCHEDULED_SYNC_CRON: &str = "0 3 * * *";
+
 #[derive(Debug, Clone, Default)]
 pub struct RuntimeSettings {
     pub ui: UiPreferences,
@@ -401,7 +403,10 @@ pub fn storage_defaults(_config: &AppConfig) -> StorageSettings {
 }
 
 pub fn qobuz_scheduled_sync_defaults() -> QobuzScheduledSyncSettings {
-    QobuzScheduledSyncSettings::default()
+    QobuzScheduledSyncSettings {
+        cron_expression: DEFAULT_QOBUZ_SCHEDULED_SYNC_CRON.to_string(),
+        ..QobuzScheduledSyncSettings::default()
+    }
 }
 
 pub async fn load_runtime_settings(data: &DataHandle, config: &AppConfig) -> RuntimeSettings {
@@ -448,12 +453,13 @@ pub async fn load_storage(data: &DataHandle, config: &AppConfig) -> StorageSetti
 }
 
 pub async fn load_qobuz_scheduled_sync(data: &DataHandle) -> QobuzScheduledSyncSettings {
-    load_json(
+    let settings = load_json(
         data,
         KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS,
         qobuz_scheduled_sync_defaults(),
     )
-    .await
+    .await;
+    normalize_qobuz_scheduled_sync(settings)
 }
 
 async fn load_json<T>(data: &DataHandle, key: &str, default: T) -> T
@@ -499,8 +505,21 @@ pub async fn save_qobuz_scheduled_sync(
     data: &DataHandle,
     value: &QobuzScheduledSyncSettings,
 ) -> Result<(), ApiError> {
-    validate_qobuz_scheduled_sync(value)?;
-    save_json(data, KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS, value).await
+    let value = normalize_qobuz_scheduled_sync(value.clone());
+    validate_qobuz_scheduled_sync(&value)?;
+    save_json(data, KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS, &value).await
+}
+
+pub fn normalize_qobuz_scheduled_sync(
+    mut value: QobuzScheduledSyncSettings,
+) -> QobuzScheduledSyncSettings {
+    let cron = value.cron_expression.trim();
+    value.cron_expression = if cron.is_empty() {
+        DEFAULT_QOBUZ_SCHEDULED_SYNC_CRON.to_string()
+    } else {
+        cron.to_string()
+    };
+    value
 }
 
 async fn save_json<T>(data: &DataHandle, key: &str, value: &T) -> Result<(), ApiError>

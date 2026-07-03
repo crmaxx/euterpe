@@ -1492,7 +1492,11 @@ export interface components {
         };
         QobuzScheduledSyncSettings: {
             enabled: boolean;
-            /** @description Cron expression evaluated in the server-local timezone. */
+            /**
+             * @description Cron expression evaluated in the server-local timezone.
+             * @default 0 3 * * *
+             * @example 0 3 * * *
+             */
             cron_expression: string;
             auto_download_new_favorites: boolean;
         };
@@ -1509,6 +1513,7 @@ export interface components {
         };
         QobuzScheduledSyncSettingsPatch: {
             enabled?: boolean;
+            /** @example 0 3 * * * */
             cron_expression?: string;
             auto_download_new_favorites?: boolean;
         };

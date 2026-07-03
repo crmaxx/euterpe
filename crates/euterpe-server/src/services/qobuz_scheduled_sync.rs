@@ -98,14 +98,14 @@ impl QobuzScheduledSyncHandle {
         let settings = runtime.qobuz_scheduled_sync.clone();
         let default_quality = runtime.ui.default_quality;
         drop(runtime);
-        let sync = qobuz_sync::run_with_details_and_trigger(
+        qobuz_sync::run_with_details_and_trigger(
             &self.deps.data,
             Arc::clone(&self.deps.qobuz),
             trigger,
         )
         .await?;
         if settings.auto_download_new_favorites {
-            queue_new_favorites(&self.deps, default_quality, sync.newly_added_albums).await?;
+            queue_unsynced_favorites(&self.deps, default_quality).await?;
         }
         Ok(())
     }
@@ -137,22 +137,21 @@ impl QobuzScheduledSyncHandle {
     }
 }
 
-async fn queue_new_favorites(
+async fn queue_unsynced_favorites(
     deps: &QobuzScheduledSyncDeps,
     quality: u8,
-    albums: Vec<qobuz_sync::NewlyAddedFavoriteAlbum>,
 ) -> Result<(), ApiError> {
-    for album in albums {
-        if favorites::album_is_in_library(&deps.data, album.qobuz_id).await? {
-            continue;
-        }
+    for album in favorites::active_album_download_candidates(&deps.data).await? {
         download::queue_album_download_if_missing(
             &deps.data,
             &deps.job_tx,
             &album.album_api_id,
             quality,
             Some(album.qobuz_id),
-            Some(album.display_title),
+            Some(download::format_album_display_title(
+                &album.artist_name,
+                &album.title,
+            )),
         )
         .await?;
     }

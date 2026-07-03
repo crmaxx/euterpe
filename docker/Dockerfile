@@ -1,5 +1,5 @@
 # Euterpe — Rust API + React SPA
-FROM node:22-bookworm AS frontend
+FROM node:24-bookworm AS frontend
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci

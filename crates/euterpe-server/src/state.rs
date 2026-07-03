@@ -60,13 +60,22 @@ impl AppState {
         let runtime = Arc::new(RwLock::new(
             app_settings::load_runtime_settings(&data, &config).await,
         ));
-        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> =
-            if let Some(creds) = credentials::load_active(&config, &data).await? {
-                let client = credentials::build_client(&creds, &config).await?;
-                Arc::new(Mutex::new(Box::new(client)))
-            } else {
-                Arc::new(Mutex::new(Box::new(NoopQobuz)))
-            };
+        let qobuz: Arc<Mutex<Box<dyn QobuzApi + Send + Sync>>> = if let Some(creds) =
+            credentials::load_active(&config, &data).await?
+        {
+            match credentials::build_client(&creds, &config).await {
+                Ok(client) => Arc::new(Mutex::new(Box::new(client))),
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "Qobuz account is configured but reconnect failed; starting with Qobuz integration degraded"
+                    );
+                    Arc::new(Mutex::new(Box::new(NoopQobuz)))
+                }
+            }
+        } else {
+            Arc::new(Mutex::new(Box::new(NoopQobuz)))
+        };
 
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(120))
@@ -273,5 +282,87 @@ impl QobuzApi for NoopQobuz {
         Err(euterpe_qobuz::QobuzError::Config(
             "qobuz not configured".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use euterpe_data::connect_database;
+    use euterpe_data::migrations;
+    use euterpe_data::repositories::qobuz as qobuz_accounts;
+    use euterpe_data::repositories::settings::{self, KEY_QOBUZ_ACTIVE_ACCOUNT_ID};
+
+    fn test_config() -> AppConfig {
+        let master_key = MasterKey::parse(&hex::encode([1u8; 32])).unwrap();
+        AppConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            database_url: "sqlite::memory:".into(),
+            admin_password: None,
+            master_key: Some(master_key),
+            public_base_url: "http://127.0.0.1:0".into(),
+            oauth_state_ttl: std::time::Duration::from_secs(600),
+            qobuz_api_base: None,
+            qobuz_play_base: Some("http://127.0.0.1:9".into()),
+            library_path: std::env::temp_dir().join("euterpe-state-test"),
+            torrent_incoming_dir: None,
+            torrent_max_active: 2,
+            torrent_enable_upnp: false,
+            download_concurrency: 2,
+            library_scan: crate::config::LibraryScanConfig::default(),
+            debug: false,
+            static_dir: std::path::PathBuf::new(),
+        }
+    }
+
+    fn test_channels() -> AppChannels {
+        let (job_tx, _) = mpsc::channel(1);
+        let (convert_job_tx, _) = mpsc::channel(1);
+        let (events, _) = broadcast::channel(1);
+        let (scan_events, _) = broadcast::channel(1);
+        let (convert_events, _) = broadcast::channel(1);
+        AppChannels {
+            job_tx,
+            convert_job_tx,
+            events,
+            scan_events,
+            convert_events,
+        }
+    }
+
+    #[tokio::test]
+    async fn startup_uses_noop_qobuz_when_saved_account_cannot_reconnect() {
+        let config = test_config();
+        let data = connect_database(&config.database_url).await.unwrap();
+        migrations::migrate(&data).await.unwrap();
+        let master_key = config.master_key.as_ref().unwrap();
+        let encrypted_token = master_key.encrypt("saved-token").unwrap();
+        let account_id = qobuz_accounts::upsert_after_oauth(
+            &data,
+            99,
+            &encrypted_token,
+            Some("Saved User"),
+            Some("Studio"),
+            chrono::Utc::now(),
+            None,
+        )
+        .await
+        .unwrap();
+        settings::set(&data, KEY_QOBUZ_ACTIVE_ACCOUNT_ID, &account_id.to_string())
+            .await
+            .unwrap();
+
+        let state = AppState::new(config, data, test_channels(), None)
+            .await
+            .unwrap();
+
+        let err = state
+            .qobuz
+            .lock()
+            .await
+            .favorites_all_albums()
+            .await
+            .unwrap_err();
+        assert!(matches!(err, euterpe_qobuz::QobuzError::Config(_)));
     }
 }

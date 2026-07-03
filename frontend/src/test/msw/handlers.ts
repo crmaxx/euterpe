@@ -127,7 +127,7 @@ export const handlers = [
     HttpResponse.json({
       settings: {
         enabled: false,
-        cron_expression: "",
+        cron_expression: "0 3 * * *",
         auto_download_new_favorites: false,
       },
       status: {
@@ -143,7 +143,7 @@ export const handlers = [
     return HttpResponse.json({
       settings: {
         enabled: (body.enabled as boolean) ?? false,
-        cron_expression: (body.cron_expression as string) ?? "",
+        cron_expression: (body.cron_expression as string) ?? "0 3 * * *",
         auto_download_new_favorites:
           (body.auto_download_new_favorites as boolean) ?? false,
       },
@@ -159,7 +159,7 @@ export const handlers = [
     HttpResponse.json({
       settings: {
         enabled: false,
-        cron_expression: "",
+        cron_expression: "0 3 * * *",
         auto_download_new_favorites: false,
       },
       status: {
@@ -170,9 +170,9 @@ export const handlers = [
           status: "success",
           trigger: "settings_run_now",
           albums_total: 2,
-          added: 0,
-          removed: 0,
-          error: null,
+          albums_added: 0,
+          albums_removed: 0,
+          error_message: null,
           skip_reason: null,
           started_at: "2026-06-28T00:00:00Z",
           finished_at: "2026-06-28T00:00:01Z",

@@ -58,7 +58,7 @@ async fn qobuz_scheduled_sync_settings_are_seeded_and_preserved() {
             .await
             .unwrap(),
         Some(
-            r#"{"enabled":false,"cron_expression":"","auto_download_new_favorites":false}"#
+            r#"{"enabled":false,"cron_expression":"0 3 * * *","auto_download_new_favorites":false}"#
                 .to_string()
         )
     );

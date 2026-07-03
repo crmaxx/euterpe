@@ -1,0 +1,57 @@
+services:
+    backend:
+        build:
+            context: ..
+            dockerfile: docker/Dockerfile.dev
+            target: backend
+        working_dir: /app
+        command: cargo run -p euterpe-server --release
+        env_file:
+            - ../.env
+        ports:
+            - "127.0.0.1:9080:8080"
+        environment:
+            RUST_LOG: ${RUST_LOG:-euterpe_server=debug,euterpe_qobuz=debug,tower_http=debug}
+            CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-1}
+            EUTERPE_BIND: 0.0.0.0:8080
+            EUTERPE_DATABASE_URL: sqlite:/data/library.db?mode=rwc
+            EUTERPE_PUBLIC_BASE_URL: ${EUTERPE_DOCKER_PUBLIC_BASE_URL:-http://127.0.0.1:9080}
+            EUTERPE_DEBUG: ${EUTERPE_DEBUG:-true}
+            EUTERPE_LIBRARY_PATH: /music
+            EUTERPE_TORRENT_INCOMING_DIR: /data/torrent-incoming
+            EUTERPE_STATIC_DIR: /app/frontend/dist
+        volumes:
+            - ..:/app
+            - cargo-registry:/usr/local/cargo/registry
+            - cargo-git:/usr/local/cargo/git
+            - cargo-target:/app/target
+            - euterpe-data:/data
+            - /Users/crmaxx/Music/Qobuz:/music
+
+    frontend:
+        image: node:24-bookworm
+        working_dir: /app/frontend
+        command: sh -lc "npm ci && npm run generate:api && npm run dev -- --host 0.0.0.0"
+        env_file:
+            - ../.env
+        ports:
+            - "127.0.0.1:5173:5173"
+        environment:
+            NPM_CONFIG_CACHE: /tmp/npm-cache
+            NPM_CONFIG_UPDATE_NOTIFIER: "false"
+            VITE_DEV_API_PROXY: http://backend:8080
+        volumes:
+            - ..:/app
+            - frontend-node-modules:/app/frontend/node_modules
+            - frontend-npm-cache:/tmp/npm-cache
+        depends_on:
+            - backend
+
+volumes:
+    cargo-registry:
+    cargo-git:
+    cargo-target:
+    euterpe-data:
+    euterpe-music:
+    frontend-node-modules:
+    frontend-npm-cache:

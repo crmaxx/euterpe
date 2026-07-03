@@ -87,6 +87,12 @@ describe("SettingsPage", () => {
         expect.objectContaining({ method: "POST" }),
       );
     });
+    expect(
+      await screen.findByText(/auto-download is off, so no download jobs were queued/i),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(/settings_run_now: success .* new 0/i),
+    ).toBeInTheDocument();
 
     fetchSpy.mockRestore();
   });

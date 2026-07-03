@@ -13,13 +13,37 @@ import { usePreferences } from "@/hooks/use-preferences";
 
 function formatRunStatus(
   response: QobuzScheduledSyncSettingsResponse,
-  t: (key: string) => string,
+  t: (key: string, params?: Record<string, string | number>) => string,
 ): string {
   const run = response.status.last_run;
   if (!run) {
     return t("settings.qobuzScheduled.none");
   }
-  return `${run.trigger}: ${run.status}`;
+  return t("settings.qobuzScheduled.lastRunSummary", {
+    trigger: run.trigger,
+    status: run.status,
+    total: run.albums_total ?? 0,
+    added: run.albums_added ?? 0,
+    removed: run.albums_removed ?? 0,
+  });
+}
+
+function formatRunDescription(
+  response: QobuzScheduledSyncSettingsResponse,
+  t: (key: string, params?: Record<string, string | number>) => string,
+): string | undefined {
+  const run = response.status.last_run;
+  if (!run || run.status !== "success") {
+    return undefined;
+  }
+  const added = run.albums_added ?? 0;
+  if (!response.settings.auto_download_new_favorites) {
+    return t("settings.qobuzScheduled.runListOnly", { added });
+  }
+  if (added === 0) {
+    return t("settings.qobuzScheduled.runNoNewFavorites");
+  }
+  return t("settings.qobuzScheduled.runAutoDownload", { added });
 }
 
 function QobuzScheduledSyncForm({
@@ -58,8 +82,11 @@ function QobuzScheduledSyncForm({
 
   const run = async () => {
     try {
-      await runNow.mutateAsync();
-      toast({ title: t("settings.qobuzScheduled.runComplete") });
+      const result = await runNow.mutateAsync();
+      toast({
+        title: t("settings.qobuzScheduled.runComplete"),
+        description: formatRunDescription(result, t),
+      });
     } catch (e) {
       toast({
         title: t("settings.qobuzScheduled.runFailed"),

@@ -229,9 +229,18 @@ pub async fn consume_sole_pending_oauth_state(handle: &DataHandle) -> Result<Opt
 }
 
 pub async fn consume_oauth_state(handle: &DataHandle, state: &str) -> Result<bool> {
+    let now = Utc::now();
+    let is_valid = QobuzOauthState::all()
+        .where_col(|row| row.state.equal(state))
+        .run(handle.client())
+        .await?
+        .into_iter()
+        .any(|row| !oauth_state_is_expired(&row.expires_at, now));
+    if !is_valid {
+        return Ok(false);
+    }
     let affected = QobuzOauthState::all()
         .where_col(|row| row.state.equal(state))
-        .where_manual(|row| row.expires_at, " >= ?", (Utc::now().to_rfc3339(),))
         .delete(handle.client())
         .await?;
     Ok(affected > 0)
