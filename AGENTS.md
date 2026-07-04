@@ -33,6 +33,10 @@
 - Prefer updating the OpenAPI contract, backend handlers, generated frontend schema, client, and tests in one direct change.
 - Add deprecation/backward-compatibility paths only when there is a known external API consumer or an explicit compatibility requirement.
 
+## Pull Requests
+- PR descriptions for work done with GPT-5 Codex and Compound Engineering should include the same attribution badges used in PR #20:
+  `[![Compound Engineering](https://img.shields.io/badge/Built_with-Compound_Engineering-6366f1)](https://github.com/EveryInc/compound-engineering-plugin)` and `![Codex](https://img.shields.io/badge/GPT--5_Codex-000000)`.
+
 ## Project Knowledge
 - `docs/solutions/` contains documented solutions to past problems and durable patterns, organized by category with YAML frontmatter (`module`, `problem_type`, `tags`). Relevant when implementing or debugging in documented areas.
 - `CONCEPTS.md` contains shared project vocabulary for domain concepts and named processes.
