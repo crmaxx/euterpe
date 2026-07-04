@@ -82,6 +82,7 @@ export const en = {
       runNow: "Run now",
       saved: "Schedule saved",
       saveFailed: "Could not save schedule",
+      cronRequired: "Cron expression is required",
       runComplete: "Scheduled sync complete",
       runListOnly:
         "Favorites list refreshed. Auto-download is off, so no download jobs were queued.",

@@ -164,7 +164,6 @@ pub async fn patch_qobuz_scheduled_sync_settings(
     if let Some(v) = patch.auto_download_new_favorites {
         settings.auto_download_new_favorites = v;
     }
-    settings = app_settings::normalize_qobuz_scheduled_sync(settings);
     app_settings::save_qobuz_scheduled_sync(&state.data, &settings).await?;
     state.runtime.write().await.qobuz_scheduled_sync = settings.clone();
     state.qobuz_scheduled_sync.restart().await?;

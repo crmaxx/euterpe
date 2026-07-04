@@ -19,6 +19,17 @@ function renderSettings(initialEntries = ["/settings"]) {
   );
 }
 
+function qobuzScheduledSyncPatchCalls(
+  fetchSpy: { mock: { calls: Parameters<typeof globalThis.fetch>[] } },
+) {
+  return fetchSpy.mock.calls.filter(([input, init]) => {
+    return (
+      String(input).includes("/api/v1/settings/qobuz-scheduled-sync") &&
+      init?.method === "PATCH"
+    );
+  });
+}
+
 describe("SettingsPage", () => {
   it("renders Settings tabs with General selected by default", async () => {
     renderSettings();
@@ -189,6 +200,67 @@ describe("SettingsPage", () => {
         expect.stringContaining("/api/v1/settings/qobuz-scheduled-sync"),
         expect.objectContaining({ method: "PATCH" }),
       );
+    });
+
+    fetchSpy.mockRestore();
+  });
+
+  it("blocks saving Qobuz scheduled sync with an empty cron expression", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    renderSettings();
+
+    await user.click(await screen.findByRole("tab", { name: /scheduled favorites sync/i }));
+    await user.clear(await screen.findByLabelText(/cron expression/i));
+    await user.click(screen.getByRole("button", { name: /^save schedule$/i }));
+
+    expect(
+      await screen.findByText(/cron expression is required/i),
+    ).toBeInTheDocument();
+    expect(qobuzScheduledSyncPatchCalls(fetchSpy)).toHaveLength(0);
+
+    fetchSpy.mockRestore();
+  });
+
+  it("blocks saving Qobuz scheduled sync with a whitespace-only cron expression", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    renderSettings();
+
+    await user.click(await screen.findByRole("tab", { name: /scheduled favorites sync/i }));
+    const cron = await screen.findByLabelText(/cron expression/i);
+    await user.clear(cron);
+    await user.type(cron, "   ");
+    await user.click(screen.getByRole("button", { name: /^save schedule$/i }));
+
+    expect(
+      await screen.findByText(/cron expression is required/i),
+    ).toBeInTheDocument();
+    expect(qobuzScheduledSyncPatchCalls(fetchSpy)).toHaveLength(0);
+
+    fetchSpy.mockRestore();
+  });
+
+  it("trims Qobuz scheduled sync cron expression before saving", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    renderSettings();
+
+    await user.click(await screen.findByRole("tab", { name: /scheduled favorites sync/i }));
+    const cron = await screen.findByLabelText(/cron expression/i);
+    await user.clear(cron);
+    await user.type(cron, "  15 4 * * *  ");
+    await user.click(screen.getByRole("button", { name: /^save schedule$/i }));
+
+    await waitFor(() => {
+      expect(qobuzScheduledSyncPatchCalls(fetchSpy)).toHaveLength(1);
+    });
+    const [, init] = qobuzScheduledSyncPatchCalls(fetchSpy)[0];
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      cron_expression: "15 4 * * *",
     });
 
     fetchSpy.mockRestore();

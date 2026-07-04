@@ -53,6 +53,8 @@ The scheduled process that refreshes local Qobuz favorites from the connected Qo
 
 Scheduled Qobuz Favorites Sync defaults to updating the favorites list only. Automatic download of newly discovered favorites is an opt-in behavior and is limited to albums that are not already in the library.
 
+When the sync is enabled, its cron expression is required user configuration. Defaults seed missing settings, but saved empty schedule input is invalid rather than equivalent to the default.
+
 ## Download Queue
 
 ### Download Queue

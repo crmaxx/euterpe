@@ -453,13 +453,12 @@ pub async fn load_storage(data: &DataHandle, config: &AppConfig) -> StorageSetti
 }
 
 pub async fn load_qobuz_scheduled_sync(data: &DataHandle) -> QobuzScheduledSyncSettings {
-    let settings = load_json(
+    load_json(
         data,
         KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS,
         qobuz_scheduled_sync_defaults(),
     )
-    .await;
-    normalize_qobuz_scheduled_sync(settings)
+    .await
 }
 
 async fn load_json<T>(data: &DataHandle, key: &str, default: T) -> T
@@ -505,21 +504,8 @@ pub async fn save_qobuz_scheduled_sync(
     data: &DataHandle,
     value: &QobuzScheduledSyncSettings,
 ) -> Result<(), ApiError> {
-    let value = normalize_qobuz_scheduled_sync(value.clone());
-    validate_qobuz_scheduled_sync(&value)?;
-    save_json(data, KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS, &value).await
-}
-
-pub fn normalize_qobuz_scheduled_sync(
-    mut value: QobuzScheduledSyncSettings,
-) -> QobuzScheduledSyncSettings {
-    let cron = value.cron_expression.trim();
-    value.cron_expression = if cron.is_empty() {
-        DEFAULT_QOBUZ_SCHEDULED_SYNC_CRON.to_string()
-    } else {
-        cron.to_string()
-    };
-    value
+    validate_qobuz_scheduled_sync(value)?;
+    save_json(data, KEY_QOBUZ_SCHEDULED_SYNC_SETTINGS, value).await
 }
 
 async fn save_json<T>(data: &DataHandle, key: &str, value: &T) -> Result<(), ApiError>
@@ -560,6 +546,9 @@ pub fn validate_downloads(v: &DownloadsSettings) -> Result<(), ApiError> {
 
 pub fn validate_qobuz_scheduled_sync(v: &QobuzScheduledSyncSettings) -> Result<(), ApiError> {
     if v.enabled {
+        if v.cron_expression.trim().is_empty() {
+            return Err(ApiError::bad_request("cron expression is required"));
+        }
         crate::services::qobuz_scheduled_sync::CronSchedule::parse(&v.cron_expression)?;
     }
     Ok(())

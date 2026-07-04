@@ -88,7 +88,7 @@ async fn scheduled_sync_settings_can_enable_with_default_cron() {
 }
 
 #[tokio::test]
-async fn scheduled_sync_settings_normalizes_empty_cron_when_enabling() {
+async fn scheduled_sync_settings_rejects_empty_enabled_cron() {
     let state = app::test_support::test_state().await;
     let app = app::app(state);
 
@@ -104,12 +104,27 @@ async fn scheduled_sync_settings_normalizes_empty_cron_when_enabling() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["settings"]["enabled"], true);
-    assert_eq!(json["settings"]["cron_expression"], "0 3 * * *");
-    assert!(json["status"]["next_run_at"].as_str().is_some());
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn scheduled_sync_settings_rejects_whitespace_only_enabled_cron() {
+    let state = app::test_support::test_state().await;
+    let app = app::app(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("PATCH")
+                .uri("/api/v1/settings/qobuz-scheduled-sync")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"enabled":true,"cron_expression":"   "}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

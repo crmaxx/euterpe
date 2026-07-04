@@ -64,10 +64,18 @@ function QobuzScheduledSyncForm({
   );
 
   const save = async () => {
+    const trimmedCronExpression = cronExpression.trim();
+    if (!trimmedCronExpression) {
+      toast({
+        title: t("settings.qobuzScheduled.cronRequired"),
+        variant: "destructive",
+      });
+      return;
+    }
     try {
       await patch.mutateAsync({
         enabled,
-        cron_expression: cronExpression,
+        cron_expression: trimmedCronExpression,
         auto_download_new_favorites: autoDownload,
       });
       toast({ title: t("settings.qobuzScheduled.saved") });
