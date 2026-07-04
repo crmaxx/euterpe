@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { http, HttpResponse } from "msw";
-import { api } from "./client";
+import { api, type LibraryAlbumSort, type SortOrder } from "./client";
 import { ApiClientError } from "./errors";
 import { server } from "@/test/msw/server";
 
@@ -52,6 +52,30 @@ describe("api client", () => {
 
     expect(status).toBe("failed");
   });
+
+  it.each([
+    ["album_date", "desc"],
+    ["date_added", "asc"],
+  ] satisfies [LibraryAlbumSort, SortOrder][])(
+    "sends %s library album sort",
+    async (expectedSort, expectedOrder) => {
+    let sort: string | null = null;
+    let order: string | null = null;
+    server.use(
+      http.get("/api/v1/library/albums", ({ request }) => {
+        const params = new URL(request.url).searchParams;
+        sort = params.get("sort");
+        order = params.get("order");
+        return HttpResponse.json({ items: [], next_cursor: null, has_more: false });
+      }),
+    );
+
+      await api.libraryAlbums({ sort: expectedSort, order: expectedOrder });
+
+      expect(sort).toBe(expectedSort);
+      expect(order).toBe(expectedOrder);
+    },
+  );
 
   it("purges completed downloads", async () => {
     let method: string | null = null;

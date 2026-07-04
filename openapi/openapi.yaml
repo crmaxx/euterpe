@@ -1327,7 +1327,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [title, artist, year]
+            enum: [title, artist, album_date, date_added]
             default: title
         - name: order
           in: query

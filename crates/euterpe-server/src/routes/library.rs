@@ -140,7 +140,8 @@ fn default_album_sort() -> String {
 enum AlbumSort {
     Title,
     Artist,
-    Year,
+    AlbumDate,
+    DateAdded,
 }
 
 impl AlbumSort {
@@ -148,22 +149,24 @@ impl AlbumSort {
         match self {
             Self::Title => "title",
             Self::Artist => "artist",
-            Self::Year => "year",
+            Self::AlbumDate => "album_date",
+            Self::DateAdded => "date_added",
         }
     }
 
     fn key_kind(self) -> SortKeyKind {
         match self {
-            Self::Year => SortKeyKind::Int,
+            Self::AlbumDate => SortKeyKind::Int,
             _ => SortKeyKind::Text,
         }
     }
 
-    fn primary_key(self, row: &catalog::AlbumListRow) -> SortKeyValue {
+    fn primary_key(self, row: &catalog::AlbumListRow, order: SortOrder) -> SortKeyValue {
         match self {
             Self::Title => SortKeyValue::Text(row.title.clone()),
             Self::Artist => SortKeyValue::Text(row.artist_name.clone()),
-            Self::Year => SortKeyValue::Int(row.year.unwrap_or(-1) as i64),
+            Self::AlbumDate => SortKeyValue::Int(album_date_sort_value(row.year, order)),
+            Self::DateAdded => SortKeyValue::Text(row.created_at.clone()),
         }
     }
 }
@@ -180,15 +183,30 @@ fn parse_album_sort(value: &str) -> Result<AlbumSort, ApiError> {
     match value {
         "title" => Ok(AlbumSort::Title),
         "artist" => Ok(AlbumSort::Artist),
-        "year" => Ok(AlbumSort::Year),
-        _ => Err(ApiError::bad_request("sort must be title, artist, or year")),
+        "album_date" => Ok(AlbumSort::AlbumDate),
+        "date_added" => Ok(AlbumSort::DateAdded),
+        _ => Err(ApiError::bad_request(
+            "sort must be title, artist, album_date, or date_added",
+        )),
+    }
+}
+
+fn album_date_sort_value(year: Option<i32>, order: SortOrder) -> i64 {
+    catalog::album_date_sort_value(year, album_sort_order_to_data(order))
+}
+
+fn album_sort_order_to_data(order: SortOrder) -> catalog::AlbumListOrder {
+    match order {
+        SortOrder::Asc => catalog::AlbumListOrder::Asc,
+        SortOrder::Desc => catalog::AlbumListOrder::Desc,
     }
 }
 
 async fn list_albums_keyset_for_api(
     data: &DataHandle,
-    params: AlbumListApiParams,
+    mut params: AlbumListApiParams,
 ) -> Result<KeysetPage<catalog::AlbumListRow>, ApiError> {
+    params.q = catalog::normalize_album_search_query(params.q);
     let fingerprint = fingerprint_json(&json!({ "q": params.q }));
     let after = if let Some(ref cursor_str) = params.cursor {
         let payload = decode_cursor(cursor_str)?;
@@ -216,12 +234,10 @@ async fn list_albums_keyset_for_api(
             sort: match params.sort {
                 AlbumSort::Title => catalog::AlbumListSort::Title,
                 AlbumSort::Artist => catalog::AlbumListSort::Artist,
-                AlbumSort::Year => catalog::AlbumListSort::Year,
+                AlbumSort::AlbumDate => catalog::AlbumListSort::AlbumDate,
+                AlbumSort::DateAdded => catalog::AlbumListSort::DateAdded,
             },
-            order: match params.order {
-                SortOrder::Asc => catalog::AlbumListOrder::Asc,
-                SortOrder::Desc => catalog::AlbumListOrder::Desc,
-            },
+            order: album_sort_order_to_data(params.order),
             limit: params.limit as usize + 1,
             q: params.q.clone(),
             after,
@@ -235,7 +251,7 @@ async fn list_albums_keyset_for_api(
         sort.as_str(),
         params.order,
         &fingerprint,
-        |row| (sort.primary_key(row), row.id),
+        |row| (sort.primary_key(row, params.order), row.id),
     ))
 }
 

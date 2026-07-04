@@ -18,9 +18,11 @@ import { ApiClientError } from "@/api/errors";
 import type {
   LibraryAlbumDetailResponse,
   LibraryAlbumItem,
+  LibraryAlbumSort,
   LibraryAlbumTagsPatchRequest,
   LibraryTrackDetailResponse,
   LibraryTrackTagsPatchRequest,
+  SortOrder,
 } from "@/api/client";
 
 type LibraryTrackItem = LibraryAlbumDetailResponse["tracks"][number];
@@ -30,6 +32,13 @@ import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { flattenKeysetPages } from "@/api/hooks/keyset";
 import { AlbumActionCombo } from "@/features/library/AlbumActionCombo";
 import { TrackPlaybackScale } from "@/features/library/TrackPlaybackScale";
@@ -43,7 +52,7 @@ import { CueEditorDialog } from "@/features/library/CueEditorDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/api/hooks";
-import { Folder, Pause, Pencil, Play, ScanSearch } from "lucide-react";
+import { ArrowUpDown, Folder, Pause, Pencil, Play, ScanSearch } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LibraryScanProgress } from "@/features/library/LibraryScanProgress";
 import {
@@ -53,6 +62,13 @@ import {
 import { usePreferences } from "@/hooks/use-preferences";
 
 type DiscTrackGroup = { disc: number | null; tracks: LibraryTrackItem[] };
+
+const LIBRARY_ALBUM_SORTS: LibraryAlbumSort[] = [
+  "title",
+  "artist",
+  "album_date",
+  "date_added",
+];
 
 function compareTracks(a: LibraryTrackItem, b: LibraryTrackItem): number {
   const ta = a.track_number ?? Number.MAX_SAFE_INTEGER;
@@ -435,6 +451,8 @@ export function LibraryPage() {
   const qc = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState<LibraryAlbumSort>("title");
+  const [order, setOrder] = useState<SortOrder>("asc");
   const [selectedAlbumId, setSelectedAlbumId] = useState<number | null>(null);
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
   const [editingAlbumTags, setEditingAlbumTags] = useState(false);
@@ -449,8 +467,8 @@ export function LibraryPage() {
   }, [searchInput]);
 
   const listParams = useMemo(
-    () => ({ limit: 50, sort: "title" as const, order: "asc" as const, q: q || undefined }),
-    [q],
+    () => ({ limit: 50, sort, order, q: q || undefined }),
+    [q, sort, order],
   );
 
   const { data: scan } = useScanLatest();
@@ -714,14 +732,43 @@ export function LibraryPage() {
         />
       ) : null}
 
-      <div className="max-w-sm">
-        <Label htmlFor="library-search">{t("library.search")}</Label>
-        <Input
-          id="library-search"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder={t("library.searchPlaceholder")}
-        />
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-full max-w-sm space-y-1 sm:w-80">
+          <Label htmlFor="library-search">{t("library.search")}</Label>
+          <Input
+            id="library-search"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder={t("library.searchPlaceholder")}
+          />
+        </div>
+        <div className="w-48 space-y-1">
+          <Label htmlFor="library-sort">{t("library.sortBy")}</Label>
+          <Select value={sort} onValueChange={(value) => setSort(value as LibraryAlbumSort)}>
+            <SelectTrigger id="library-sort" aria-label={t("library.sortBy")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {LIBRARY_ALBUM_SORTS.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {t(`library.sortFields.${value}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <span className="block text-sm font-medium">{t("library.sortOrder")}</span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOrder((value) => (value === "asc" ? "desc" : "asc"))}
+            aria-label={order === "asc" ? t("library.sortAscending") : t("library.sortDescending")}
+          >
+            <ArrowUpDown className="size-4" aria-hidden />
+            {order === "asc" ? t("library.sortDirections.asc") : t("library.sortDirections.desc")}
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">

@@ -58,6 +58,9 @@ export type LibraryScanStartResponse =
 export type LibraryAlbumListResponse =
   components["schemas"]["LibraryAlbumListResponse"];
 export type LibraryAlbumItem = components["schemas"]["LibraryAlbumItem"];
+export type LibraryAlbumSort = NonNullable<
+  NonNullable<operations["listLibraryAlbums"]["parameters"]["query"]>["sort"]
+>;
 export type LibraryAlbumDetailResponse =
   components["schemas"]["LibraryAlbumDetailResponse"];
 export type LibraryTrackDetailResponse =
@@ -493,7 +496,9 @@ export const api = {
   cancelLibraryScan: (scanId: number) =>
     fetchJson<void>(`/library/scan/${scanId}`, { method: "DELETE" }),
 
-  libraryAlbums: (params: KeysetListParams & { q?: string } = {}) => {
+  libraryAlbums: (
+    params: Omit<KeysetListParams, "sort"> & { sort?: LibraryAlbumSort; q?: string } = {},
+  ) => {
     const search = new URLSearchParams();
     appendKeysetParams(search, {
       limit: params.limit ?? 50,

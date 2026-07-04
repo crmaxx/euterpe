@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { LibraryPage } from "@/features/library/LibraryPage";
 import { TestProviders } from "@/test/test-providers";
 import { server } from "@/test/msw/server";
@@ -17,11 +17,260 @@ function renderPage() {
   );
 }
 
+type MockAlbum = {
+  id: number;
+  title: string;
+  artist_name: string;
+  year: number | null;
+  created_at: string;
+  track_count: number;
+  cover_path: string | null;
+  has_cue_files: boolean;
+};
+
+const sortableAlbums: MockAlbum[] = [
+  {
+    id: 1,
+    title: "Zulu",
+    artist_name: "Alpha Artist",
+    year: 2020,
+    created_at: "2026-01-01 00:00:00",
+    track_count: 1,
+    cover_path: null,
+    has_cue_files: false,
+  },
+  {
+    id: 2,
+    title: "Alpha",
+    artist_name: "Zulu Artist",
+    year: 2024,
+    created_at: "2026-01-03 00:00:00",
+    track_count: 1,
+    cover_path: null,
+    has_cue_files: false,
+  },
+  {
+    id: 3,
+    title: "Middle",
+    artist_name: "Middle Artist",
+    year: null,
+    created_at: "2026-01-02 00:00:00",
+    track_count: 1,
+    cover_path: null,
+    has_cue_files: false,
+  },
+];
+
+type LibraryAlbumsRequest = {
+  sort: string;
+  order: string;
+  q: string | null;
+  cursor: string | null;
+};
+
+function mockAlbumYearSortValue(year: number | null, order: string) {
+  if (year != null) {
+    return year;
+  }
+  return order === "desc" ? Number.MIN_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+}
+
+function compareMockAlbums(
+  left: MockAlbum,
+  right: MockAlbum,
+  sort: string,
+  order: string,
+) {
+  let primary: number;
+  if (sort === "artist") {
+    primary = left.artist_name.localeCompare(right.artist_name);
+  } else if (sort === "album_date") {
+    primary =
+      mockAlbumYearSortValue(left.year, order) -
+      mockAlbumYearSortValue(right.year, order);
+  } else if (sort === "date_added") {
+    primary = left.created_at.localeCompare(right.created_at);
+  } else {
+    primary = left.title.localeCompare(right.title);
+  }
+  const direction = order === "desc" ? -1 : 1;
+  return primary === 0 ? left.id - right.id : primary * direction;
+}
+
+function comparePositionBefore(left: HTMLElement, right: HTMLElement) {
+  expect(
+    left.compareDocumentPosition(right) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).not.toBe(0);
+}
+
+function mockSortableAlbums(requests: LibraryAlbumsRequest[] = []) {
+  server.use(
+    http.get("/api/v1/library/albums", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      const sort = params.get("sort") ?? "title";
+      const order = params.get("order") ?? "asc";
+      const q = params.get("q");
+      const cursor = params.get("cursor");
+      requests.push({ sort, order, q, cursor });
+
+      const filtered = sortableAlbums
+        .filter(
+          (album) =>
+            !q ||
+            album.title.toLowerCase().includes(q.toLowerCase()) ||
+            album.artist_name.toLowerCase().includes(q.toLowerCase()),
+        )
+        .sort((left, right) => compareMockAlbums(left, right, sort, order));
+
+      const start = cursor == null ? 0 : Number.parseInt(cursor, 10);
+      const page = filtered.slice(start, start + 2);
+      const next = start + 2 < filtered.length ? String(start + 2) : null;
+
+      return HttpResponse.json({
+        items: page.map(
+          ({ id, title, artist_name, year, track_count, cover_path, has_cue_files }) => ({
+            id,
+            title,
+            artist_name,
+            year,
+            track_count,
+            cover_path,
+            has_cue_files,
+          }),
+        ),
+        next_cursor: next,
+        has_more: next != null,
+      });
+    }),
+  );
+}
+
+beforeAll(() => {
+  Object.defineProperties(HTMLElement.prototype, {
+    hasPointerCapture: { value: () => false },
+    setPointerCapture: { value: () => undefined },
+    releasePointerCapture: { value: () => undefined },
+    scrollIntoView: { value: () => undefined },
+  });
+});
+
 describe("LibraryPage", () => {
   it("renders album list from API", async () => {
     renderPage();
     expect(await screen.findByText("Local Album")).toBeInTheDocument();
     expect(screen.getByText(/Test Artist/)).toBeInTheDocument();
+  });
+
+  it("requests title ascending by default", async () => {
+    const requests: LibraryAlbumsRequest[] = [];
+    mockSortableAlbums(requests);
+
+    renderPage();
+
+    const alpha = await screen.findByText("Alpha");
+    const middle = await screen.findByText("Middle");
+    comparePositionBefore(alpha, middle);
+    await waitFor(() =>
+      expect(requests[0]).toMatchObject({ sort: "title", order: "asc", cursor: null }),
+    );
+  });
+
+  it("sorts by artist through the Library API params", async () => {
+    const requests: LibraryAlbumsRequest[] = [];
+    mockSortableAlbums(requests);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("combobox", { name: /sort by/i }));
+    await user.click(await screen.findByRole("option", { name: "Artist" }));
+
+    const zulu = await screen.findByText("Zulu");
+    const middle = await screen.findByText("Middle");
+    comparePositionBefore(zulu, middle);
+    await waitFor(() =>
+      expect(requests.at(-1)).toMatchObject({ sort: "artist", order: "asc" }),
+    );
+  });
+
+  it("sorts by album date descending", async () => {
+    const requests: LibraryAlbumsRequest[] = [];
+    mockSortableAlbums(requests);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("combobox", { name: /sort by/i }));
+    await user.click(await screen.findByRole("option", { name: "Album date" }));
+    await user.click(screen.getByRole("button", { name: /sort ascending/i }));
+
+    const alpha = await screen.findByText("Alpha");
+    const zulu = await screen.findByText("Zulu");
+    comparePositionBefore(alpha, zulu);
+    await waitFor(() =>
+      expect(requests.at(-1)).toMatchObject({ sort: "album_date", order: "desc" }),
+    );
+  });
+
+  it("resets pagination when sort changes after loading more", async () => {
+    const requests: LibraryAlbumsRequest[] = [];
+    mockSortableAlbums(requests);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /load more/i }));
+    await waitFor(() =>
+      expect(requests.some((request) => request.cursor === "2")).toBe(true),
+    );
+
+    await user.click(await screen.findByRole("combobox", { name: /sort by/i }));
+    await user.click(await screen.findByRole("option", { name: "Date added" }));
+    await user.click(screen.getByRole("button", { name: /sort ascending/i }));
+
+    await waitFor(() =>
+      expect(requests.at(-1)).toMatchObject({
+        sort: "date_added",
+        order: "desc",
+        cursor: null,
+      }),
+    );
+  });
+
+  it("keeps current sort and order when searching", async () => {
+    const requests: LibraryAlbumsRequest[] = [];
+    mockSortableAlbums(requests);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("combobox", { name: /sort by/i }));
+    await user.click(await screen.findByRole("option", { name: "Artist" }));
+    await user.click(screen.getByRole("button", { name: /sort ascending/i }));
+    await user.type(screen.getByLabelText(/search/i), "zulu");
+
+    await waitFor(() =>
+      expect(requests.at(-1)).toMatchObject({
+        sort: "artist",
+        order: "desc",
+        q: "zulu",
+        cursor: null,
+      }),
+    );
+  });
+
+  it("sorts visible albums by date added descending", async () => {
+    const requests: LibraryAlbumsRequest[] = [];
+    mockSortableAlbums(requests);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("combobox", { name: /sort by/i }));
+    await user.click(await screen.findByRole("option", { name: "Date added" }));
+    await user.click(screen.getByRole("button", { name: /sort ascending/i }));
+
+    const alpha = await screen.findByText("Alpha");
+    const middle = await screen.findByText("Middle");
+    comparePositionBefore(alpha, middle);
+    await waitFor(() =>
+      expect(requests.at(-1)).toMatchObject({ sort: "date_added", order: "desc" }),
+    );
   });
 
   it("starts index rebuild on button click", async () => {

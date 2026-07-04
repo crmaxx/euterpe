@@ -128,5 +128,6 @@ useFavoritesFlat({ limit: 100, library_filter: "all" });
 
 ## Related
 
+- [Library album sorting stays contract-first and backend-owned](library-album-sorting-openapi-welds-keyset.md) documents another internal query-parameter change where the old wire value was removed instead of kept as a deprecated alias.
 - [SMB storage review fixes across job state, handles, and API contracts](../integration-issues/smb-storage-review-fixes.md) documents a bug-fix case where frontend and OpenAPI had to agree on the same public shape.
 - [Frontend tab order must stay aligned with default selection](../best-practices/frontend-tab-order-default-selection.md) documents a related UI pattern: when a default changes, tests must assert the observable default and still cover non-default paths.

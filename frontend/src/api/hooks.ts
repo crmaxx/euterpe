@@ -13,6 +13,7 @@ import {
   type CreateDownloadRequest,
   type DownloadJob,
   type LibraryAlbumItem,
+  type LibraryAlbumSort,
   type LibraryScanLatestResponse,
   type QobuzFavoriteItem,
   type QobuzFavoritesLibraryFilter,
@@ -43,7 +44,7 @@ export type FavoritesListQuery = {
 
 export type LibraryAlbumsListQuery = {
   limit?: number;
-  sort?: "title" | "artist" | "year";
+  sort?: LibraryAlbumSort;
   order?: SortOrder;
   q?: string;
 };

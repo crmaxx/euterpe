@@ -71,7 +71,8 @@ pub struct TrackMetadataUpdate<'a> {
 pub enum AlbumListSort {
     Title,
     Artist,
-    Year,
+    AlbumDate,
+    DateAdded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +108,7 @@ pub struct AlbumListRow {
     pub title: String,
     pub artist_name: String,
     pub year: Option<i32>,
+    pub created_at: String,
     pub path: Option<String>,
     pub cover_path: Option<String>,
     pub track_count: i64,
@@ -305,12 +307,7 @@ pub async fn list_albums_keyset(
         *track_counts.entry(track.album_id).or_default() += 1;
     }
 
-    let query = params
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty())
-        .map(|q| q.to_lowercase());
+    let query = normalize_album_search_query(params.q);
 
     let mut rows = Album::all()
         .run(handle.client())
@@ -326,6 +323,7 @@ pub async fn list_albums_keyset(
                 title: album.title.clone(),
                 artist_name,
                 year: album.year,
+                created_at: album.created_at.clone(),
                 path: album.path.clone(),
                 cover_path: album.cover_path.clone(),
                 track_count: track_counts.get(&album.id).copied().unwrap_or_default(),
@@ -350,7 +348,7 @@ pub async fn list_albums_keyset(
     let next_after = has_more
         .then(|| {
             rows.last()
-                .map(|row| album_cursor_for_row(row, params.sort))
+                .map(|row| album_cursor_for_row(row, params.sort, params.order))
         })
         .flatten();
 
@@ -359,6 +357,13 @@ pub async fn list_albums_keyset(
         next_after,
         has_more,
     })
+}
+
+pub fn normalize_album_search_query(q: Option<String>) -> Option<String> {
+    q.as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .map(|q| q.to_lowercase())
 }
 
 pub async fn set_album_cover_path(handle: &DataHandle, id: i64, cover_path: &str) -> Result<bool> {
@@ -793,27 +798,43 @@ fn compare_album_list_rows(
     sort: AlbumListSort,
     order: AlbumListOrder,
 ) -> Ordering {
-    let primary = compare_album_primary(left, right, sort);
-    let ordered = match order {
-        AlbumListOrder::Asc => primary,
-        AlbumListOrder::Desc => primary.reverse(),
-    };
-    ordered.then_with(|| left.id.cmp(&right.id))
+    let primary = compare_album_primary(left, right, sort, order);
+    primary.then_with(|| left.id.cmp(&right.id))
+}
+
+fn apply_album_list_order(ordering: Ordering, order: AlbumListOrder) -> Ordering {
+    match order {
+        AlbumListOrder::Asc => ordering,
+        AlbumListOrder::Desc => ordering.reverse(),
+    }
+}
+
+pub fn album_date_sort_value(year: Option<i32>, order: AlbumListOrder) -> i64 {
+    match (year, order) {
+        (Some(year), _) => i64::from(year),
+        (None, AlbumListOrder::Asc) => i64::MAX,
+        (None, AlbumListOrder::Desc) => i64::MIN,
+    }
 }
 
 fn compare_album_primary(
     left: &AlbumListRow,
     right: &AlbumListRow,
     sort: AlbumListSort,
+    order: AlbumListOrder,
 ) -> Ordering {
-    match sort {
+    let primary = match sort {
         AlbumListSort::Title => left.title.to_lowercase().cmp(&right.title.to_lowercase()),
         AlbumListSort::Artist => left
             .artist_name
             .to_lowercase()
             .cmp(&right.artist_name.to_lowercase()),
-        AlbumListSort::Year => left.year.unwrap_or(-1).cmp(&right.year.unwrap_or(-1)),
-    }
+        AlbumListSort::AlbumDate => {
+            album_date_sort_value(left.year, order).cmp(&album_date_sort_value(right.year, order))
+        }
+        AlbumListSort::DateAdded => left.created_at.cmp(&right.created_at),
+    };
+    apply_album_list_order(primary, order)
 }
 
 fn album_row_is_after_cursor(
@@ -823,7 +844,7 @@ fn album_row_is_after_cursor(
     cursor: &AlbumListCursor,
 ) -> bool {
     let primary_cmp =
-        compare_album_sort_value(&album_sort_value_for_row(row, sort), &cursor.primary);
+        compare_album_sort_value(&album_sort_value_for_row(row, sort, order), &cursor.primary);
     match order {
         AlbumListOrder::Asc => {
             primary_cmp == Ordering::Greater
@@ -836,18 +857,27 @@ fn album_row_is_after_cursor(
     }
 }
 
-fn album_cursor_for_row(row: &AlbumListRow, sort: AlbumListSort) -> AlbumListCursor {
+fn album_cursor_for_row(
+    row: &AlbumListRow,
+    sort: AlbumListSort,
+    order: AlbumListOrder,
+) -> AlbumListCursor {
     AlbumListCursor {
-        primary: album_sort_value_for_row(row, sort),
+        primary: album_sort_value_for_row(row, sort, order),
         tie_id: row.id,
     }
 }
 
-fn album_sort_value_for_row(row: &AlbumListRow, sort: AlbumListSort) -> AlbumListSortValue {
+fn album_sort_value_for_row(
+    row: &AlbumListRow,
+    sort: AlbumListSort,
+    order: AlbumListOrder,
+) -> AlbumListSortValue {
     match sort {
         AlbumListSort::Title => AlbumListSortValue::Text(row.title.clone()),
         AlbumListSort::Artist => AlbumListSortValue::Text(row.artist_name.clone()),
-        AlbumListSort::Year => AlbumListSortValue::Int(row.year.unwrap_or(-1) as i64),
+        AlbumListSort::AlbumDate => AlbumListSortValue::Int(album_date_sort_value(row.year, order)),
+        AlbumListSort::DateAdded => AlbumListSortValue::Text(row.created_at.clone()),
     }
 }
 

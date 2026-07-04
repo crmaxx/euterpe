@@ -36,6 +36,43 @@ function favoritesForRequest(request: Request) {
   return { ...mockFavorites, items };
 }
 
+type MockLibraryAlbum = {
+  id: number;
+  title: string;
+  artist_name: string;
+  year: number | null;
+  created_at: string;
+};
+
+function mockAlbumYearSortValue(year: number | null, order: string) {
+  if (year != null) {
+    return year;
+  }
+  return order === "desc" ? Number.MIN_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+}
+
+function compareMockLibraryAlbums(
+  left: MockLibraryAlbum,
+  right: MockLibraryAlbum,
+  sort: string,
+  order: string,
+) {
+  let primary: number;
+  if (sort === "artist") {
+    primary = left.artist_name.localeCompare(right.artist_name);
+  } else if (sort === "album_date") {
+    primary =
+      mockAlbumYearSortValue(left.year, order) -
+      mockAlbumYearSortValue(right.year, order);
+  } else if (sort === "date_added") {
+    primary = left.created_at.localeCompare(right.created_at);
+  } else {
+    primary = left.title.localeCompare(right.title);
+  }
+  const direction = order === "desc" ? -1 : 1;
+  return primary === 0 ? left.id - right.id : primary * direction;
+}
+
 const watchDisabled = { state: "disabled", degraded_reason: null };
 
 const mockDownloads = [
@@ -425,23 +462,49 @@ export const handlers = [
 
   http.delete("/api/v1/library/scan/:id", () => new HttpResponse(null, { status: 204 })),
 
-  http.get("/api/v1/library/albums", () =>
-    HttpResponse.json({
-      items: [
-        {
-          id: 1,
-          title: "Local Album",
-          artist_name: "Test Artist",
-          year: 2020,
-          track_count: 2,
-          cover_path: null,
-          has_cue_files: true,
-        },
-      ],
+  http.get("/api/v1/library/albums", ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const sort = params.get("sort") ?? "title";
+    const order = params.get("order") ?? "asc";
+    const q = params.get("q")?.toLowerCase();
+    const albums = [
+      {
+        id: 1,
+        title: "Local Album",
+        artist_name: "Test Artist",
+        year: 2020,
+        created_at: "2026-01-01 00:00:00",
+        track_count: 2,
+        cover_path: null,
+        has_cue_files: true,
+      },
+    ]
+      .filter(
+        (album) =>
+          !q ||
+          album.title.toLowerCase().includes(q) ||
+          album.artist_name.toLowerCase().includes(q),
+      )
+      .sort((left, right) =>
+        compareMockLibraryAlbums(left, right, sort, order),
+      );
+
+    return HttpResponse.json({
+      items: albums.map(
+        ({ id, title, artist_name, year, track_count, cover_path, has_cue_files }) => ({
+          id,
+          title,
+          artist_name,
+          year,
+          track_count,
+          cover_path,
+          has_cue_files,
+        }),
+      ),
       next_cursor: null,
       has_more: false,
-    }),
-  ),
+    });
+  }),
 
   http.get("/api/v1/library/albums/:id/cover", () =>
     new HttpResponse(null, { status: 404 }),

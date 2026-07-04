@@ -3298,7 +3298,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
-                sort?: "title" | "artist" | "year";
+                sort?: "title" | "artist" | "album_date" | "date_added";
                 order?: "asc" | "desc";
                 cursor?: string;
                 q?: string;

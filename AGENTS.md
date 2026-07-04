@@ -13,6 +13,7 @@
   - `rust-best-practices`
   - `rust-async-patterns`
 - For changes that touch both frontend and backend, apply `type-script` to the frontend portion and the Rust skills to the backend portion.
+- When working with OpenAPI, also apply `~/.agents/skills/openapi`.
 - For `rust-best-practices`, read relevant reference chapters in the same turn when the work needs deeper Rust design, review, testing, error-handling, performance, or documentation guidance.
 - For `rust-async-patterns`, read `references/details.md` when async/Tokio/channel/task/cancellation details matter beyond the quick rules in `SKILL.md`.
 
