@@ -24,7 +24,110 @@ export const mockFavorites = {
   has_more: false,
 };
 
+function favoritesForRequest(request: Request) {
+  const filter =
+    new URL(request.url).searchParams.get("library_filter") ?? "in_library";
+  const items =
+    filter === "all"
+      ? mockFavorites.items
+      : mockFavorites.items.filter((item) =>
+          filter === "not_in_library" ? !item.in_library : item.in_library,
+        );
+  return { ...mockFavorites, items };
+}
+
+type MockLibraryAlbum = {
+  id: number;
+  title: string;
+  artist_name: string;
+  year: number | null;
+  created_at: string;
+};
+
+function mockAlbumYearSortValue(year: number | null, order: string) {
+  if (year != null) {
+    return year;
+  }
+  return order === "desc" ? Number.MIN_SAFE_INTEGER : Number.MAX_SAFE_INTEGER;
+}
+
+function compareMockLibraryAlbums(
+  left: MockLibraryAlbum,
+  right: MockLibraryAlbum,
+  sort: string,
+  order: string,
+) {
+  let primary: number;
+  if (sort === "artist") {
+    primary = left.artist_name.localeCompare(right.artist_name);
+  } else if (sort === "album_date") {
+    primary =
+      mockAlbumYearSortValue(left.year, order) -
+      mockAlbumYearSortValue(right.year, order);
+  } else if (sort === "date_added") {
+    primary = left.created_at.localeCompare(right.created_at);
+  } else {
+    primary = left.title.localeCompare(right.title);
+  }
+  const direction = order === "desc" ? -1 : 1;
+  return primary === 0 ? left.id - right.id : primary * direction;
+}
+
 const watchDisabled = { state: "disabled", degraded_reason: null };
+
+const mockDownloads = [
+  {
+    id: 1,
+    status: "running",
+    job_type: "album",
+    source: "qobuz",
+    display_title: "Artist — Album",
+    qobuz_id: 99,
+    quality: 6,
+    progress_pct: 10,
+    download_speed_bps: 512000,
+    queue_position: 1,
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+  },
+  {
+    id: 2,
+    status: "completed",
+    job_type: "album",
+    source: "qobuz",
+    display_title: "Other — Done",
+    qobuz_id: 100,
+    quality: 6,
+    progress_pct: 100,
+    download_speed_bps: 0,
+    queue_position: 2,
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+  },
+  {
+    id: 3,
+    status: "failed",
+    job_type: "album",
+    source: "qobuz",
+    display_title: "Retry — Needed",
+    qobuz_id: 101,
+    quality: 6,
+    progress_pct: 0,
+    download_speed_bps: 0,
+    queue_position: 3,
+    error_message: "network",
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+  },
+];
+
+function downloadsForRequest(request: Request) {
+  const status = new URL(request.url).searchParams.get("status");
+  const items = status
+    ? mockDownloads.filter((item) => item.status === status)
+    : mockDownloads;
+  return { items, next_cursor: null, has_more: false };
+}
 
 export const handlers = [
   http.get("/api/v1/server/info", () =>
@@ -250,7 +353,9 @@ export const handlers = [
     HttpResponse.json({ run: null }),
   ),
 
-  http.get("/api/v1/qobuz/favorites", () => HttpResponse.json(mockFavorites)),
+  http.get("/api/v1/qobuz/favorites", ({ request }) =>
+    HttpResponse.json(favoritesForRequest(request)),
+  ),
 
   http.post("/api/v1/qobuz/sync", () =>
     HttpResponse.json({
@@ -291,41 +396,8 @@ export const handlers = [
     });
   }),
 
-  http.get("/api/v1/downloads", () =>
-    HttpResponse.json({
-      items: [
-        {
-          id: 1,
-          status: "running",
-          job_type: "album",
-          source: "qobuz",
-          display_title: "Artist — Album",
-          qobuz_id: 99,
-          quality: 6,
-          progress_pct: 10,
-          download_speed_bps: 512000,
-          queue_position: 1,
-          created_at: "2026-01-01",
-          updated_at: "2026-01-01",
-        },
-        {
-          id: 2,
-          status: "completed",
-          job_type: "album",
-          source: "qobuz",
-          display_title: "Other — Done",
-          qobuz_id: 100,
-          quality: 6,
-          progress_pct: 100,
-          download_speed_bps: 0,
-          queue_position: 2,
-          created_at: "2026-01-01",
-          updated_at: "2026-01-01",
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    }),
+  http.get("/api/v1/downloads", ({ request }) =>
+    HttpResponse.json(downloadsForRequest(request)),
   ),
 
   http.post("/api/v1/downloads", () =>
@@ -347,6 +419,10 @@ export const handlers = [
 
   http.post("/api/v1/downloads/purge", () =>
     HttpResponse.json({ deleted: 1 }),
+  ),
+
+  http.post("/api/v1/downloads/retry", () =>
+    HttpResponse.json({ retried: 1 }),
   ),
 
   http.delete("/api/v1/downloads/:id", ({ request }) => {
@@ -386,23 +462,49 @@ export const handlers = [
 
   http.delete("/api/v1/library/scan/:id", () => new HttpResponse(null, { status: 204 })),
 
-  http.get("/api/v1/library/albums", () =>
-    HttpResponse.json({
-      items: [
-        {
-          id: 1,
-          title: "Local Album",
-          artist_name: "Test Artist",
-          year: 2020,
-          track_count: 2,
-          cover_path: null,
-          has_cue_files: true,
-        },
-      ],
+  http.get("/api/v1/library/albums", ({ request }) => {
+    const params = new URL(request.url).searchParams;
+    const sort = params.get("sort") ?? "title";
+    const order = params.get("order") ?? "asc";
+    const q = params.get("q")?.toLowerCase();
+    const albums = [
+      {
+        id: 1,
+        title: "Local Album",
+        artist_name: "Test Artist",
+        year: 2020,
+        created_at: "2026-01-01 00:00:00",
+        track_count: 2,
+        cover_path: null,
+        has_cue_files: true,
+      },
+    ]
+      .filter(
+        (album) =>
+          !q ||
+          album.title.toLowerCase().includes(q) ||
+          album.artist_name.toLowerCase().includes(q),
+      )
+      .sort((left, right) =>
+        compareMockLibraryAlbums(left, right, sort, order),
+      );
+
+    return HttpResponse.json({
+      items: albums.map(
+        ({ id, title, artist_name, year, track_count, cover_path, has_cue_files }) => ({
+          id,
+          title,
+          artist_name,
+          year,
+          track_count,
+          cover_path,
+          has_cue_files,
+        }),
+      ),
       next_cursor: null,
       has_more: false,
-    }),
-  ),
+    });
+  }),
 
   http.get("/api/v1/library/albums/:id/cover", () =>
     new HttpResponse(null, { status: 404 }),

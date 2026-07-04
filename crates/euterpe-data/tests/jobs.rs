@@ -301,6 +301,236 @@ async fn download_lifecycle_transitions_preserve_current_rules() {
 }
 
 #[tokio::test]
+async fn purge_completed_removes_completed_jobs_only() {
+    let handle = migrated_handle().await;
+    let queued = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(1),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    let completed = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(2),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    assert!(
+        download_jobs::claim_running(&handle, completed)
+            .await
+            .unwrap()
+    );
+    download_jobs::finish_success(&handle, completed)
+        .await
+        .unwrap();
+    let failed = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(3),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    assert!(download_jobs::claim_running(&handle, failed).await.unwrap());
+    download_jobs::finish_failed(&handle, failed, "network")
+        .await
+        .unwrap();
+    let cancelled = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(4),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    assert!(download_jobs::cancel(&handle, cancelled).await.unwrap());
+
+    let deleted = download_jobs::purge_completed(&handle).await.unwrap();
+
+    assert_eq!(deleted, 1);
+    assert!(
+        download_jobs::get_by_id(&handle, queued)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        download_jobs::get_by_id(&handle, completed)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        download_jobs::get_by_id(&handle, failed)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        download_jobs::get_by_id(&handle, cancelled)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn retry_all_failed_requeues_only_failed_jobs() {
+    let handle = migrated_handle().await;
+    let failed_album = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(1),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    assert!(
+        download_jobs::claim_running(&handle, failed_album)
+            .await
+            .unwrap()
+    );
+    download_jobs::update_progress_and_speed(&handle, failed_album, 42.0, Some(2048))
+        .await
+        .unwrap();
+    download_jobs::finish_failed(&handle, failed_album, "network")
+        .await
+        .unwrap();
+    let queued_torrent = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Torrent,
+        None,
+        0,
+        Some(&json!({
+            "torrent": {
+                "display_name": "Queued Torrent",
+                "info_hash": "queued123",
+                "selected_file_indices": [0]
+            }
+        })),
+    )
+    .await
+    .unwrap();
+    let torrent_payload = json!({
+        "torrent": {
+            "display_name": "Torrent",
+            "info_hash": "abc123",
+            "selected_file_indices": [0],
+            "librqbit_id": 7,
+            "runtime": { "librqbit_state": "error" }
+        }
+    });
+    let failed_torrent = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Torrent,
+        None,
+        0,
+        Some(&torrent_payload),
+    )
+    .await
+    .unwrap();
+    assert!(
+        download_jobs::claim_running(&handle, failed_torrent)
+            .await
+            .unwrap()
+    );
+    download_jobs::finish_failed(&handle, failed_torrent, "torrent")
+        .await
+        .unwrap();
+    let queued = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(2),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    let completed = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Album,
+        Some(3),
+        6,
+        None::<&serde_json::Value>,
+    )
+    .await
+    .unwrap();
+    assert!(
+        download_jobs::claim_running(&handle, completed)
+            .await
+            .unwrap()
+    );
+    download_jobs::finish_success(&handle, completed)
+        .await
+        .unwrap();
+
+    let retried = download_jobs::retry_all_failed(&handle).await.unwrap();
+
+    assert_eq!(retried, 2);
+    let album = download_jobs::get_by_id(&handle, failed_album)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(album.status, download_jobs::DownloadJobStatus::Queued);
+    assert!(album.error_message.is_none());
+    assert_eq!(album.progress_pct, 0.0);
+    assert_eq!(album.download_speed_bps, 0);
+    assert_eq!(
+        album.queue_position,
+        download_jobs::get_by_id(&handle, queued)
+            .await
+            .unwrap()
+            .unwrap()
+            .queue_position
+            + 1
+    );
+    let torrent = download_jobs::get_by_id(&handle, failed_torrent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        torrent.queue_position,
+        download_jobs::get_by_id(&handle, queued_torrent)
+            .await
+            .unwrap()
+            .unwrap()
+            .queue_position
+            + 1
+    );
+    let torrent_payload: serde_json::Value = download_jobs::get_payload(&handle, failed_torrent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(torrent_payload["torrent"].get("librqbit_id").is_none());
+    assert!(torrent_payload["torrent"].get("runtime").is_none());
+    assert_eq!(
+        download_jobs::get_by_id(&handle, queued)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        download_jobs::DownloadJobStatus::Queued
+    );
+    assert_eq!(
+        download_jobs::get_by_id(&handle, completed)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        download_jobs::DownloadJobStatus::Completed
+    );
+}
+
+#[tokio::test]
 async fn active_album_job_check_matches_queued_running_and_paused_work() {
     let handle = migrated_handle().await;
     let payload = json!({"album_api_id":"album-api-1"});

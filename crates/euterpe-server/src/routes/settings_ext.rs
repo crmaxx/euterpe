@@ -164,7 +164,6 @@ pub async fn patch_qobuz_scheduled_sync_settings(
     if let Some(v) = patch.auto_download_new_favorites {
         settings.auto_download_new_favorites = v;
     }
-    settings = app_settings::normalize_qobuz_scheduled_sync(settings);
     app_settings::save_qobuz_scheduled_sync(&state.data, &settings).await?;
     state.runtime.write().await.qobuz_scheduled_sync = settings.clone();
     state.qobuz_scheduled_sync.restart().await?;
@@ -518,88 +517,6 @@ fn current_smb_defaults_for_patch(
     }
 }
 
-#[cfg(test)]
-mod smb_shares_credentials_tests {
-    use super::*;
-    use crate::api::SmbSharesRequest;
-
-    #[test]
-    fn uses_stored_password_when_request_omits_it() {
-        let body = SmbSharesRequest {
-            host: "192.168.0.124".into(),
-            port: 445,
-            username: Some("dietpi".into()),
-            password: None,
-            workgroup: None,
-        };
-        let stored = StorageLocation::Smb {
-            host: "192.168.0.124".into(),
-            port: 445,
-            share: "music".into(),
-            path: String::new(),
-            username: Some("dietpi".into()),
-            password_encrypted: Some("enc".into()),
-            workgroup: None,
-        };
-        let creds =
-            merge_smb_shares_credentials(&body, Some(&stored), |_| Ok("secret".into())).unwrap();
-        assert_eq!(creds.password, "secret");
-        assert!(creds.username.contains("dietpi"));
-    }
-
-    #[test]
-    fn request_password_overrides_stored() {
-        let body = SmbSharesRequest {
-            host: "192.168.0.124".into(),
-            port: 445,
-            username: None,
-            password: Some("inline".into()),
-            workgroup: None,
-        };
-        let stored = StorageLocation::Smb {
-            host: "192.168.0.124".into(),
-            port: 445,
-            share: "music".into(),
-            path: String::new(),
-            username: None,
-            password_encrypted: Some("enc".into()),
-            workgroup: None,
-        };
-        let creds =
-            merge_smb_shares_credentials(&body, Some(&stored), |_| Ok("stored".into())).unwrap();
-        assert_eq!(creds.password, "inline");
-    }
-
-    #[test]
-    fn storage_patch_reuses_password_only_for_same_endpoint() {
-        let current = StorageSettings {
-            library: Some(StorageLocation::Smb {
-                host: "NAS.local".into(),
-                port: 445,
-                share: "music".into(),
-                path: String::new(),
-                username: Some("user".into()),
-                password_encrypted: Some("enc".into()),
-                workgroup: Some("WORKGROUP".into()),
-            }),
-            presets: Vec::new(),
-        };
-
-        let same = current_smb_defaults_for_patch(&current, "nas.LOCAL", 445, "MUSIC");
-        assert_eq!(same.0, Some("enc".into()));
-        assert_eq!(same.1, Some("user".into()));
-        assert_eq!(same.2, Some("WORKGROUP".into()));
-
-        let changed_share = current_smb_defaults_for_patch(&current, "NAS.local", 445, "archive");
-        assert_eq!(changed_share.0, None);
-        assert_eq!(changed_share.1, Some("user".into()));
-        assert_eq!(changed_share.2, Some("WORKGROUP".into()));
-
-        let changed_port = current_smb_defaults_for_patch(&current, "NAS.local", 1445, "music");
-        assert_eq!(changed_port.0, None);
-    }
-}
-
 async fn storage_patch_to_settings(
     state: &AppState,
     patch: StorageSettingsPatch,
@@ -733,4 +650,86 @@ fn smb_location_and_credentials(
         },
         euterpe_smb::SmbCredentials { username, password },
     ))
+}
+
+#[cfg(test)]
+mod smb_shares_credentials_tests {
+    use super::*;
+    use crate::api::SmbSharesRequest;
+
+    #[test]
+    fn uses_stored_password_when_request_omits_it() {
+        let body = SmbSharesRequest {
+            host: "192.168.0.124".into(),
+            port: 445,
+            username: Some("dietpi".into()),
+            password: None,
+            workgroup: None,
+        };
+        let stored = StorageLocation::Smb {
+            host: "192.168.0.124".into(),
+            port: 445,
+            share: "music".into(),
+            path: String::new(),
+            username: Some("dietpi".into()),
+            password_encrypted: Some("enc".into()),
+            workgroup: None,
+        };
+        let creds =
+            merge_smb_shares_credentials(&body, Some(&stored), |_| Ok("secret".into())).unwrap();
+        assert_eq!(creds.password, "secret");
+        assert!(creds.username.contains("dietpi"));
+    }
+
+    #[test]
+    fn request_password_overrides_stored() {
+        let body = SmbSharesRequest {
+            host: "192.168.0.124".into(),
+            port: 445,
+            username: None,
+            password: Some("inline".into()),
+            workgroup: None,
+        };
+        let stored = StorageLocation::Smb {
+            host: "192.168.0.124".into(),
+            port: 445,
+            share: "music".into(),
+            path: String::new(),
+            username: None,
+            password_encrypted: Some("enc".into()),
+            workgroup: None,
+        };
+        let creds =
+            merge_smb_shares_credentials(&body, Some(&stored), |_| Ok("stored".into())).unwrap();
+        assert_eq!(creds.password, "inline");
+    }
+
+    #[test]
+    fn storage_patch_reuses_password_only_for_same_endpoint() {
+        let current = StorageSettings {
+            library: Some(StorageLocation::Smb {
+                host: "NAS.local".into(),
+                port: 445,
+                share: "music".into(),
+                path: String::new(),
+                username: Some("user".into()),
+                password_encrypted: Some("enc".into()),
+                workgroup: Some("WORKGROUP".into()),
+            }),
+            presets: Vec::new(),
+        };
+
+        let same = current_smb_defaults_for_patch(&current, "nas.LOCAL", 445, "MUSIC");
+        assert_eq!(same.0, Some("enc".into()));
+        assert_eq!(same.1, Some("user".into()));
+        assert_eq!(same.2, Some("WORKGROUP".into()));
+
+        let changed_share = current_smb_defaults_for_patch(&current, "NAS.local", 445, "archive");
+        assert_eq!(changed_share.0, None);
+        assert_eq!(changed_share.1, Some("user".into()));
+        assert_eq!(changed_share.2, Some("WORKGROUP".into()));
+
+        let changed_port = current_smb_defaults_for_patch(&current, "NAS.local", 1445, "music");
+        assert_eq!(changed_port.0, None);
+    }
 }

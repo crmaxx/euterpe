@@ -159,6 +159,11 @@ pub struct DownloadPurgeResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadRetryResponse {
+    pub retried: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobProgressEvent {
     pub id: i64,
     pub progress_pct: f64,

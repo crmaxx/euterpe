@@ -4,7 +4,7 @@ Phase 4. Разработка — **TDD** (Vitest + Testing Library).
 
 ## Node.js
 
-Рекомендуется **Node 24** (`frontend/.nvmrc`: `nvm use`). Транзитивный `@hawk.so/types` объявляет `engines.node: 24.x`; на Node 22/26 `npm ci` выдаёт `EBADENGINE` — это предупреждение, установка не падает. На Node 26 предупреждение останется, пока CodeX не расширит `engines` в пакете типов.
+Рекомендуется **Node 24** (`mise.toml`: `node = "24"`; запуск через `mise install`). Транзитивный `@hawk.so/types` объявляет `engines.node: 24.x`; на Node 22/26 `npm ci` выдаёт `EBADENGINE` — это предупреждение, установка не падает. На Node 26 предупреждение останется, пока CodeX не расширит `engines` в пакете типов.
 
 ## Core
 

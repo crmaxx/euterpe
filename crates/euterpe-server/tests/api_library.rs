@@ -170,6 +170,83 @@ async fn library_albums_keyset_sort_and_search() {
     assert_eq!(s["items"].as_array().unwrap().len(), 1);
     assert_eq!(s["items"][0]["title"], "Beta");
 
+    let normalized_search_page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?q=%20a%20&limit=2&sort=title&order=asc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(normalized_search_page.status(), StatusCode::OK);
+    let normalized_body: Value = serde_json::from_slice(
+        &normalized_search_page
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    let normalized_cursor = normalized_body["next_cursor"].as_str().unwrap();
+    let normalized_next = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/library/albums?q=a&limit=2&sort=title&order=asc&cursor={normalized_cursor}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(normalized_next.status(), StatusCode::OK);
+
+    let album_date = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?sort=album_date&order=desc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(album_date.status(), StatusCode::OK);
+    let dates: Value =
+        serde_json::from_slice(&album_date.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
+    assert_eq!(dates["items"][0]["title"], "Beta");
+
+    let stale_cursor = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/v1/library/albums?limit=2&sort=artist&order=asc&cursor={cursor}"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale_cursor.status(), StatusCode::BAD_REQUEST);
+
+    let removed_sort = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?sort=year")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(removed_sort.status(), StatusCode::BAD_REQUEST);
+
     let bad = app
         .oneshot(
             Request::builder()
@@ -180,6 +257,58 @@ async fn library_albums_keyset_sort_and_search() {
         .await
         .unwrap();
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn library_albums_keyset_sorts_by_date_added() {
+    let state = app::test_support::test_state().await;
+    let artist_id =
+        euterpe_data::repositories::catalog::upsert_artist_by_name(&state.data, "Zed", None)
+            .await
+            .unwrap();
+    let first = euterpe_data::repositories::catalog::upsert_album(
+        &state.data,
+        euterpe_data::repositories::catalog::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "First",
+            year: None,
+            qobuz_album_id: None,
+            path: None,
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let second = euterpe_data::repositories::catalog::upsert_album(
+        &state.data,
+        euterpe_data::repositories::catalog::AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Second",
+            year: None,
+            qobuz_album_id: None,
+            path: None,
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let app = app::app(state);
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/library/albums?sort=date_added&order=desc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body["items"][0]["id"], second);
+    assert_eq!(body["items"][1]["id"], first);
 }
 
 #[tokio::test]

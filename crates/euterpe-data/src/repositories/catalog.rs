@@ -1,10 +1,10 @@
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::connection::DataHandle;
 use crate::error::{DataError, Result};
-use welds::WeldsModel;
+use welds::prelude::*;
+use welds::query::builder::ManualParam;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AlbumRow {
@@ -71,7 +71,8 @@ pub struct TrackMetadataUpdate<'a> {
 pub enum AlbumListSort {
     Title,
     Artist,
-    Year,
+    AlbumDate,
+    DateAdded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +108,7 @@ pub struct AlbumListRow {
     pub title: String,
     pub artist_name: String,
     pub year: Option<i32>,
+    pub created_at: String,
     pub path: Option<String>,
     pub cover_path: Option<String>,
     pub track_count: i64,
@@ -128,6 +130,7 @@ pub struct TrackHashBackfillRow {
 
 #[derive(Debug, WeldsModel)]
 #[welds(table = "artists")]
+#[welds(HasMany(albums, Album, "artist_id"))]
 struct Artist {
     #[welds(primary_key)]
     id: i64,
@@ -138,6 +141,8 @@ struct Artist {
 
 #[derive(Debug, WeldsModel)]
 #[welds(table = "albums")]
+#[welds(BelongsTo(artist, Artist, "artist_id"))]
+#[welds(HasMany(tracks, Track, "album_id"))]
 struct Album {
     #[welds(primary_key)]
     id: i64,
@@ -153,6 +158,7 @@ struct Album {
 
 #[derive(Debug, WeldsModel)]
 #[welds(table = "tracks")]
+#[welds(BelongsTo(album, Album, "album_id"))]
 struct Track {
     #[welds(primary_key)]
     id: i64,
@@ -179,6 +185,23 @@ struct ScanKeepPath {
     id: i64,
     scan_id: i64,
     path: String,
+}
+
+#[derive(Debug, WeldsModel)]
+struct AlbumListPageRecord {
+    id: i64,
+    title: String,
+    artist_name: String,
+    year: Option<i32>,
+    created_at: String,
+    path: Option<String>,
+    cover_path: Option<String>,
+}
+
+#[derive(Debug, WeldsModel)]
+struct AlbumTrackCountRecord {
+    album_id: i64,
+    track_count: i64,
 }
 
 pub async fn upsert_artist_by_name(
@@ -293,64 +316,31 @@ pub async fn list_albums_keyset(
     handle: &DataHandle,
     params: AlbumListParams,
 ) -> Result<AlbumListPage> {
-    let artist_names = Artist::all()
-        .run(handle.client())
-        .await?
+    let query = normalize_album_search_query(params.q.clone());
+    let page_records = query_album_list_page(handle, &params, query.as_deref()).await?;
+    let has_more = page_records.len() > params.limit;
+    let page_records = page_records
         .into_iter()
-        .map(|artist| (artist.id, artist.name.clone()))
-        .collect::<HashMap<_, _>>();
-
-    let mut track_counts = HashMap::<i64, i64>::new();
-    for track in Track::all().run(handle.client()).await? {
-        *track_counts.entry(track.album_id).or_default() += 1;
-    }
-
-    let query = params
-        .q
-        .as_deref()
-        .map(str::trim)
-        .filter(|q| !q.is_empty())
-        .map(|q| q.to_lowercase());
-
-    let mut rows = Album::all()
-        .run(handle.client())
-        .await?
+        .take(params.limit)
+        .collect::<Vec<_>>();
+    let track_counts = album_track_counts(handle, &page_records).await?;
+    let rows = page_records
         .into_iter()
-        .map(|album| {
-            let artist_name = album
-                .artist_id
-                .and_then(|id| artist_names.get(&id).cloned())
-                .unwrap_or_default();
-            AlbumListRow {
-                id: album.id,
-                title: album.title.clone(),
-                artist_name,
-                year: album.year,
-                path: album.path.clone(),
-                cover_path: album.cover_path.clone(),
-                track_count: track_counts.get(&album.id).copied().unwrap_or_default(),
-            }
-        })
-        .filter(|album| {
-            query.as_ref().is_none_or(|q| {
-                album.title.to_lowercase().contains(q)
-                    || album.artist_name.to_lowercase().contains(q)
-            })
+        .map(|album| AlbumListRow {
+            id: album.id,
+            title: album.title,
+            artist_name: album.artist_name,
+            year: album.year,
+            created_at: album.created_at,
+            path: album.path,
+            cover_path: album.cover_path,
+            track_count: track_counts.get(&album.id).copied().unwrap_or_default(),
         })
         .collect::<Vec<_>>();
-
-    rows.sort_by(|left, right| compare_album_list_rows(left, right, params.sort, params.order));
-
-    if let Some(after) = params.after.as_ref() {
-        rows.retain(|row| album_row_is_after_cursor(row, params.sort, params.order, after));
-    }
-
-    let has_more = rows.len() > params.limit;
-    rows.truncate(params.limit);
     let next_after = has_more
         .then(|| {
             rows.last()
-                .map(|row| album_cursor_for_row(row, params.sort))
+                .map(|row| album_cursor_for_row(row, params.sort, params.order))
         })
         .flatten();
 
@@ -359,6 +349,152 @@ pub async fn list_albums_keyset(
         next_after,
         has_more,
     })
+}
+
+async fn query_album_list_page(
+    handle: &DataHandle,
+    params: &AlbumListParams,
+    query: Option<&str>,
+) -> Result<Vec<AlbumListPageRecord>> {
+    let mut query_builder = Album::all();
+    if let Some(query) = query {
+        let like = format!("%{query}%");
+        query_builder = query_builder.where_manual2(
+            "(LOWER($.title) LIKE ? OR LOWER(artist_name) LIKE ?)",
+            ManualParam::new().with(like.clone()).with(like),
+        );
+    }
+    if let Some(after) = params.after.as_ref() {
+        let operator = match params.order {
+            AlbumListOrder::Asc => ">",
+            AlbumListOrder::Desc => "<",
+        };
+        let cursor_sql = album_list_cursor_sql(params.sort, params.order, operator);
+        query_builder = query_builder.where_manual2(
+            cursor_sql,
+            album_cursor_params(&after.primary)
+                .push_sort_value(&after.primary)
+                .with(after.tie_id),
+        );
+    }
+
+    Ok(query_builder
+        .select_as(|album| album.id, "id")
+        .select_as(|album| album.title, "title")
+        .select_as(|album| album.year, "year")
+        .select_as(|album| album.created_at, "created_at")
+        .select_as(|album| album.path, "path")
+        .select_as(|album| album.cover_path, "cover_path")
+        .left_join(
+            |album| album.artist,
+            Artist::select_as(|artist| artist.name, "artist_name"),
+        )
+        .order_manual(album_list_order_sql(params.sort, params.order))
+        .order_by_asc(|album| album.id)
+        .limit(params.limit as i64 + 1)
+        .run(handle.client())
+        .await?
+        .collect_into()?)
+}
+
+fn album_list_order_sql(sort: AlbumListSort, order: AlbumListOrder) -> &'static str {
+    match sort {
+        AlbumListSort::Title => match order {
+            AlbumListOrder::Asc => "LOWER($.title) ASC",
+            AlbumListOrder::Desc => "LOWER($.title) DESC",
+        },
+        AlbumListSort::Artist => match order {
+            AlbumListOrder::Asc => "LOWER(artist_name) ASC",
+            AlbumListOrder::Desc => "LOWER(artist_name) DESC",
+        },
+        AlbumListSort::AlbumDate => match order {
+            AlbumListOrder::Asc => "CASE WHEN $.year IS NULL THEN 1 ELSE 0 END ASC, $.year ASC",
+            AlbumListOrder::Desc => "CASE WHEN $.year IS NULL THEN 1 ELSE 0 END ASC, $.year DESC",
+        },
+        AlbumListSort::DateAdded => match order {
+            AlbumListOrder::Asc => "$.created_at ASC",
+            AlbumListOrder::Desc => "$.created_at DESC",
+        },
+    }
+}
+
+fn album_list_cursor_sql(
+    sort: AlbumListSort,
+    order: AlbumListOrder,
+    operator: &'static str,
+) -> &'static str {
+    match (sort, order, operator) {
+        (AlbumListSort::Title, AlbumListOrder::Asc, ">") => {
+            "(LOWER($.title) > ? OR (LOWER($.title) = ? AND $.id > ?))"
+        }
+        (AlbumListSort::Title, AlbumListOrder::Desc, "<") => {
+            "(LOWER($.title) < ? OR (LOWER($.title) = ? AND $.id > ?))"
+        }
+        (AlbumListSort::Artist, AlbumListOrder::Asc, ">") => {
+            "(LOWER(artist_name) > ? OR (LOWER(artist_name) = ? AND $.id > ?))"
+        }
+        (AlbumListSort::Artist, AlbumListOrder::Desc, "<") => {
+            "(LOWER(artist_name) < ? OR (LOWER(artist_name) = ? AND $.id > ?))"
+        }
+        (AlbumListSort::AlbumDate, AlbumListOrder::Asc, ">") => {
+            "(CASE WHEN $.year IS NULL THEN 9223372036854775807 ELSE $.year END > ? OR (CASE WHEN $.year IS NULL THEN 9223372036854775807 ELSE $.year END = ? AND $.id > ?))"
+        }
+        (AlbumListSort::AlbumDate, AlbumListOrder::Desc, "<") => {
+            "(CASE WHEN $.year IS NULL THEN -9223372036854775808 ELSE $.year END < ? OR (CASE WHEN $.year IS NULL THEN -9223372036854775808 ELSE $.year END = ? AND $.id > ?))"
+        }
+        (AlbumListSort::DateAdded, AlbumListOrder::Asc, ">") => {
+            "($.created_at > ? OR ($.created_at = ? AND $.id > ?))"
+        }
+        (AlbumListSort::DateAdded, AlbumListOrder::Desc, "<") => {
+            "($.created_at < ? OR ($.created_at = ? AND $.id > ?))"
+        }
+        _ => unreachable!("cursor operator must match sort order"),
+    }
+}
+
+fn album_cursor_params(value: &AlbumListSortValue) -> ManualParam {
+    ManualParam::new().push_sort_value(value)
+}
+
+trait AlbumCursorParams {
+    fn push_sort_value(self, value: &AlbumListSortValue) -> Self;
+}
+
+impl AlbumCursorParams for ManualParam {
+    fn push_sort_value(self, value: &AlbumListSortValue) -> Self {
+        match value {
+            AlbumListSortValue::Text(value) => self.with(value.to_lowercase()),
+            AlbumListSortValue::Int(value) => self.with(*value),
+        }
+    }
+}
+
+async fn album_track_counts(
+    handle: &DataHandle,
+    albums: &[AlbumListPageRecord],
+) -> Result<HashMap<i64, i64>> {
+    if albums.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let album_ids = albums.iter().map(|album| album.id).collect::<Vec<_>>();
+    Ok(Track::all()
+        .where_col(|track| track.album_id.in_list(&album_ids))
+        .select_as(|track| track.album_id, "album_id")
+        .select_count(|track| track.id, "track_count")
+        .group_by(|track| track.album_id)
+        .run(handle.client())
+        .await?
+        .collect_into()?
+        .into_iter()
+        .map(|row: AlbumTrackCountRecord| (row.album_id, row.track_count))
+        .collect())
+}
+
+pub fn normalize_album_search_query(q: Option<String>) -> Option<String> {
+    q.as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .map(|q| q.to_lowercase())
 }
 
 pub async fn set_album_cover_path(handle: &DataHandle, id: i64, cover_path: &str) -> Result<bool> {
@@ -787,78 +923,35 @@ async fn delete_tracks_missing_from_scope_keep_set(
     Ok(deleted)
 }
 
-fn compare_album_list_rows(
-    left: &AlbumListRow,
-    right: &AlbumListRow,
-    sort: AlbumListSort,
-    order: AlbumListOrder,
-) -> Ordering {
-    let primary = compare_album_primary(left, right, sort);
-    let ordered = match order {
-        AlbumListOrder::Asc => primary,
-        AlbumListOrder::Desc => primary.reverse(),
-    };
-    ordered.then_with(|| left.id.cmp(&right.id))
-}
-
-fn compare_album_primary(
-    left: &AlbumListRow,
-    right: &AlbumListRow,
-    sort: AlbumListSort,
-) -> Ordering {
-    match sort {
-        AlbumListSort::Title => left.title.to_lowercase().cmp(&right.title.to_lowercase()),
-        AlbumListSort::Artist => left
-            .artist_name
-            .to_lowercase()
-            .cmp(&right.artist_name.to_lowercase()),
-        AlbumListSort::Year => left.year.unwrap_or(-1).cmp(&right.year.unwrap_or(-1)),
+pub fn album_date_sort_value(year: Option<i32>, order: AlbumListOrder) -> i64 {
+    match (year, order) {
+        (Some(year), _) => i64::from(year),
+        (None, AlbumListOrder::Asc) => i64::MAX,
+        (None, AlbumListOrder::Desc) => i64::MIN,
     }
 }
 
-fn album_row_is_after_cursor(
+fn album_cursor_for_row(
     row: &AlbumListRow,
     sort: AlbumListSort,
     order: AlbumListOrder,
-    cursor: &AlbumListCursor,
-) -> bool {
-    let primary_cmp =
-        compare_album_sort_value(&album_sort_value_for_row(row, sort), &cursor.primary);
-    match order {
-        AlbumListOrder::Asc => {
-            primary_cmp == Ordering::Greater
-                || (primary_cmp == Ordering::Equal && row.id > cursor.tie_id)
-        }
-        AlbumListOrder::Desc => {
-            primary_cmp == Ordering::Less
-                || (primary_cmp == Ordering::Equal && row.id > cursor.tie_id)
-        }
-    }
-}
-
-fn album_cursor_for_row(row: &AlbumListRow, sort: AlbumListSort) -> AlbumListCursor {
+) -> AlbumListCursor {
     AlbumListCursor {
-        primary: album_sort_value_for_row(row, sort),
+        primary: album_sort_value_for_row(row, sort, order),
         tie_id: row.id,
     }
 }
 
-fn album_sort_value_for_row(row: &AlbumListRow, sort: AlbumListSort) -> AlbumListSortValue {
+fn album_sort_value_for_row(
+    row: &AlbumListRow,
+    sort: AlbumListSort,
+    order: AlbumListOrder,
+) -> AlbumListSortValue {
     match sort {
         AlbumListSort::Title => AlbumListSortValue::Text(row.title.clone()),
         AlbumListSort::Artist => AlbumListSortValue::Text(row.artist_name.clone()),
-        AlbumListSort::Year => AlbumListSortValue::Int(row.year.unwrap_or(-1) as i64),
-    }
-}
-
-fn compare_album_sort_value(left: &AlbumListSortValue, right: &AlbumListSortValue) -> Ordering {
-    match (left, right) {
-        (AlbumListSortValue::Text(left), AlbumListSortValue::Text(right)) => {
-            left.to_lowercase().cmp(&right.to_lowercase())
-        }
-        (AlbumListSortValue::Int(left), AlbumListSortValue::Int(right)) => left.cmp(right),
-        (AlbumListSortValue::Text(_), AlbumListSortValue::Int(_)) => Ordering::Less,
-        (AlbumListSortValue::Int(_), AlbumListSortValue::Text(_)) => Ordering::Greater,
+        AlbumListSort::AlbumDate => AlbumListSortValue::Int(album_date_sort_value(row.year, order)),
+        AlbumListSort::DateAdded => AlbumListSortValue::Text(row.created_at.clone()),
     }
 }
 

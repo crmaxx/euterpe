@@ -42,11 +42,13 @@ describe("sortDownloadQueueJobs", () => {
     expect(sorted.map((j) => j.id)).toEqual([3, 2, 1]);
   });
 
-  it("orders terminal jobs by id desc", () => {
+  it("orders failed, cancelled, and completed by status before newest id", () => {
     const sorted = sortDownloadQueueJobs([
       job({ id: 10, status: "failed", queue_position: 0 }),
       job({ id: 12, status: "completed", queue_position: 0 }),
+      job({ id: 11, status: "cancelled", queue_position: 0 }),
+      job({ id: 13, status: "failed", queue_position: 0 }),
     ]);
-    expect(sorted.map((j) => j.id)).toEqual([12, 10]);
+    expect(sorted.map((j) => j.id)).toEqual([13, 10, 11, 12]);
   });
 });

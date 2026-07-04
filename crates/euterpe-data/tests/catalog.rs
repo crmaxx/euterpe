@@ -702,7 +702,7 @@ async fn album_keyset_listing_filters_sorts_and_counts_tracks() {
     let artist_filtered = catalog::list_albums_keyset(
         &handle,
         catalog::AlbumListParams {
-            sort: catalog::AlbumListSort::Year,
+            sort: catalog::AlbumListSort::AlbumDate,
             order: catalog::AlbumListOrder::Desc,
             limit: 10,
             q: Some("alpha artist".to_string()),
@@ -718,6 +718,217 @@ async fn album_keyset_listing_filters_sorts_and_counts_tracks() {
             .map(|album| album.id)
             .collect::<Vec<_>>(),
         [alpha, gamma]
+    );
+}
+
+#[tokio::test]
+async fn album_keyset_listing_sorts_album_date_with_unknowns_last() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    let artist_id = catalog::upsert_artist_by_name(&handle, "Artist", None)
+        .await
+        .unwrap();
+
+    let unknown = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Unknown",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Artist/Unknown"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let old = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Old",
+            year: Some(2020),
+            qobuz_album_id: None,
+            path: Some("Artist/Old"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    let new = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "New",
+            year: Some(2024),
+            qobuz_album_id: None,
+            path: Some("Artist/New"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let asc_first = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::AlbumDate,
+            order: catalog::AlbumListOrder::Asc,
+            limit: 2,
+            q: None,
+            after: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        asc_first
+            .items
+            .iter()
+            .map(|album| album.id)
+            .collect::<Vec<_>>(),
+        [old, new]
+    );
+
+    let asc_next = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::AlbumDate,
+            order: catalog::AlbumListOrder::Asc,
+            limit: 2,
+            q: None,
+            after: asc_first.next_after,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        asc_next
+            .items
+            .iter()
+            .map(|album| album.id)
+            .collect::<Vec<_>>(),
+        [unknown]
+    );
+
+    let desc = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::AlbumDate,
+            order: catalog::AlbumListOrder::Desc,
+            limit: 3,
+            q: None,
+            after: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        desc.items.iter().map(|album| album.id).collect::<Vec<_>>(),
+        [new, old, unknown]
+    );
+}
+
+#[tokio::test]
+async fn album_keyset_listing_sorts_by_date_added() {
+    let handle = connect_database("sqlite::memory:").await.unwrap();
+    migrations::migrate(&handle).await.unwrap();
+    let artist_id = catalog::upsert_artist_by_name(&handle, "Artist", None)
+        .await
+        .unwrap();
+
+    let first = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "First",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Artist/First"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let second = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Second",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Artist/Second"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let third = catalog::upsert_album(
+        &handle,
+        AlbumUpsert {
+            artist_id: Some(artist_id),
+            title: "Third",
+            year: None,
+            qobuz_album_id: None,
+            path: Some("Artist/Third"),
+            cover_path: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    let asc_first = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::DateAdded,
+            order: catalog::AlbumListOrder::Asc,
+            limit: 1,
+            q: Some("i".to_string()),
+            after: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(asc_first.items[0].id, first);
+
+    let asc_next = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::DateAdded,
+            order: catalog::AlbumListOrder::Asc,
+            limit: 2,
+            q: Some("i".to_string()),
+            after: asc_first.next_after,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        asc_next
+            .items
+            .iter()
+            .map(|album| album.id)
+            .collect::<Vec<_>>(),
+        [second, third]
+    );
+
+    let desc = catalog::list_albums_keyset(
+        &handle,
+        catalog::AlbumListParams {
+            sort: catalog::AlbumListSort::DateAdded,
+            order: catalog::AlbumListOrder::Desc,
+            limit: 3,
+            q: None,
+            after: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        desc.items.iter().map(|album| album.id).collect::<Vec<_>>(),
+        [third, second, first]
     );
 }
 

@@ -151,6 +151,7 @@ Known Welds builder gaps remain documented in backend migration docs. Partial un
 
 ## Related
 
+- [Library album sorting stays contract-first and backend-owned](../conventions/library-album-sorting-openapi-welds-keyset.md) documents a concrete keyset pagination case where sort semantics belong in the Welds-backed repository, not in frontend reordering or server raw SQL.
 - [SMB storage review fixes across job state, handles, and API contracts](../integration-issues/smb-storage-review-fixes.md) covers the storage-side review fixes that motivated part of the broader branch, but it does not document the Welds data-layer boundary.
 - `docs/brainstorms/2026-06-25-welds-data-layer-requirements.md`
 - `docs/plans/2026-06-25-001-refactor-welds-data-layer-plan.md`

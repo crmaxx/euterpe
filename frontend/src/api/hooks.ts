@@ -13,8 +13,10 @@ import {
   type CreateDownloadRequest,
   type DownloadJob,
   type LibraryAlbumItem,
+  type LibraryAlbumSort,
   type LibraryScanLatestResponse,
   type QobuzFavoriteItem,
+  type QobuzFavoritesLibraryFilter,
   type SortOrder,
   type StorageLocationPatch,
 } from "./client";
@@ -37,12 +39,12 @@ export type FavoritesListQuery = {
   sort?: "title" | "artist" | "in_library";
   order?: SortOrder;
   q?: string;
-  in_library?: boolean;
+  library_filter?: QobuzFavoritesLibraryFilter;
 };
 
 export type LibraryAlbumsListQuery = {
   limit?: number;
-  sort?: "title" | "artist" | "year";
+  sort?: LibraryAlbumSort;
   order?: SortOrder;
   q?: string;
 };
@@ -525,7 +527,7 @@ function favoritesFilterKey(params: FavoritesListQuery): string {
     sort: params.sort ?? "title",
     order: params.order ?? "asc",
     q: params.q ?? "",
-    in_library: params.in_library ?? null,
+    library_filter: params.library_filter ?? null,
   });
 }
 
@@ -601,7 +603,9 @@ export function useFavoritesList(params: FavoritesListQuery = {}) {
 }
 
 /** Flattened favorites for queue titles and other consumers. */
-export function useFavoritesFlat(params: FavoritesListQuery = { limit: 500 }) {
+export function useFavoritesFlat(
+  params: FavoritesListQuery = { limit: 500, library_filter: "all" },
+) {
   const query = useFavoritesKeyset(params);
   const { hasNextPage, isFetchingNextPage, fetchNextPage, dataUpdatedAt } = query;
   useEffect(() => {
@@ -944,10 +948,10 @@ export function useCancelDownload() {
   });
 }
 
-export function usePurgeFinishedDownloads() {
+export function usePurgeCompletedDownloads() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.purgeFinishedDownloads(),
+    mutationFn: () => api.purgeCompletedDownloads(),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["downloads"] });
     },
@@ -979,6 +983,16 @@ export function useRetryDownload() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.retryDownload(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}
+
+export function useRetryFailedDownloads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.retryFailedDownloads(),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["downloads"] });
     },

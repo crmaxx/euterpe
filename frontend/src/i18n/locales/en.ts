@@ -42,7 +42,10 @@ export const en = {
   settings: {
     title: "Settings",
     subtitle:
-      "Link your Qobuz account via OAuth. Credentials stay encrypted on the server.",
+      "Manage account, appearance, automation, storage, conversion, and download behavior.",
+    tabs: {
+      general: "General",
+    },
     appearance: {
       title: "Appearance",
       theme: "Theme",
@@ -79,6 +82,7 @@ export const en = {
       runNow: "Run now",
       saved: "Schedule saved",
       saveFailed: "Could not save schedule",
+      cronRequired: "Cron expression is required",
       runComplete: "Scheduled sync complete",
       runListOnly:
         "Favorites list refreshed. Auto-download is off, so no download jobs were queued.",
@@ -312,7 +316,10 @@ export const en = {
     title: "Download queue",
     clearHistory: "Clear history",
     clearConfirm:
-      "Remove all completed, failed, and cancelled jobs from the list? Active downloads will be kept.",
+      "Remove all completed jobs from the list? Failed and cancelled jobs will be kept.",
+    retryAll: "Retry all",
+    retryAllFailed: "Could not retry failed downloads",
+    filterStatus: "Filter by status",
     noJobs: "No jobs.",
     loadFailed: "Could not load the download queue",
     album: "Album #{id}",
@@ -327,6 +334,15 @@ export const en = {
     progress: "Progress {pct}%",
     priorityUp: "Move up in queue",
     priorityDown: "Move down in queue",
+    status: {
+      all: "All",
+      running: "Running",
+      queued: "Queued",
+      paused: "Paused",
+      failed: "Failed",
+      cancelled: "Canceled",
+      completed: "Completed",
+    },
     section: {
       qobuz: "Qobuz",
       torrent: "Torrent",
@@ -363,6 +379,20 @@ export const en = {
     scanning: "Scanning…",
     search: "Search",
     searchPlaceholder: "Title or artist",
+    sortBy: "Sort by",
+    sortOrder: "Order",
+    sortAscending: "Sort ascending",
+    sortDescending: "Sort descending",
+    sortFields: {
+      title: "Album title",
+      artist: "Artist",
+      album_date: "Album date",
+      date_added: "Date added",
+    },
+    sortDirections: {
+      asc: "Ascending",
+      desc: "Descending",
+    },
     loadMore: "Load more",
     selectAlbum: "Select an album",
     chooseAlbum: "Choose an album to view tracks and edit tags.",

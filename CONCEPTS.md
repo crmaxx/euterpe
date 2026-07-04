@@ -53,6 +53,37 @@ The scheduled process that refreshes local Qobuz favorites from the connected Qo
 
 Scheduled Qobuz Favorites Sync defaults to updating the favorites list only. Automatic download of newly discovered favorites is an opt-in behavior and is limited to albums that are not already in the library.
 
+When the sync is enabled, its cron expression is required user configuration. Defaults seed missing settings, but saved empty schedule input is invalid rather than equivalent to the default.
+
+## Download Queue
+
+### Download Queue
+The user-visible pipeline of requested downloads, their lifecycle states, and the controls that change or inspect those states.
+
+Download Queue actions have two scopes. Row actions act on one job, while bulk actions express a backend-owned rule over the whole queue, independent of the current UI filter.
+
+### Queue Status
+The lifecycle state of a Download Queue job, used both for worker behavior and for user-facing queue controls.
+
+Queue Status groups are not interchangeable. Completed jobs are successful history, failed jobs are retryable work, cancelled jobs are stopped work, and active statuses remain candidates for worker scheduling or user control.
+
+### Bulk Queue Action
+A Download Queue command whose target set is selected by backend semantics rather than by the rows currently visible in the frontend.
+
+Bulk Queue Actions should be represented as single API operations so retry, cleanup, scheduler wakeup, and cache invalidation semantics cannot drift across many row-level calls.
+
+## Engineering Contracts
+
+### OpenAPI Contract
+The repository-owned HTTP contract that defines the backend wire shape and the generated frontend client types.
+
+OpenAPI Contract changes should be made before backend and frontend implementation work so tests and generated types describe the intended behavior rather than reverse-engineering it afterward.
+
+### Internal API Contract
+An OpenAPI Contract whose known consumers are inside this repository and can be updated in the same change.
+
+Internal API Contracts should have one current wire shape. Deprecated aliases, duplicate parameters, and compatibility shims belong only when an external consumer or explicit deployment constraint requires them.
+
 ## Data Layer
 
 ### First-Party Data Layer

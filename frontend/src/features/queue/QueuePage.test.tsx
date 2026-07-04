@@ -1,8 +1,10 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { http, HttpResponse } from "msw";
 import type { JobProgressEvent } from "@/api/client";
 import { TestProviders } from "@/test/test-providers";
+import { server } from "@/test/msw/server";
 import { QueuePage } from "./QueuePage";
 
 class MockEventSource {
@@ -26,10 +28,26 @@ class MockEventSource {
   close() {}
 }
 
-describe("QueuePage", () => {
-  it("updates progress bar from SSE job_progress", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+beforeAll(() => {
+  Object.defineProperties(HTMLElement.prototype, {
+    hasPointerCapture: { value: () => false },
+    setPointerCapture: { value: () => undefined },
+    releasePointerCapture: { value: () => undefined },
+    scrollIntoView: { value: () => undefined },
+  });
+});
 
+function stubEventSource() {
+  MockEventSource.instances = [];
+  vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+}
+
+describe("QueuePage", () => {
+  beforeEach(() => {
+    stubEventSource();
+  });
+
+  it("updates progress bar from SSE job_progress", async () => {
     render(
       <TestProviders>
         <QueuePage />
@@ -50,11 +68,9 @@ describe("QueuePage", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("Progress 50%")).toBeInTheDocument();
     });
-
   });
 
-  it("shows Clear history when terminal jobs exist", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+  it("shows global queue actions", async () => {
     vi.stubGlobal("confirm", vi.fn(() => true));
 
     render(
@@ -64,10 +80,32 @@ describe("QueuePage", () => {
     );
 
     await screen.findByRole("button", { name: /clear history/i });
+    expect(screen.getByRole("button", { name: /retry all/i })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /filter by status/i })).toBeInTheDocument();
   });
 
-  it("purges finished jobs on Clear history confirm", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+  it("filters jobs by status", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestProviders>
+        <QueuePage />
+      </TestProviders>,
+    );
+
+    await screen.findByText("Artist — Album");
+
+    await user.click(screen.getByRole("combobox", { name: /filter by status/i }));
+    await user.click(await screen.findByRole("option", { name: "Failed" }));
+
+    await screen.findByText("Retry — Needed");
+    await waitFor(() => {
+      expect(screen.queryByText("Artist — Album")).not.toBeInTheDocument();
+      expect(screen.queryByText("Other — Done")).not.toBeInTheDocument();
+    });
+  });
+
+  it("purges completed jobs on Clear history confirm", async () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal("confirm", confirm);
     const user = userEvent.setup();
@@ -79,6 +117,29 @@ describe("QueuePage", () => {
     );
 
     await user.click(await screen.findByRole("button", { name: /clear history/i }));
-    expect(confirm).toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledWith(
+      "Remove all completed jobs from the list? Failed and cancelled jobs will be kept.",
+    );
+  });
+
+  it("retries all failed downloads from the toolbar", async () => {
+    const user = userEvent.setup();
+    const retryAll = vi.fn();
+    server.use(
+      http.post("/api/v1/downloads/retry", () => {
+        retryAll();
+        return HttpResponse.json({ retried: 1 });
+      }),
+    );
+
+    render(
+      <TestProviders>
+        <QueuePage />
+      </TestProviders>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: /retry all/i }));
+
+    await waitFor(() => expect(retryAll).toHaveBeenCalledTimes(1));
   });
 });

@@ -19,7 +19,8 @@ services:
             EUTERPE_DEBUG: ${EUTERPE_DEBUG:-true}
             EUTERPE_LIBRARY_PATH: /music
             EUTERPE_TORRENT_INCOMING_DIR: /data/torrent-incoming
-            EUTERPE_STATIC_DIR: /app/frontend/dist
+            # Dev UI is served by Vite on :5173; keep backend from serving stale host frontend/dist.
+            EUTERPE_STATIC_DIR: /tmp/euterpe-static-disabled
         volumes:
             - ..:/app
             - cargo-registry:/usr/local/cargo/registry
@@ -40,6 +41,8 @@ services:
             NPM_CONFIG_CACHE: /tmp/npm-cache
             NPM_CONFIG_UPDATE_NOTIFIER: "false"
             VITE_DEV_API_PROXY: http://backend:8080
+            CHOKIDAR_USEPOLLING: "true"
+            CHOKIDAR_INTERVAL: "300"
         volumes:
             - ..:/app
             - frontend-node-modules:/app/frontend/node_modules

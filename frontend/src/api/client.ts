@@ -1,7 +1,7 @@
 import { getAdminToken, notifyAdminUnauthorized } from "@/lib/auth";
 import { ApiClientError, type ErrorResponse } from "./errors";
 import { appendKeysetParams, type KeysetListParams, type SortOrder } from "./keyset";
-import type { components } from "./schema";
+import type { components, operations } from "./schema";
 
 export type { KeysetListParams, SortOrder };
 export type { KeysetListResponse } from "./keyset";
@@ -12,6 +12,9 @@ export type QobuzSyncLatestResponse =
 export type QobuzFavoritesListResponse =
   components["schemas"]["QobuzFavoritesListResponse"];
 export type QobuzFavoriteItem = components["schemas"]["QobuzFavoriteItem"];
+export type QobuzFavoritesLibraryFilter = NonNullable<
+  operations["listQobuzFavorites"]["parameters"]["query"]["library_filter"]
+>;
 export type QobuzSyncResponse = components["schemas"]["QobuzSyncResponse"];
 export type QobuzTestLoginRequest =
   components["schemas"]["QobuzTestLoginRequest"];
@@ -24,6 +27,10 @@ export type QobuzConnectionStatusResponse =
 export type DownloadJobListResponse =
   components["schemas"]["DownloadJobListResponse"];
 export type DownloadJob = components["schemas"]["DownloadJob"];
+export type DownloadPurgeResponse =
+  components["schemas"]["DownloadPurgeResponse"];
+export type DownloadRetryResponse =
+  components["schemas"]["DownloadRetryResponse"];
 export type TorrentJobDetail = components["schemas"]["TorrentJobDetail"];
 export type CreateDownloadRequest =
   components["schemas"]["CreateDownloadRequest"];
@@ -51,6 +58,9 @@ export type LibraryScanStartResponse =
 export type LibraryAlbumListResponse =
   components["schemas"]["LibraryAlbumListResponse"];
 export type LibraryAlbumItem = components["schemas"]["LibraryAlbumItem"];
+export type LibraryAlbumSort = NonNullable<
+  NonNullable<operations["listLibraryAlbums"]["parameters"]["query"]>["sort"]
+>;
 export type LibraryAlbumDetailResponse =
   components["schemas"]["LibraryAlbumDetailResponse"];
 export type LibraryTrackDetailResponse =
@@ -225,7 +235,7 @@ export const api = {
   favorites: (
     params: KeysetListParams & {
       q?: string;
-      in_library?: boolean;
+      library_filter?: QobuzFavoritesLibraryFilter;
     } = {},
   ) => {
     const search = new URLSearchParams({ type: "album" });
@@ -235,7 +245,7 @@ export const api = {
       order: params.order ?? "asc",
       cursor: params.cursor ?? undefined,
       q: params.q,
-      in_library: params.in_library,
+      library_filter: params.library_filter,
     });
     return fetchJson<QobuzFavoritesListResponse>(`/qobuz/favorites?${search}`);
   },
@@ -446,6 +456,9 @@ export const api = {
   retryDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}/retry`, { method: "POST" }),
 
+  retryFailedDownloads: () =>
+    fetchJson<DownloadRetryResponse>("/downloads/retry", { method: "POST" }),
+
   pauseDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}/pause`, { method: "POST" }),
 
@@ -461,8 +474,8 @@ export const api = {
   cancelDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}`, { method: "DELETE" }),
 
-  purgeFinishedDownloads: () =>
-    fetchJson<{ deleted: number }>("/downloads/purge", { method: "POST" }),
+  purgeCompletedDownloads: () =>
+    fetchJson<DownloadPurgeResponse>("/downloads/purge", { method: "POST" }),
 
   purgeDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}?purge=1`, { method: "DELETE" }),
@@ -483,7 +496,9 @@ export const api = {
   cancelLibraryScan: (scanId: number) =>
     fetchJson<void>(`/library/scan/${scanId}`, { method: "DELETE" }),
 
-  libraryAlbums: (params: KeysetListParams & { q?: string } = {}) => {
+  libraryAlbums: (
+    params: Omit<KeysetListParams, "sort"> & { sort?: LibraryAlbumSort; q?: string } = {},
+  ) => {
     const search = new URLSearchParams();
     appendKeysetParams(search, {
       limit: params.limit ?? 50,

@@ -56,7 +56,8 @@ pub async fn get_by_id(pool: &SqlitePool, id: i64) -> Result<Option<AlbumRow>, A
 pub enum AlbumsSort {
     Title,
     Artist,
-    Year,
+    AlbumDate,
+    DateAdded,
 }
 
 impl AlbumsSort {
@@ -64,8 +65,11 @@ impl AlbumsSort {
         match s {
             "title" => Ok(Self::Title),
             "artist" => Ok(Self::Artist),
-            "year" => Ok(Self::Year),
-            _ => Err(ApiError::bad_request("sort must be title, artist, or year")),
+            "album_date" => Ok(Self::AlbumDate),
+            "date_added" => Ok(Self::DateAdded),
+            _ => Err(ApiError::bad_request(
+                "sort must be title, artist, album_date, or date_added",
+            )),
         }
     }
 
@@ -73,24 +77,30 @@ impl AlbumsSort {
         match self {
             Self::Title => "title",
             Self::Artist => "artist",
-            Self::Year => "year",
+            Self::AlbumDate => "album_date",
+            Self::DateAdded => "date_added",
         }
     }
 
     fn key_kind(self) -> SortKeyKind {
         match self {
-            Self::Year => SortKeyKind::Int,
+            Self::AlbumDate => SortKeyKind::Int,
             _ => SortKeyKind::Text,
         }
     }
 
-    fn primary_key(self, row: &AlbumListRow) -> SortKeyValue {
+    fn primary_key(self, row: &AlbumListRow, order: SortOrder) -> SortKeyValue {
         match self {
             Self::Title => SortKeyValue::Text(row.title.clone()),
             Self::Artist => SortKeyValue::Text(row.artist_name.clone()),
-            Self::Year => SortKeyValue::Int(row.year.unwrap_or(-1) as i64),
+            Self::AlbumDate => SortKeyValue::Int(album_date_sort_value(row.year, order)),
+            Self::DateAdded => SortKeyValue::Text(row.created_at.clone()),
         }
     }
+}
+
+fn album_date_sort_value(year: Option<i32>, order: SortOrder) -> i64 {
+    catalog::album_date_sort_value(year, sort_order_to_data(order))
 }
 
 #[derive(Debug, Clone)]
@@ -104,8 +114,9 @@ pub struct AlbumsListParams {
 
 pub async fn list_keyset(
     pool: &SqlitePool,
-    params: AlbumsListParams,
+    mut params: AlbumsListParams,
 ) -> Result<KeysetPage<AlbumListRow>, ApiError> {
+    params.q = catalog::normalize_album_search_query(params.q);
     let fingerprint = fingerprint_json(&json!({ "q": params.q }));
 
     let after = if let Some(ref cursor_str) = params.cursor {
@@ -147,7 +158,7 @@ pub async fn list_keyset(
         sort.as_str(),
         params.order,
         &fingerprint,
-        |r| (sort.primary_key(r), r.id),
+        |r| (sort.primary_key(r, params.order), r.id),
     ))
 }
 
@@ -157,6 +168,7 @@ pub struct AlbumListRow {
     pub title: String,
     pub artist_name: String,
     pub year: Option<i32>,
+    pub created_at: String,
     pub path: Option<String>,
     pub cover_path: Option<String>,
     pub track_count: i64,
@@ -221,6 +233,7 @@ fn album_list_row_from_data(row: catalog::AlbumListRow) -> AlbumListRow {
         title: row.title,
         artist_name: row.artist_name,
         year: row.year,
+        created_at: row.created_at,
         path: row.path,
         cover_path: row.cover_path,
         track_count: row.track_count,
@@ -231,7 +244,8 @@ fn album_sort_to_data(sort: AlbumsSort) -> catalog::AlbumListSort {
     match sort {
         AlbumsSort::Title => catalog::AlbumListSort::Title,
         AlbumsSort::Artist => catalog::AlbumListSort::Artist,
-        AlbumsSort::Year => catalog::AlbumListSort::Year,
+        AlbumsSort::AlbumDate => catalog::AlbumListSort::AlbumDate,
+        AlbumsSort::DateAdded => catalog::AlbumListSort::DateAdded,
     }
 }
 

@@ -195,7 +195,7 @@ async fn download_job_completes_via_worker() {
 }
 
 #[tokio::test]
-async fn purge_finished_deletes_terminal_jobs() {
+async fn purge_completed_deletes_completed_jobs_only() {
     let state = test_state_without_worker().await;
     let data = state.data.clone();
     let payload = DownloadJobPayload {
@@ -237,6 +237,16 @@ async fn purge_finished_deletes_terminal_jobs() {
     download_jobs::finish_failed(&data, failed, "err")
         .await
         .unwrap();
+    let cancelled = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(5),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::cancel(&data, cancelled).await.unwrap();
 
     let app = app::app(state);
     let response = app
@@ -253,7 +263,7 @@ async fn purge_finished_deletes_terminal_jobs() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(json["deleted"], 2);
+    assert_eq!(json["deleted"], 1);
     let spec = load_spec();
     validate_schema(&schema_from_spec(&spec, "DownloadPurgeResponse"), &json);
 
@@ -273,7 +283,91 @@ async fn purge_finished_deletes_terminal_jobs() {
         download_jobs::get_by_id(&data, failed)
             .await
             .unwrap()
-            .is_none()
+            .is_some()
+    );
+    assert!(
+        download_jobs::get_by_id(&data, cancelled)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn retry_failed_downloads_requeues_failed_jobs_only() {
+    let state = test_state_without_worker().await;
+    let data = state.data.clone();
+    let payload = DownloadJobPayload {
+        torrent: None,
+        album_api_id: Some("1".into()),
+        display_title: None,
+    };
+    let failed = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(4),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::claim_running(&data, failed).await.unwrap();
+    download_jobs::update_progress_and_speed(&data, failed, 37.5, Some(1024))
+        .await
+        .unwrap();
+    download_jobs::finish_failed(&data, failed, "err")
+        .await
+        .unwrap();
+    let completed = download_jobs::insert_queued(
+        &data,
+        DataDownloadJobType::Album,
+        Some(5),
+        6,
+        Some(&payload),
+    )
+    .await
+    .unwrap();
+    download_jobs::claim_running(&data, completed)
+        .await
+        .unwrap();
+    download_jobs::finish_success(&data, completed)
+        .await
+        .unwrap();
+
+    let app = app::app(state);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/downloads/retry")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(json["retried"], 1);
+    let spec = load_spec();
+    validate_schema(&schema_from_spec(&spec, "DownloadRetryResponse"), &json);
+
+    let failed = download_jobs::get_by_id(&data, failed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(failed.status, download_jobs::DownloadJobStatus::Queued);
+    assert!(failed.error_message.is_none());
+    assert_eq!(failed.progress_pct, 0.0);
+    assert_eq!(failed.download_speed_bps, 0);
+    assert_eq!(
+        download_jobs::get_by_id(&data, completed)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        download_jobs::DownloadJobStatus::Completed
     );
 }
 

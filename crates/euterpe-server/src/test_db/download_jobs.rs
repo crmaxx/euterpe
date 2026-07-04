@@ -372,16 +372,16 @@ pub fn is_terminal_status(status: DownloadJobStatus) -> bool {
     data::is_terminal_status(download_status_to_data(status))
 }
 
-/// Terminal torrent jobs (for incoming dir cleanup before purge).
-pub async fn list_terminal_torrent_job_ids(pool: &SqlitePool) -> Result<Vec<i64>, ApiError> {
+/// Completed torrent jobs for incoming dir cleanup before history purge.
+pub async fn list_completed_torrent_job_ids(pool: &SqlitePool) -> Result<Vec<i64>, ApiError> {
     let handle = DataHandle::from_sqlite_pool(pool.clone());
-    Ok(data::list_terminal_torrent_job_ids(&handle).await?)
+    Ok(data::list_completed_torrent_job_ids(&handle).await?)
 }
 
-/// Remove all jobs that are not `queued` or `running`.
-pub async fn purge_finished(pool: &SqlitePool) -> Result<u64, ApiError> {
+/// Remove all completed jobs.
+pub async fn purge_completed(pool: &SqlitePool) -> Result<u64, ApiError> {
     let handle = DataHandle::from_sqlite_pool(pool.clone());
-    Ok(data::purge_finished(&handle).await?)
+    Ok(data::purge_completed(&handle).await?)
 }
 
 /// Permanently delete a job row. Caller must enforce terminal-only for active jobs.
@@ -395,6 +395,11 @@ pub async fn retry_failed(pool: &SqlitePool, id: i64) -> Result<(), ApiError> {
     let handle = DataHandle::from_sqlite_pool(pool.clone());
     data::retry_failed(&handle, id).await?;
     Ok(())
+}
+
+pub async fn retry_all_failed(pool: &SqlitePool) -> Result<u64, ApiError> {
+    let handle = DataHandle::from_sqlite_pool(pool.clone());
+    Ok(data::retry_all_failed(&handle).await?)
 }
 
 pub async fn cancel(pool: &SqlitePool, id: i64) -> Result<bool, ApiError> {
@@ -517,7 +522,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn purge_finished_removes_terminal_jobs_only() {
+    async fn purge_completed_removes_completed_jobs_only() {
         let pool = crate::test_db::connect("sqlite::memory:").await.unwrap();
         crate::test_db::migrate(&pool).await.unwrap();
 
@@ -538,13 +543,13 @@ mod tests {
             .unwrap();
         finish_failed(&pool, failed, "err").await.unwrap();
 
-        let n = purge_finished(&pool).await.unwrap();
-        assert_eq!(n, 2);
+        let n = purge_completed(&pool).await.unwrap();
+        assert_eq!(n, 1);
 
         assert!(get(&pool, queued).await.unwrap().is_some());
         assert!(get(&pool, running).await.unwrap().is_some());
         assert!(get(&pool, done).await.unwrap().is_none());
-        assert!(get(&pool, failed).await.unwrap().is_none());
+        assert!(get(&pool, failed).await.unwrap().is_some());
     }
 
     #[tokio::test]
