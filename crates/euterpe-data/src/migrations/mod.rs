@@ -231,6 +231,10 @@ pub async fn migrate(handle: &DataHandle) -> Result<()> {
     Ok(())
 }
 
+pub async fn applied_migration_count(handle: &DataHandle) -> Result<u64> {
+    Ok(MigrationLog::all().count(handle.client()).await?)
+}
+
 async fn has_legacy_sqlx_schema(handle: &DataHandle) -> Result<bool> {
     let tables = detect::find_all_tables(handle.client()).await?;
     let table_names: BTreeSet<&str> = tables.iter().map(|table| table.ident().name()).collect();

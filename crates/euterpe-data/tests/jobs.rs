@@ -405,6 +405,21 @@ async fn retry_all_failed_requeues_only_failed_jobs() {
     download_jobs::finish_failed(&handle, failed_album, "network")
         .await
         .unwrap();
+    let queued_torrent = download_jobs::insert_queued(
+        &handle,
+        download_jobs::DownloadJobType::Torrent,
+        None,
+        0,
+        Some(&json!({
+            "torrent": {
+                "display_name": "Queued Torrent",
+                "info_hash": "queued123",
+                "selected_file_indices": [0]
+            }
+        })),
+    )
+    .await
+    .unwrap();
     let torrent_payload = json!({
         "torrent": {
             "display_name": "Torrent",
@@ -469,6 +484,28 @@ async fn retry_all_failed_requeues_only_failed_jobs() {
     assert!(album.error_message.is_none());
     assert_eq!(album.progress_pct, 0.0);
     assert_eq!(album.download_speed_bps, 0);
+    assert_eq!(
+        album.queue_position,
+        download_jobs::get_by_id(&handle, queued)
+            .await
+            .unwrap()
+            .unwrap()
+            .queue_position
+            + 1
+    );
+    let torrent = download_jobs::get_by_id(&handle, failed_torrent)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        torrent.queue_position,
+        download_jobs::get_by_id(&handle, queued_torrent)
+            .await
+            .unwrap()
+            .unwrap()
+            .queue_position
+            + 1
+    );
     let torrent_payload: serde_json::Value = download_jobs::get_payload(&handle, failed_torrent)
         .await
         .unwrap()

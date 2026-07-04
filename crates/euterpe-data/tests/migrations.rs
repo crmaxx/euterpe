@@ -18,16 +18,6 @@ struct Setting {
     updated_at: String,
 }
 
-#[derive(Debug, WeldsModel)]
-#[welds(table = "_welds_migrations")]
-struct MigrationLog {
-    #[welds(primary_key)]
-    id: i64,
-    name: String,
-    when_applied: i64,
-    rollback_sql: String,
-}
-
 fn drop_scan_keep_paths(state: &TableState) -> welds::errors::Result<MigrationStep> {
     Ok(MigrationStep::new(
         "drop_scan_keep_paths_for_test",
@@ -303,7 +293,7 @@ async fn legacy_sqlx_database_after_failed_welds_setup_is_repaired() {
 
     migrations::migrate(&handle).await.unwrap();
 
-    let applied = MigrationLog::all().count(handle.client()).await.unwrap();
+    let applied = migrations::applied_migration_count(&handle).await.unwrap();
     assert!(applied >= 29);
     qobuz::insert_sync_skipped(
         &handle,

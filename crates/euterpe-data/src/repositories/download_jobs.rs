@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -41,7 +43,7 @@ impl DownloadJobStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DownloadJobType {
     Album,
     Track,
@@ -527,10 +529,32 @@ pub async fn retry_failed(handle: &DataHandle, id: i64) -> Result<()> {
 }
 
 pub async fn retry_all_failed(handle: &DataHandle) -> Result<u64> {
+    let mut jobs = DownloadJob::all().run(handle.client()).await?;
+    let mut next_positions = jobs
+        .iter()
+        .filter(|job| job.status == DownloadJobStatus::Queued.as_str())
+        .map(|job| Ok((parse_job_type(&job.job_type)?, job.queue_position)))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .fold(
+            HashMap::<DownloadJobType, i64>::new(),
+            |mut positions, (job_type, position)| {
+                positions
+                    .entry(job_type)
+                    .and_modify(|max_position| *max_position = (*max_position).max(position))
+                    .or_insert(position);
+                positions
+            },
+        );
+    jobs.sort_by_key(|job| (job.job_type.clone(), job.queue_position, job.id));
+
     let mut retried = 0;
-    for mut job in DownloadJob::all().run(handle.client()).await? {
+    for mut job in jobs {
         if job.status == DownloadJobStatus::Failed.as_str() {
-            requeue_failed_job(handle, &mut job).await?;
+            let job_type = parse_job_type(&job.job_type)?;
+            let next_position = next_positions.entry(job_type).or_default();
+            *next_position += 1;
+            requeue_job_at_position(handle, &mut job, *next_position).await?;
             retried += 1;
         }
     }
@@ -542,12 +566,21 @@ async fn requeue_failed_job(
     job: &mut welds::state::DbState<DownloadJob>,
 ) -> Result<()> {
     let job_type = parse_job_type(&job.job_type)?;
+    let queue_position = next_queue_position(handle, job_type).await?;
+    requeue_job_at_position(handle, job, queue_position).await
+}
+
+async fn requeue_job_at_position(
+    handle: &DataHandle,
+    job: &mut welds::state::DbState<DownloadJob>,
+    queue_position: i64,
+) -> Result<()> {
     clear_torrent_session(&mut job.payload_json)?;
     job.status = DownloadJobStatus::Queued.as_str().to_string();
     job.error_message = None;
     job.progress_pct = 0.0;
     job.download_speed_bps = 0;
-    job.queue_position = next_queue_position(handle, job_type).await?;
+    job.queue_position = queue_position;
     job.updated_at = sqlite_timestamp();
     job.save(handle.client()).await?;
     Ok(())
