@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import type { JobProgressEvent } from "@/api/client";
 import { TestProviders } from "@/test/test-providers";
@@ -37,10 +37,17 @@ beforeAll(() => {
   });
 });
 
-describe("QueuePage", () => {
-  it("updates progress bar from SSE job_progress", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+function stubEventSource() {
+  MockEventSource.instances = [];
+  vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
+}
 
+describe("QueuePage", () => {
+  beforeEach(() => {
+    stubEventSource();
+  });
+
+  it("updates progress bar from SSE job_progress", async () => {
     render(
       <TestProviders>
         <QueuePage />
@@ -64,7 +71,6 @@ describe("QueuePage", () => {
   });
 
   it("shows global queue actions", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     vi.stubGlobal("confirm", vi.fn(() => true));
 
     render(
@@ -79,7 +85,6 @@ describe("QueuePage", () => {
   });
 
   it("filters jobs by status", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     const user = userEvent.setup();
 
     render(
@@ -101,7 +106,6 @@ describe("QueuePage", () => {
   });
 
   it("purges completed jobs on Clear history confirm", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     const confirm = vi.fn(() => true);
     vi.stubGlobal("confirm", confirm);
     const user = userEvent.setup();
@@ -119,7 +123,6 @@ describe("QueuePage", () => {
   });
 
   it("retries all failed downloads from the toolbar", async () => {
-    vi.stubGlobal("EventSource", MockEventSource as unknown as typeof EventSource);
     const user = userEvent.setup();
     const retryAll = vi.fn();
     server.use(

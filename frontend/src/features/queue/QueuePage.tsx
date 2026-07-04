@@ -28,7 +28,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { sortDownloadQueueJobs } from "@/lib/download-queue-sort";
+import {
+  isTerminalDownloadStatus,
+  sortDownloadQueueJobs,
+} from "@/lib/download-queue-sort";
 import { formatBytes, formatBytesPerSec, formatEtaSecs } from "@/lib/format";
 import { formatQualityLabel } from "@/lib/quality";
 import { useToast } from "@/hooks/use-toast";
@@ -51,10 +54,6 @@ const STATUS_FILTERS = [
 ] as const;
 
 type QueueStatusFilter = (typeof STATUS_FILTERS)[number];
-
-function isTerminalStatus(status: DownloadJob["status"]) {
-  return status === "completed" || status === "failed" || status === "cancelled";
-}
 
 function jobTitle(
   job: DownloadJob,
@@ -530,7 +529,7 @@ function JobRow({
   const canPause = job.status === "queued" || job.status === "running";
   const canResume = job.status === "paused";
   const canRetry = job.status === "failed";
-  const canDelete = isTerminalStatus(job.status);
+  const canDelete = isTerminalDownloadStatus(job.status);
   const canReorder = job.status === "queued";
   const torrentSpeedBps =
     torrentDetail?.download_speed_bps ?? speedBps;

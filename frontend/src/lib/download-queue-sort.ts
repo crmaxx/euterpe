@@ -1,6 +1,6 @@
 import type { DownloadJob } from "@/api/client";
 
-function isTerminalStatus(status: DownloadJob["status"]) {
+export function isTerminalDownloadStatus(status: DownloadJob["status"]) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
@@ -18,7 +18,7 @@ export function compareDownloadQueueJobs(a: DownloadJob, b: DownloadJob): number
   const byStatus = statusRank(a.status) - statusRank(b.status);
   if (byStatus !== 0) return byStatus;
 
-  if (!isTerminalStatus(a.status)) {
+  if (!isTerminalDownloadStatus(a.status)) {
     if (a.queue_position !== b.queue_position) {
       return a.queue_position - b.queue_position;
     }
