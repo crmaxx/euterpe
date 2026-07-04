@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   useQobuzConnection,
@@ -29,6 +29,70 @@ import { usePreferences } from "@/hooks/use-preferences";
 import type { Locale } from "@/i18n/translate";
 import type { Theme } from "@/lib/theme";
 
+type SettingsTab =
+  | "general"
+  | "scheduled-sync"
+  | "integrations"
+  | "converter"
+  | "library-scan"
+  | "library-storage"
+  | "downloads"
+  | "torrent";
+
+const SETTINGS_TABS: Array<{
+  id: SettingsTab;
+  labelKey: string;
+  requiresTorrent?: boolean;
+}> = [
+  { id: "general", labelKey: "settings.tabs.general" },
+  { id: "scheduled-sync", labelKey: "settings.qobuzScheduled.title" },
+  { id: "integrations", labelKey: "integrations.title" },
+  { id: "converter", labelKey: "settings.converter.title" },
+  { id: "library-scan", labelKey: "settings.libraryScan.title" },
+  { id: "library-storage", labelKey: "settings.storage.title" },
+  { id: "downloads", labelKey: "settings.downloads.title" },
+  { id: "torrent", labelKey: "settings.torrent.title", requiresTorrent: true },
+];
+
+function settingsTabId(tab: SettingsTab): string {
+  return `settings-tab-${tab}`;
+}
+
+function settingsPanelId(tab: SettingsTab): string {
+  return `settings-panel-${tab}`;
+}
+
+function SettingsTabButton({
+  tab,
+  activeTab,
+  onSelect,
+  children,
+}: {
+  tab: SettingsTab;
+  activeTab: SettingsTab;
+  onSelect: (tab: SettingsTab) => void;
+  children: ReactNode;
+}) {
+  const active = activeTab === tab;
+  return (
+    <button
+      type="button"
+      role="tab"
+      id={settingsTabId(tab)}
+      aria-selected={active}
+      aria-controls={settingsPanelId(tab)}
+      className={
+        active
+          ? "rounded-md bg-background px-3 py-1.5 text-sm font-medium shadow-sm"
+          : "rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
+      }
+      onClick={() => onSelect(tab)}
+    >
+      {children}
+    </button>
+  );
+}
+
 function qobuzUserLabel(
   connection: {
     display_name?: string | null;
@@ -54,6 +118,13 @@ export function SettingsPage() {
   const logout = useQobuzLogout();
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<SettingsTab>("general");
+  const hasTorrentSettings = !!info?.torrent_incoming_dir;
+  const tabs = SETTINGS_TABS.filter(
+    (tab) => !tab.requiresTorrent || hasTorrentSettings,
+  );
+  const visibleActiveTab =
+    activeTab === "torrent" && !hasTorrentSettings ? "general" : activeTab;
 
   useEffect(() => {
     const qobuz = searchParams.get("qobuz");
@@ -129,108 +200,185 @@ export function SettingsPage() {
         <p className="text-sm text-muted-foreground">{t("settings.subtitle")}</p>
       </div>
 
-      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="font-medium">{t("settings.appearance.title")}</h3>
-        <div className="space-y-2">
-          <Label htmlFor="theme-select">{t("settings.appearance.theme")}</Label>
-          <Select
-            value={theme}
-            onValueChange={(v) => setTheme(v as Theme)}
+      <div
+        role="tablist"
+        aria-label={t("settings.title")}
+        className="flex flex-wrap gap-1 rounded-lg bg-muted p-1"
+      >
+        {tabs.map((tab) => (
+          <SettingsTabButton
+            key={tab.id}
+            tab={tab.id}
+            activeTab={visibleActiveTab}
+            onSelect={setActiveTab}
           >
-            <SelectTrigger id="theme-select">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="light">{t("settings.appearance.light")}</SelectItem>
-              <SelectItem value="dark">{t("settings.appearance.dark")}</SelectItem>
-              <SelectItem value="system">
-                {t("settings.appearance.system")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </section>
+            {t(tab.labelKey)}
+          </SettingsTabButton>
+        ))}
+      </div>
 
-      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="font-medium">{t("settings.language.title")}</h3>
-        <div className="space-y-2">
-          <Label htmlFor="locale-select">{t("settings.language.label")}</Label>
-          <Select
-            value={locale}
-            onValueChange={(v) => setLocale(v as Locale)}
-          >
-            <SelectTrigger id="locale-select">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="en">{t("settings.language.en")}</SelectItem>
-              <SelectItem value="ru">{t("settings.language.ru")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </section>
+      <div
+        role="tabpanel"
+        id={settingsPanelId("general")}
+        aria-labelledby={settingsTabId("general")}
+        hidden={visibleActiveTab !== "general"}
+        className="space-y-4"
+      >
+        <section className="space-y-4 rounded-lg border border-border bg-card p-4">
+          <h3 className="font-medium">{t("settings.appearance.title")}</h3>
+          <div className="space-y-2">
+            <Label htmlFor="theme-select">{t("settings.appearance.theme")}</Label>
+            <Select
+              value={theme}
+              onValueChange={(v) => setTheme(v as Theme)}
+            >
+              <SelectTrigger id="theme-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="light">{t("settings.appearance.light")}</SelectItem>
+                <SelectItem value="dark">{t("settings.appearance.dark")}</SelectItem>
+                <SelectItem value="system">
+                  {t("settings.appearance.system")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </section>
 
-      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
-        <h3 className="font-medium">{t("settings.qobuz.title")}</h3>
-        {connected && connection ? (
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-foreground">
-                {qobuzUserLabel(connection, t)}
-              </p>
-              {connection.membership_label && (
-                <p className="text-sm text-muted-foreground">
-                  {connection.membership_label}
+        <section className="space-y-4 rounded-lg border border-border bg-card p-4">
+          <h3 className="font-medium">{t("settings.language.title")}</h3>
+          <div className="space-y-2">
+            <Label htmlFor="locale-select">{t("settings.language.label")}</Label>
+            <Select
+              value={locale}
+              onValueChange={(v) => setLocale(v as Locale)}
+            >
+              <SelectTrigger id="locale-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="en">{t("settings.language.en")}</SelectItem>
+                <SelectItem value="ru">{t("settings.language.ru")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </section>
+
+        <section className="space-y-4 rounded-lg border border-border bg-card p-4">
+          <h3 className="font-medium">{t("settings.qobuz.title")}</h3>
+          {connected && connection ? (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">
+                  {qobuzUserLabel(connection, t)}
                 </p>
-              )}
+                {connection.membership_label && (
+                  <p className="text-sm text-muted-foreground">
+                    {connection.membership_label}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={oauthStart.isPending}
+                  onClick={() => void connectQobuz()}
+                >
+                  {t("settings.qobuz.switchAccount")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={logout.isPending}
+                  onClick={() => void logOutQobuz()}
+                >
+                  <LogOut className="size-4" aria-hidden />
+                  {t("settings.qobuz.logOut")}
+                </Button>
+              </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {t("settings.qobuz.notSignedIn")}
+              </p>
               <Button
                 type="button"
-                variant="outline"
                 disabled={oauthStart.isPending}
                 onClick={() => void connectQobuz()}
               >
-                {t("settings.qobuz.switchAccount")}
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                disabled={logout.isPending}
-                onClick={() => void logOutQobuz()}
-              >
-                <LogOut className="size-4" aria-hidden />
-                {t("settings.qobuz.logOut")}
+                {t("settings.qobuz.connect")}
               </Button>
             </div>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              {t("settings.qobuz.notSignedIn")}
-            </p>
-            <Button
-              type="button"
-              disabled={oauthStart.isPending}
-              onClick={() => void connectQobuz()}
-            >
-              {t("settings.qobuz.connect")}
-            </Button>
-          </div>
-        )}
-      </section>
+          )}
+        </section>
+      </div>
 
-      <QobuzScheduledSyncSection />
+      <div
+        role="tabpanel"
+        id={settingsPanelId("scheduled-sync")}
+        aria-labelledby={settingsTabId("scheduled-sync")}
+        hidden={visibleActiveTab !== "scheduled-sync"}
+      >
+        <QobuzScheduledSyncSection />
+      </div>
 
-      <IntegrationsSection />
+      <div
+        role="tabpanel"
+        id={settingsPanelId("integrations")}
+        aria-labelledby={settingsTabId("integrations")}
+        hidden={visibleActiveTab !== "integrations"}
+      >
+        <IntegrationsSection />
+      </div>
 
-      <ConverterSettingsSection />
+      <div
+        role="tabpanel"
+        id={settingsPanelId("converter")}
+        aria-labelledby={settingsTabId("converter")}
+        hidden={visibleActiveTab !== "converter"}
+      >
+        <ConverterSettingsSection />
+      </div>
 
-      <LibraryScanSettingsSection />
+      <div
+        role="tabpanel"
+        id={settingsPanelId("library-scan")}
+        aria-labelledby={settingsTabId("library-scan")}
+        hidden={visibleActiveTab !== "library-scan"}
+      >
+        <LibraryScanSettingsSection />
+      </div>
 
-      {info?.torrent_incoming_dir ? <TorrentSettingsSection /> : null}
+      <div
+        role="tabpanel"
+        id={settingsPanelId("library-storage")}
+        aria-labelledby={settingsTabId("library-storage")}
+        hidden={visibleActiveTab !== "library-storage"}
+        className="space-y-4 rounded-lg border border-border bg-card p-4"
+      >
+        <div className="space-y-1 text-sm">
+          <Label>{t("settings.downloads.libraryStorage")}</Label>
+          <p className="rounded-md border border-border bg-background px-3 py-2 font-mono text-xs">
+            {info?.library_storage
+              ? info.library_storage.kind === "local"
+                ? `local:${info.library_storage.path}`
+                : `smb://${info.library_storage.host}/${info.library_storage.share}/${info.library_storage.path}`.replace(/\/$/, "")
+              : t("settings.storage.notConfigured")}
+          </p>
+        </div>
+        <StorageSettingsSection />
+      </div>
 
-      <section className="space-y-4 rounded-lg border border-border bg-card p-4">
+      <section
+        role="tabpanel"
+        id={settingsPanelId("downloads")}
+        aria-labelledby={settingsTabId("downloads")}
+        hidden={visibleActiveTab !== "downloads"}
+        className="space-y-4 rounded-lg border border-border bg-card p-4"
+      >
         <h3 className="font-medium">{t("settings.downloads.title")}</h3>
         <div className="space-y-2">
           <Label>{t("settings.downloads.defaultQuality")}</Label>
@@ -250,19 +398,19 @@ export function SettingsPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1 text-sm">
-          <Label>{t("settings.downloads.libraryStorage")}</Label>
-          <p className="rounded-md border border-border bg-background px-3 py-2 font-mono text-xs">
-            {info?.library_storage
-              ? info.library_storage.kind === "local"
-                ? `local:${info.library_storage.path}`
-                : `smb://${info.library_storage.host}/${info.library_storage.share}/${info.library_storage.path}`.replace(/\/$/, "")
-              : t("settings.storage.notConfigured")}
-          </p>
-        </div>
-        <StorageSettingsSection />
         <DownloadsSettingsSection />
       </section>
+
+      {hasTorrentSettings ? (
+        <div
+          role="tabpanel"
+          id={settingsPanelId("torrent")}
+          aria-labelledby={settingsTabId("torrent")}
+          hidden={visibleActiveTab !== "torrent"}
+        >
+          <TorrentSettingsSection />
+        </div>
+      ) : null}
     </div>
   );
 }

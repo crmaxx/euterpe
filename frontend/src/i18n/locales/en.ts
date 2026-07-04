@@ -42,7 +42,10 @@ export const en = {
   settings: {
     title: "Settings",
     subtitle:
-      "Link your Qobuz account via OAuth. Credentials stay encrypted on the server.",
+      "Manage account, appearance, automation, storage, conversion, and download behavior.",
+    tabs: {
+      general: "General",
+    },
     appearance: {
       title: "Appearance",
       theme: "Theme",
