@@ -481,30 +481,23 @@ pub async fn finish_failed(handle: &DataHandle, id: i64, error: &str) -> Result<
     Ok(())
 }
 
-pub async fn list_terminal_torrent_job_ids(handle: &DataHandle) -> Result<Vec<i64>> {
+pub async fn list_completed_torrent_job_ids(handle: &DataHandle) -> Result<Vec<i64>> {
     Ok(DownloadJob::all()
         .run(handle.client())
         .await?
         .into_iter()
         .filter(|job| {
             job.job_type == DownloadJobType::Torrent.as_str()
-                && matches!(
-                    DownloadJobStatus::parse(&job.status),
-                    Some(
-                        DownloadJobStatus::Completed
-                            | DownloadJobStatus::Failed
-                            | DownloadJobStatus::Cancelled
-                    )
-                )
+                && job.status == DownloadJobStatus::Completed.as_str()
         })
         .map(|job| job.id)
         .collect())
 }
 
-pub async fn purge_finished(handle: &DataHandle) -> Result<u64> {
+pub async fn purge_completed(handle: &DataHandle) -> Result<u64> {
     let mut deleted = 0;
     for mut job in DownloadJob::all().run(handle.client()).await? {
-        if DownloadJobStatus::parse(&job.status).is_some_and(is_terminal_status) {
+        if job.status == DownloadJobStatus::Completed.as_str() {
             job.delete(handle.client()).await?;
             deleted += 1;
         }
@@ -529,6 +522,25 @@ pub async fn retry_failed(handle: &DataHandle, id: i64) -> Result<()> {
             "only failed jobs can be retried".to_string(),
         ));
     }
+    requeue_failed_job(handle, &mut job).await?;
+    Ok(())
+}
+
+pub async fn retry_all_failed(handle: &DataHandle) -> Result<u64> {
+    let mut retried = 0;
+    for mut job in DownloadJob::all().run(handle.client()).await? {
+        if job.status == DownloadJobStatus::Failed.as_str() {
+            requeue_failed_job(handle, &mut job).await?;
+            retried += 1;
+        }
+    }
+    Ok(retried)
+}
+
+async fn requeue_failed_job(
+    handle: &DataHandle,
+    job: &mut welds::state::DbState<DownloadJob>,
+) -> Result<()> {
     let job_type = parse_job_type(&job.job_type)?;
     clear_torrent_session(&mut job.payload_json)?;
     job.status = DownloadJobStatus::Queued.as_str().to_string();

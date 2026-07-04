@@ -39,6 +39,50 @@ describe("api client", () => {
     expect(filter).toBe("not_in_library");
   });
 
+  it("sends download status filter", async () => {
+    let status: string | null = null;
+    server.use(
+      http.get("/api/v1/downloads", ({ request }) => {
+        status = new URL(request.url).searchParams.get("status");
+        return HttpResponse.json({ items: [], next_cursor: null, has_more: false });
+      }),
+    );
+
+    await api.downloads({ status: "failed" });
+
+    expect(status).toBe("failed");
+  });
+
+  it("purges completed downloads", async () => {
+    let method: string | null = null;
+    server.use(
+      http.post("/api/v1/downloads/purge", ({ request }) => {
+        method = request.method;
+        return HttpResponse.json({ deleted: 2 });
+      }),
+    );
+
+    const response = await api.purgeCompletedDownloads();
+
+    expect(method).toBe("POST");
+    expect(response.deleted).toBe(2);
+  });
+
+  it("retries failed downloads in bulk", async () => {
+    let method: string | null = null;
+    server.use(
+      http.post("/api/v1/downloads/retry", ({ request }) => {
+        method = request.method;
+        return HttpResponse.json({ retried: 3 });
+      }),
+    );
+
+    const response = await api.retryFailedDownloads();
+
+    expect(method).toBe("POST");
+    expect(response.retried).toBe(3);
+  });
+
   it("throws ApiClientError on 401", async () => {
     await expect(
       api.testLogin({ user_id: 1, auth_token: "bad" }),

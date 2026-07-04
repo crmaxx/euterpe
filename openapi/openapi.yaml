@@ -1013,9 +1013,10 @@ paths:
 
   /api/v1/downloads/purge:
     post:
-      operationId: purgeFinishedDownloads
+      operationId: purgeCompletedDownloads
       tags: [Downloads]
-      summary: Delete all finished download jobs (completed, failed, cancelled)
+      summary: Delete all completed download jobs
+      description: Failed and cancelled jobs are kept so they can still be retried, inspected, or deleted manually.
       security:
         - AdminBearer: []
         - {}
@@ -1026,6 +1027,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DownloadPurgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/downloads/retry:
+    post:
+      operationId: retryFailedDownloads
+      tags: [Downloads]
+      summary: Re-queue all failed download jobs
+      description: |
+        Resets every `failed` job to `queued` using the same retry semantics as the single-job retry endpoint.
+        Jobs in other statuses are left unchanged.
+      security:
+        - AdminBearer: []
+        - {}
+      responses:
+        "200":
+          description: Retry result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DownloadRetryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 
   /api/v1/downloads/{id}:
     get:
@@ -2786,6 +2810,16 @@ components:
       additionalProperties: false
       properties:
         deleted:
+          type: integer
+          format: int64
+          minimum: 0
+
+    DownloadRetryResponse:
+      type: object
+      required: [retried]
+      additionalProperties: false
+      properties:
+        retried:
           type: integer
           format: int64
           minimum: 0

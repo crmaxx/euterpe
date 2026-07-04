@@ -19,7 +19,7 @@ use crate::api::keyset::{
 use crate::api::{
     CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse, DownloadJob,
     DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
-    SortKeyKind, SortKeyValue,
+    DownloadRetryResponse, SortKeyKind, SortKeyValue,
 };
 use crate::error::ApiError;
 use crate::services::download::{
@@ -408,14 +408,14 @@ pub async fn get_download(
         .ok_or_else(|| ApiError::Message(format!("job {id} not found")))
 }
 
-pub async fn purge_finished_downloads(
+pub async fn purge_completed_downloads(
     State(state): State<AppState>,
 ) -> Result<Json<DownloadPurgeResponse>, ApiError> {
-    let torrent_ids = data_download_jobs::list_terminal_torrent_job_ids(&state.data).await?;
+    let torrent_ids = data_download_jobs::list_completed_torrent_job_ids(&state.data).await?;
     for id in torrent_ids {
         torrent_cleanup::remove_job_incoming_dir(&state, id).await?;
     }
-    let deleted = data_download_jobs::purge_finished(&state.data).await? as i64;
+    let deleted = data_download_jobs::purge_completed(&state.data).await? as i64;
     Ok(Json(DownloadPurgeResponse { deleted }))
 }
 
@@ -492,6 +492,14 @@ pub async fn retry_download(
     data_download_jobs::retry_failed(&state.data, id).await?;
     let _ = state.job_tx.send(0).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn retry_failed_downloads(
+    State(state): State<AppState>,
+) -> Result<Json<DownloadRetryResponse>, ApiError> {
+    let retried = data_download_jobs::retry_all_failed(&state.data).await? as i64;
+    let _ = state.job_tx.send(0).await;
+    Ok(Json(DownloadRetryResponse { retried }))
 }
 
 pub async fn pause_download(

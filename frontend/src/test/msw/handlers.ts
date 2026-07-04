@@ -38,6 +38,60 @@ function favoritesForRequest(request: Request) {
 
 const watchDisabled = { state: "disabled", degraded_reason: null };
 
+const mockDownloads = [
+  {
+    id: 1,
+    status: "running",
+    job_type: "album",
+    source: "qobuz",
+    display_title: "Artist — Album",
+    qobuz_id: 99,
+    quality: 6,
+    progress_pct: 10,
+    download_speed_bps: 512000,
+    queue_position: 1,
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+  },
+  {
+    id: 2,
+    status: "completed",
+    job_type: "album",
+    source: "qobuz",
+    display_title: "Other — Done",
+    qobuz_id: 100,
+    quality: 6,
+    progress_pct: 100,
+    download_speed_bps: 0,
+    queue_position: 2,
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+  },
+  {
+    id: 3,
+    status: "failed",
+    job_type: "album",
+    source: "qobuz",
+    display_title: "Retry — Needed",
+    qobuz_id: 101,
+    quality: 6,
+    progress_pct: 0,
+    download_speed_bps: 0,
+    queue_position: 3,
+    error_message: "network",
+    created_at: "2026-01-01",
+    updated_at: "2026-01-01",
+  },
+];
+
+function downloadsForRequest(request: Request) {
+  const status = new URL(request.url).searchParams.get("status");
+  const items = status
+    ? mockDownloads.filter((item) => item.status === status)
+    : mockDownloads;
+  return { items, next_cursor: null, has_more: false };
+}
+
 export const handlers = [
   http.get("/api/v1/server/info", () =>
     HttpResponse.json({
@@ -305,41 +359,8 @@ export const handlers = [
     });
   }),
 
-  http.get("/api/v1/downloads", () =>
-    HttpResponse.json({
-      items: [
-        {
-          id: 1,
-          status: "running",
-          job_type: "album",
-          source: "qobuz",
-          display_title: "Artist — Album",
-          qobuz_id: 99,
-          quality: 6,
-          progress_pct: 10,
-          download_speed_bps: 512000,
-          queue_position: 1,
-          created_at: "2026-01-01",
-          updated_at: "2026-01-01",
-        },
-        {
-          id: 2,
-          status: "completed",
-          job_type: "album",
-          source: "qobuz",
-          display_title: "Other — Done",
-          qobuz_id: 100,
-          quality: 6,
-          progress_pct: 100,
-          download_speed_bps: 0,
-          queue_position: 2,
-          created_at: "2026-01-01",
-          updated_at: "2026-01-01",
-        },
-      ],
-      next_cursor: null,
-      has_more: false,
-    }),
+  http.get("/api/v1/downloads", ({ request }) =>
+    HttpResponse.json(downloadsForRequest(request)),
   ),
 
   http.post("/api/v1/downloads", () =>
@@ -361,6 +382,10 @@ export const handlers = [
 
   http.post("/api/v1/downloads/purge", () =>
     HttpResponse.json({ deleted: 1 }),
+  ),
+
+  http.post("/api/v1/downloads/retry", () =>
+    HttpResponse.json({ retried: 1 }),
   ),
 
   http.delete("/api/v1/downloads/:id", ({ request }) => {

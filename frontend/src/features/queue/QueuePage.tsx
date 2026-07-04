@@ -9,7 +9,8 @@ import {
   usePurgeDownload,
   useResumeDownload,
   useRetryDownload,
-  usePurgeFinishedDownloads,
+  usePurgeCompletedDownloads,
+  useRetryFailedDownloads,
 } from "@/api/hooks";
 import {
   subscribeJobProgress,
@@ -17,9 +18,16 @@ import {
   type JobProgressEvent,
   type TorrentJobDetail,
 } from "@/api/client";
-import { ArrowDown, ArrowUp, ListMusic, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ListMusic, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { sortDownloadQueueJobs } from "@/lib/download-queue-sort";
 import { formatBytes, formatBytesPerSec, formatEtaSecs } from "@/lib/format";
 import { formatQualityLabel } from "@/lib/quality";
@@ -31,6 +39,18 @@ type LiveJobState = {
   download_speed_bps: number;
   torrent_detail?: TorrentJobDetail | null;
 };
+
+const STATUS_FILTERS = [
+  "all",
+  "running",
+  "queued",
+  "paused",
+  "failed",
+  "cancelled",
+  "completed",
+] as const;
+
+type QueueStatusFilter = (typeof STATUS_FILTERS)[number];
 
 function isTerminalStatus(status: DownloadJob["status"]) {
   return status === "completed" || status === "failed" || status === "cancelled";
@@ -133,15 +153,19 @@ function torrentStatusForJob(
 export function QueuePage() {
   const { t } = usePreferences();
   const { toast } = useToast();
-  const { data, isLoading, isError, error, refetch, isFetching } = useDownloads();
+  const [statusFilter, setStatusFilter] = useState<QueueStatusFilter>("all");
+  const selectedStatus = statusFilter === "all" ? undefined : statusFilter;
+  const { data, isLoading, isError, error, refetch, isFetching } =
+    useDownloads(selectedStatus);
   const { items: favoriteItems } = useFavoritesFlat({
     limit: 100,
     library_filter: "all",
   });
   const cancel = useCancelDownload();
-  const purgeFinished = usePurgeFinishedDownloads();
+  const purgeCompleted = usePurgeCompletedDownloads();
   const purgeOne = usePurgeDownload();
   const retry = useRetryDownload();
+  const retryAll = useRetryFailedDownloads();
   const pause = usePauseDownload();
   const resume = useResumeDownload();
   const patchPriority = usePatchDownloadPriority();
@@ -177,7 +201,6 @@ export function QueuePage() {
   );
   const qobuzJobs = jobs.filter((j) => j.source === "qobuz");
   const torrentJobs = jobs.filter((j) => j.source === "torrent");
-  const hasTerminalJobs = jobs.some((j) => isTerminalStatus(j.status));
 
   const clearLiveProgress = (id: number) => {
     setLive((prev) => {
@@ -228,7 +251,35 @@ export function QueuePage() {
     if (!window.confirm(t("queue.clearConfirm"))) {
       return;
     }
-    void purgeFinished.mutateAsync();
+    void purgeCompleted.mutateAsync();
+  };
+
+  const handleRetryAll = () => {
+    const failedJobIds = jobs
+      .filter((job) => job.status === "failed")
+      .map((job) => job.id);
+    void retryAll
+      .mutateAsync()
+      .then(() => {
+        setLive((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const id of failedJobIds) {
+            if (id in next) {
+              delete next[id];
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      })
+      .catch((e) =>
+        toast({
+          title: t("queue.retryAllFailed"),
+          description: e instanceof Error ? e.message : t("common.unknownError"),
+          variant: "destructive",
+        }),
+      );
   };
 
   return (
@@ -241,17 +292,44 @@ export function QueuePage() {
           />
           <h2 className="text-2xl font-semibold">{t("queue.title")}</h2>
         </div>
-        {hasTerminalJobs ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => setStatusFilter(value as QueueStatusFilter)}
+          >
+            <SelectTrigger
+              aria-label={t("queue.filterStatus")}
+              className="w-44"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_FILTERS.map((status) => (
+                <SelectItem key={status} value={status}>
+                  {t(`queue.status.${status}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button
             size="sm"
             variant="outline"
-            disabled={purgeFinished.isPending}
+            disabled={retryAll.isPending}
+            onClick={handleRetryAll}
+          >
+            <RotateCcw className="size-4" aria-hidden />
+            {t("queue.retryAll")}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={purgeCompleted.isPending}
             onClick={handleClearHistory}
           >
             <Trash2 className="size-4" aria-hidden />
             {t("queue.clearHistory")}
           </Button>
-        ) : null}
+        </div>
       </div>
       {isError ? (
         <div

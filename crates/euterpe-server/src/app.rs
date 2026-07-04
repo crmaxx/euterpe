@@ -72,7 +72,11 @@ pub fn app(state: AppState) -> Router {
         )
         .route(
             "/api/v1/downloads/purge",
-            post(downloads::purge_finished_downloads),
+            post(downloads::purge_completed_downloads),
+        )
+        .route(
+            "/api/v1/downloads/retry",
+            post(downloads::retry_failed_downloads),
         )
         .route(
             "/api/v1/downloads/{id}",

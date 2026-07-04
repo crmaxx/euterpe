@@ -18,8 +18,8 @@ pub use convert::{
 pub use downloads::{
     CreateDownloadByUrlRequest, CreateDownloadRequest, CreateDownloadResponse, DownloadJob,
     DownloadJobListResponse, DownloadJobStatus, DownloadJobType, DownloadPurgeResponse,
-    DownloadSource, JobProgressEvent, PatchDownloadPriorityRequest, TorrentEuterpePhase,
-    TorrentJobDetail, TorrentLibrqbitState,
+    DownloadRetryResponse, DownloadSource, JobProgressEvent, PatchDownloadPriorityRequest,
+    TorrentEuterpePhase, TorrentJobDetail, TorrentLibrqbitState,
 };
 pub use health::{ErrorBody, ErrorResponse, HealthResponse};
 pub use integrations::{

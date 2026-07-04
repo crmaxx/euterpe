@@ -947,10 +947,10 @@ export function useCancelDownload() {
   });
 }
 
-export function usePurgeFinishedDownloads() {
+export function usePurgeCompletedDownloads() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.purgeFinishedDownloads(),
+    mutationFn: () => api.purgeCompletedDownloads(),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["downloads"] });
     },
@@ -982,6 +982,16 @@ export function useRetryDownload() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => api.retryDownload(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["downloads"] });
+    },
+  });
+}
+
+export function useRetryFailedDownloads() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.retryFailedDownloads(),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["downloads"] });
     },

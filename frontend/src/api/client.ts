@@ -27,6 +27,10 @@ export type QobuzConnectionStatusResponse =
 export type DownloadJobListResponse =
   components["schemas"]["DownloadJobListResponse"];
 export type DownloadJob = components["schemas"]["DownloadJob"];
+export type DownloadPurgeResponse =
+  components["schemas"]["DownloadPurgeResponse"];
+export type DownloadRetryResponse =
+  components["schemas"]["DownloadRetryResponse"];
 export type TorrentJobDetail = components["schemas"]["TorrentJobDetail"];
 export type CreateDownloadRequest =
   components["schemas"]["CreateDownloadRequest"];
@@ -449,6 +453,9 @@ export const api = {
   retryDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}/retry`, { method: "POST" }),
 
+  retryFailedDownloads: () =>
+    fetchJson<DownloadRetryResponse>("/downloads/retry", { method: "POST" }),
+
   pauseDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}/pause`, { method: "POST" }),
 
@@ -464,8 +471,8 @@ export const api = {
   cancelDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}`, { method: "DELETE" }),
 
-  purgeFinishedDownloads: () =>
-    fetchJson<{ deleted: number }>("/downloads/purge", { method: "POST" }),
+  purgeCompletedDownloads: () =>
+    fetchJson<DownloadPurgeResponse>("/downloads/purge", { method: "POST" }),
 
   purgeDownload: (id: number) =>
     fetchJson<void>(`/downloads/${id}?purge=1`, { method: "DELETE" }),

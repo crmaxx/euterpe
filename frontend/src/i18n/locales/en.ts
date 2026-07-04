@@ -312,7 +312,10 @@ export const en = {
     title: "Download queue",
     clearHistory: "Clear history",
     clearConfirm:
-      "Remove all completed, failed, and cancelled jobs from the list? Active downloads will be kept.",
+      "Remove all completed jobs from the list? Failed and cancelled jobs will be kept.",
+    retryAll: "Retry all",
+    retryAllFailed: "Could not retry failed downloads",
+    filterStatus: "Filter by status",
     noJobs: "No jobs.",
     loadFailed: "Could not load the download queue",
     album: "Album #{id}",
@@ -327,6 +330,15 @@ export const en = {
     progress: "Progress {pct}%",
     priorityUp: "Move up in queue",
     priorityDown: "Move down in queue",
+    status: {
+      all: "All",
+      running: "Running",
+      queued: "Queued",
+      paused: "Paused",
+      failed: "Failed",
+      cancelled: "Canceled",
+      completed: "Completed",
+    },
     section: {
       qobuz: "Qobuz",
       torrent: "Torrent",

@@ -4,12 +4,14 @@ function isTerminalStatus(status: DownloadJob["status"]) {
   return status === "completed" || status === "failed" || status === "cancelled";
 }
 
-/** UI order: running → queued (FIFO) → paused → finished history (newest first). */
+/** UI order: active work first, then failures, cancellations, completed history. */
 function statusRank(status: DownloadJob["status"]): number {
   if (status === "running") return 0;
   if (status === "queued") return 1;
   if (status === "paused") return 2;
-  return 3;
+  if (status === "failed") return 3;
+  if (status === "cancelled") return 4;
+  return 5;
 }
 
 export function compareDownloadQueueJobs(a: DownloadJob, b: DownloadJob): number {

@@ -510,8 +510,32 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Delete all finished download jobs (completed, failed, cancelled) */
-        post: operations["purgeFinishedDownloads"];
+        /**
+         * Delete all completed download jobs
+         * @description Failed and cancelled jobs are kept so they can still be retried, inspected, or deleted manually.
+         */
+        post: operations["purgeCompletedDownloads"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/downloads/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-queue all failed download jobs
+         * @description Resets every `failed` job to `queued` using the same retry semantics as the single-job retry endpoint.
+         *     Jobs in other statuses are left unchanged.
+         */
+        post: operations["retryFailedDownloads"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1323,6 +1347,10 @@ export interface components {
         DownloadPurgeResponse: {
             /** Format: int64 */
             deleted: number;
+        };
+        DownloadRetryResponse: {
+            /** Format: int64 */
+            retried: number;
         };
         JobProgressEvent: {
             /** Format: int64 */
@@ -2995,7 +3023,7 @@ export interface operations {
             };
         };
     };
-    purgeFinishedDownloads: {
+    purgeCompletedDownloads: {
         parameters: {
             query?: never;
             header?: never;
@@ -3013,6 +3041,28 @@ export interface operations {
                     "application/json": components["schemas"]["DownloadPurgeResponse"];
                 };
             };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    retryFailedDownloads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retry result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadRetryResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
         };
     };
     getDownload: {
